@@ -26,6 +26,7 @@ function Sidebar() {
         { path: '/telemetry', label: 'Telemetry', icon: icons.telemetry },
         { path: '/network', label: 'Network', icon: '🌐' },
         { path: '/terminal', label: 'Terminal', icon: '💻' },
+        { path: '/alerts', label: 'Alerts', icon: icons.alerts },
     ]
 
     const handleLogout = async () => {

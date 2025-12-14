@@ -19,7 +19,9 @@ from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
 from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console
-from routers import sse, audit, manifests, terminal
+from services.sse import sse_manager, Channels
+from services.agent_client import agent_client
+from services.alert_manager import alert_manager
 
 # Configure structured logging
 structlog.configure(
@@ -55,10 +57,16 @@ async def lifespan(app: FastAPI):
     
     await init_db()
     
+    # Start background services
+    await agent_client.start()
+    await alert_manager.start()
+    
     yield
     
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    await alert_manager.stop()
+    await agent_client.stop()
     await close_db()
 
 

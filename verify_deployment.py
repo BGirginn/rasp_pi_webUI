@@ -3,8 +3,9 @@ import urllib.parse
 import json
 import socket
 import ssl
+import time
 
-# Setup
+# Setup (Updated with correct IP)
 BASE_URL = "http://100.80.90.68:8080/api"
 UI_URL = "http://100.80.90.68:8080"
 WS_HOST = "100.80.90.68"
@@ -81,7 +82,6 @@ def test_usb():
 def test_service_control():
     log("Testing Service Control (Restarting cron)...", "INFO")
     req = {"action": "restart"}
-    # Resource ID logic: "systemd-cron"
     code, resp = api_request("POST", "/resources/systemd-cron/action", req)
     
     if code == 200 and resp.get("success"):
@@ -106,14 +106,12 @@ def test_user_management():
     TOKEN = test_login("admin", "admin123")
     if not TOKEN: return False
 
-    # Cleanup previous run if needed
     code, resp = api_request("GET", "/auth/users")
     if code == 200:
         for u in resp:
             if u["username"] == "apitestuser":
                 api_request("DELETE", f"/auth/users/{u['id']}")
 
-    # 1. Create User
     new_user = {"username": "apitestuser", "password": "password123", "role": "viewer"}
     code, resp = api_request("POST", "/auth/users", new_user)
     if code != 200:
@@ -122,7 +120,6 @@ def test_user_management():
     
     log("User Created", "PASS")
 
-    # 2. List Users
     code, resp = api_request("GET", "/auth/users")
     target_user = next((u for u in resp if u["username"] == "apitestuser"), None)
     if target_user:
@@ -132,11 +129,9 @@ def test_user_management():
         log("User NOT Found", "FAIL")
         return False
 
-    # 3. Login as New User
     user_token = test_login("apitestuser", "password123", "NewUser")
     if not user_token: return False
 
-    # 4. Change Password
     code, resp = api_request("POST", "/auth/password/change", 
                             {"current_password": "password123", "new_password": "newpass123"}, 
                             token=user_token)
@@ -146,19 +141,79 @@ def test_user_management():
         log(f"Change Password Failed: {resp}", "FAIL")
         return False
 
-    # 5. Verify New Password
     if test_login("apitestuser", "newpass123", "NewUser NewPass"):
         log("New Password Working", "PASS")
     else:
         return False
 
-    # 6. Delete User
     code, resp = api_request("DELETE", f"/auth/users/{user_id}")
     if code == 200:
         log("User Deleted", "PASS")
     else:
         return False
     
+    return True
+
+def test_alerts_system():
+    log("Testing Alert System...", "INFO")
+    
+    # 1. Create a Test Rule (Always True: CPU > -1)
+    rule = {
+        "name": "Verification Test Alert",
+        "description": "This alert should fire immediately",
+        "metric": "host.cpu.pct_total",
+        "condition": "gte",
+        "threshold": 0,
+        "severity": "info",
+        "cooldown_minutes": 1,
+        "notify_channels": []
+    }
+    
+    code, resp = api_request("POST", "/alerts/rules", rule)
+    if code != 200:
+        log(f"Create Alert Rule Failed: {resp}", "FAIL")
+        return False
+    
+    rule_id = resp["id"]
+    log("Test Alert Rule Created", "PASS")
+
+    # 2. Add delay for monitoring loop to run (interval is 10s)
+    log("Waiting for Alert Manager loop (11s)...", "INFO")
+    time.sleep(11)
+
+    # 3. Check for Active Alerts
+    code, resp = api_request("GET", "/alerts")
+    alert_triggered = False
+    alert_id = None
+    if code == 200:
+        for a in resp:
+            if a["rule_id"] == rule_id:
+                alert_triggered = True
+                alert_id = a["id"]
+                log(f"Alert Triggered: {a['message']}", "PASS")
+                break
+    
+    if not alert_triggered:
+        log("Alert NOT Triggered! Background loop may not be running.", "FAIL")
+        # Cleanup
+        api_request("DELETE", f"/alerts/rules/{rule_id}")
+        return False
+
+    # 4. Acknowledge Alert
+    code, resp = api_request("POST", f"/alerts/{alert_id}/acknowledge")
+    if code == 200:
+        log("Alert Acknowledged", "PASS")
+    else:
+        log(f"Alert Ack Failed: {resp}", "FAIL")
+
+    # 5. Cleanup Rule
+    code, resp = api_request("DELETE", f"/alerts/rules/{rule_id}")
+    if code == 200:
+        log("Test Rule Cleaned Up", "PASS")
+    else:
+        log(f"Cleanup Failed: {resp}", "FAIL")
+        return False
+        
     return True
 
 def test_websocket():
@@ -191,7 +246,7 @@ def test_websocket():
 
 def run_all():
     print("==========================================")
-    print("    PI CONTROL PANEL - EXHAUSTIVE VERIFICATION V5")
+    print("    PI CONTROL PANEL - EXHAUSTIVE VERIFICATION V6")
     print("==========================================")
     
     success = True
@@ -200,11 +255,12 @@ def run_all():
     if not test_network(): success = False
     if not test_usb(): success = False
     if not test_service_control(): success = False
+    if not test_alerts_system(): success = False
     if not test_websocket(): success = False
 
     print("\nStatus:")
     if success:
-        print("\033[92mALL SYSTEMS GO - TESTED AND VERIFIED\033[0m")
+        print("\033[92mALL SYSTEMS GO - INCLUDING ALERTS\033[0m")
     else:
         print("\033[91mFAILURES DETECTED\033[0m")
 
