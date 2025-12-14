@@ -113,6 +113,14 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
         "avahi-daemon",   # mDNS
         "cups",           # Printing
         "cron",           # Cron jobs
+        "minecraft",      # Minecraft server
+        "picontrol",      # Pi Control Panel
+        "home-assistant", # Home Assistant
+        "zigbee2mqtt",    # Zigbee
+        "node-red",       # Node-RED
+        "grafana",        # Grafana
+        "prometheus",     # Prometheus
+        "influxdb",       # InfluxDB
     ]
     
     try:
@@ -166,11 +174,18 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                 state = "restarting"
             
             # Determine class
-            resource_class = "APP"
-            if name in ["docker", "sshd", "ssh", "cron", "systemd-journald"]:
+            # CORE = system-critical (can only view)
+            # SYSTEM = important (can restart)
+            # APP = user apps (can start/stop/restart)
+            core_services = ["systemd", "dbus", "init", "kernel"]
+            system_services = ["docker", "sshd", "ssh", "cron", "systemd-journald", "tailscaled"]
+            
+            if any(c in name for c in core_services):
+                resource_class = "CORE"
+            elif name in system_services:
                 resource_class = "SYSTEM"
-            elif name in ["tailscaled", "nginx", "caddy", "mosquitto"]:
-                resource_class = "APP"
+            else:
+                resource_class = "APP"  # User apps - full control
             
             services.append(ResourceResponse(
                 id=f"systemd-{name}",

@@ -30,8 +30,12 @@ function ServiceCard({ resource, onAction }) {
         }
     }
 
-    const canModify = isOperator && resource.resource_class !== 'CORE'
-    const canRestart = canModify || (resource.resource_class === 'SYSTEM')
+    // CORE = view only, SYSTEM = restart only, APP = full control
+    const isCore = resource.resource_class === 'CORE'
+    const isSystem = resource.resource_class === 'SYSTEM'
+    const canRestart = isOperator && !isCore
+    const canStart = isOperator && !isCore
+    const canStop = isOperator && resource.resource_class === 'APP'
 
     return (
         <div className="glass-card rounded-xl p-5 animate-slide-in">
@@ -70,7 +74,7 @@ function ServiceCard({ resource, onAction }) {
                             {loading ? '...' : '🔄 Restart'}
                         </button>
                     )}
-                    {canModify && resource.state === 'stopped' && (
+                    {canStart && resource.state === 'stopped' && (
                         <button
                             onClick={() => handleAction('start')}
                             disabled={loading}
@@ -79,7 +83,7 @@ function ServiceCard({ resource, onAction }) {
                             {loading ? '...' : '▶️ Start'}
                         </button>
                     )}
-                    {canModify && resource.state === 'running' && resource.resource_class === 'APP' && (
+                    {canStop && resource.state === 'running' && (
                         <button
                             onClick={() => handleAction('stop')}
                             disabled={loading}
@@ -103,8 +107,8 @@ function FilterTabs({ filters, activeFilter, onChange }) {
                     key={filter.value}
                     onClick={() => onChange(filter.value)}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeFilter === filter.value
-                            ? 'bg-primary-600 text-white'
-                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                         }`}
                 >
                     {filter.label}
