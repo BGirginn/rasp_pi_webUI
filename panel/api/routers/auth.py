@@ -5,7 +5,7 @@ Handles login, logout, token refresh, and user management.
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 import bcrypt
@@ -45,6 +45,11 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str = "viewer"
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class UserResponse(BaseModel):
@@ -324,3 +329,78 @@ async def create_user(
         has_totp=False,
         created_at=datetime.utcnow().isoformat()
     )
+
+
+@router.get("/users", response_model=List[UserResponse])
+async def list_users(current_user: dict = Depends(require_role("admin"))):
+    """List all users (admin only)."""
+    db = await get_control_db()
+    cursor = await db.execute("SELECT id, username, role, totp_secret, created_at FROM users")
+    users = []
+    async for row in cursor:
+        users.append(UserResponse(
+            id=row[0],
+            username=row[1],
+            role=row[2],
+            has_totp=bool(row[3]),
+            created_at=row[4]
+        ))
+    return users
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: int, current_user: dict = Depends(require_role("admin"))):
+    """Delete a user (admin only)."""
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    db = await get_control_db()
+    
+    # Check if user exists
+    cursor = await db.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    target_username = row[0]
+    if target_username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete superadmin")
+    
+    await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+    
+    # Audit log
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, details) VALUES (?, ?, ?)",
+        (current_user["id"], "delete_user", f"Deleted user: {target_username}")
+    )
+    await db.commit()
+    
+    return {"message": "User deleted"}
+
+
+@router.post("/password/change")
+async def change_password(request: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    """Change current user's password."""
+    db = await get_control_db()
+    
+    # Verify current password
+    cursor = await db.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],))
+    row = await cursor.fetchone()
+    if not row or not verify_password(request.current_password, row[0]):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+    
+    # Update password
+    new_hash = hash_password(request.new_password)
+    await db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (new_hash, user["id"])
+    )
+    
+    # Audit log
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action) VALUES (?, ?)",
+        (user["id"], "change_password")
+    )
+    await db.commit()
+    return {"message": "Password updated successfully"}
