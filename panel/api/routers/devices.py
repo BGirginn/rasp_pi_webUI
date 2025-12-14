@@ -96,32 +96,52 @@ async def _local_device_discovery() -> List[DeviceResponse]:
             pass
     
     elif system == "Linux":
-        # Check for USB devices via /sys
-        from pathlib import Path
-        usb_path = Path("/sys/bus/usb/devices")
-        
-        if usb_path.exists():
-            for device_dir in usb_path.iterdir():
-                if ":" in device_dir.name:
-                    continue
-                try:
-                    product_file = device_dir / "product"
-                    vendor_file = device_dir / "manufacturer"
+        # Use lsusb for better product names
+        try:
+            result = subprocess.run(
+                ["lsusb"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split("\n"):
+                    # Parse: Bus 001 Device 002: ID 0951:1666 Kingston Technology DataTraveler 100 G3/G4/SE9 G2/50 Kyson
+                    if "ID" not in line:
+                        continue
                     
-                    if product_file.exists():
-                        name = product_file.read_text().strip()
-                        vendor = vendor_file.read_text().strip() if vendor_file.exists() else "Unknown"
-                        
-                        devices.append(DeviceResponse(
-                            id=f"usb-{device_dir.name}",
-                            name=name,
-                            type="usb",
-                            state="connected",
-                            vendor=vendor,
-                            capabilities=["read"]
-                        ))
-                except Exception:
-                    continue
+                    parts = line.split("ID ")
+                    if len(parts) < 2:
+                        continue
+                    
+                    id_and_name = parts[1]
+                    id_parts = id_and_name.split(" ", 1)
+                    if len(id_parts) < 2:
+                        continue
+                    
+                    usb_id = id_parts[0]  # e.g., "0951:1666"
+                    name = id_parts[1].strip()  # e.g., "Kingston Technology DataTraveler 100..."
+                    
+                    # Skip root hubs and Linux Foundation devices
+                    if "root hub" in name.lower() or "Linux Foundation" in name:
+                        continue
+                    
+                    # Extract vendor and product from name
+                    vendor = name.split()[0] if name else "Unknown"
+                    
+                    # Check if it's a storage device
+                    is_storage = any(word in name.lower() for word in ["disk", "storage", "stick", "flash", "traveler", "cruzer", "kyson"])
+                    
+                    devices.append(DeviceResponse(
+                        id=f"usb-{usb_id.replace(':', '-')}",
+                        name=name,
+                        type="usb",
+                        state="connected",
+                        vendor=vendor,
+                        capabilities=["storage", "read", "write", "eject"] if is_storage else ["read"]
+                    ))
+        except Exception:
+            pass
     
     # Check for serial ports
     import glob

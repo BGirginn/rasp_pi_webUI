@@ -15,10 +15,8 @@ import fcntl
 import termios
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-
-from .auth import get_current_user_ws
 
 router = APIRouter()
 
