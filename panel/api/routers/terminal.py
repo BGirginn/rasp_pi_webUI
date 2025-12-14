@@ -191,10 +191,47 @@ async def terminal_websocket(websocket: WebSocket):
             await websocket.send_json({"error": str(e)})
         except:
             pass
-    finally:
         if session:
             session.stop()
         try:
             await websocket.close()
         except:
             pass
+
+
+# Simple command execution for mobile app
+class CommandRequest(BaseModel):
+    command: str
+
+
+class CommandResponse(BaseModel):
+    output: str
+    exit_code: int
+
+
+@router.post("/exec", response_model=CommandResponse)
+async def execute_command(request: CommandRequest):
+    """Execute a simple command and return output (for mobile app)."""
+    import subprocess
+    
+    # Security: Block dangerous commands
+    dangerous = ['rm -rf', 'mkfs', 'dd if=', ':(){', 'chmod 777', '> /dev']
+    for d in dangerous:
+        if d in request.command:
+            return CommandResponse(output=f"Command blocked: {d}", exit_code=1)
+    
+    try:
+        result = subprocess.run(
+            request.command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        output = result.stdout + result.stderr
+        return CommandResponse(output=output or "(no output)", exit_code=result.returncode)
+    except subprocess.TimeoutExpired:
+        return CommandResponse(output="Command timed out (30s limit)", exit_code=124)
+    except Exception as e:
+        return CommandResponse(output=str(e), exit_code=1)
+
