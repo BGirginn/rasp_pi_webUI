@@ -24,8 +24,6 @@ function Sidebar() {
         { path: '/services', label: 'Services', icon: icons.services },
         { path: '/devices', label: 'Devices', icon: icons.devices },
         { path: '/telemetry', label: 'Telemetry', icon: icons.telemetry },
-        { path: '/jobs', label: 'Jobs', icon: icons.jobs },
-        { path: '/alerts', label: 'Alerts', icon: icons.alerts },
         { path: '/network', label: 'Network', icon: '🌐' },
         { path: '/terminal', label: 'Terminal', icon: '💻' },
     ]
@@ -36,15 +34,15 @@ function Sidebar() {
     }
 
     return (
-        <aside className="w-64 bg-gray-800/50 border-r border-gray-700/50 flex flex-col">
+        <aside className="w-64 h-screen sticky top-0 bg-gray-800/50 border-r border-gray-700/50 flex flex-col">
             {/* Logo */}
-            <div className="p-4 border-b border-gray-700/50">
+            <div className="p-4 border-b border-gray-700/50 flex-shrink-0">
                 <h1 className="text-xl font-bold gradient-text">Pi Control</h1>
                 <p className="text-xs text-gray-500 mt-1">Universal Control Panel</p>
             </div>
 
-            {/* Navigation */}
-            <nav className="flex-1 p-4 space-y-1">
+            {/* Navigation - scrollable */}
+            <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                 {navItems.map((item) => (
                     <NavLink
                         key={item.path}
@@ -72,8 +70,8 @@ function Sidebar() {
                 )}
             </nav>
 
-            {/* User section */}
-            <div className="p-4 border-t border-gray-700/50">
+            {/* User section - always visible */}
+            <div className="p-4 border-t border-gray-700/50 flex-shrink-0">
                 <div className="flex items-center gap-3 mb-3">
                     <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center">
                         <span className="text-lg">{icons.user}</span>
