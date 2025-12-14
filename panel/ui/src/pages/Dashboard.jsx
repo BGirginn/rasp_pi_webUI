@@ -16,27 +16,43 @@ function formatUptime(seconds) {
 
     return parts.join(' ') || '< 1m'
 }
-// Stat card component
-function StatCard({ title, value, unit, icon, trend, color = 'primary' }) {
-    const colorClasses = {
-        primary: 'from-primary-500/20 to-primary-600/10 border-primary-500/30',
-        success: 'from-green-500/20 to-green-600/10 border-green-500/30',
-        warning: 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30',
-        danger: 'from-red-500/20 to-red-600/10 border-red-500/30',
+
+// Metric card with neon border
+function MetricCard({ title, value, unit, icon, color = 'purple', subtitle }) {
+    const colorMap = {
+        purple: 'from-primary-500 to-primary-700',
+        green: 'from-green-500 to-green-700',
+        yellow: 'from-yellow-500 to-yellow-700',
+        red: 'from-red-500 to-red-700',
+        blue: 'from-blue-500 to-blue-700',
+    }
+
+    const glowMap = {
+        purple: 'shadow-neon',
+        green: 'shadow-neon-success',
+        yellow: 'shadow-[0_0_20px_rgba(245,158,11,0.3)]',
+        red: 'shadow-neon-danger',
+        blue: 'shadow-[0_0_20px_rgba(59,130,246,0.3)]',
     }
 
     return (
-        <div className={`glass-card rounded-xl p-5 bg-gradient-to-br ${colorClasses[color]} border`}>
-            <div className="flex items-start justify-between mb-3">
-                <span className="text-2xl">{icon}</span>
-                {trend && (
-                    <span className={`text-xs ${trend > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {trend > 0 ? '↑' : '↓'} {Math.abs(trend)}%
+        <div className="metric-card group">
+            {/* Gradient top border */}
+            <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${colorMap[color]} opacity-60 group-hover:opacity-100 transition-opacity`}></div>
+
+            <div className="flex items-start justify-between mb-4">
+                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colorMap[color]} flex items-center justify-center ${glowMap[color]}`}>
+                    <span className="text-xl">{icon}</span>
+                </div>
+                {subtitle && (
+                    <span className="text-xs text-gray-500 bg-dark-100 px-2 py-1 rounded-lg">
+                        {subtitle}
                     </span>
                 )}
             </div>
-            <p className="text-gray-400 text-sm mb-1">{title}</p>
-            <p className="text-2xl font-bold text-gray-100">
+
+            <p className="text-sm text-gray-400 mb-1">{title}</p>
+            <p className="text-3xl font-bold text-white">
                 {value}
                 {unit && <span className="text-lg font-normal text-gray-400 ml-1">{unit}</span>}
             </p>
@@ -46,24 +62,35 @@ function StatCard({ title, value, unit, icon, trend, color = 'primary' }) {
 
 // Alert card component
 function AlertCard({ severity, message, time }) {
-    const severityStyles = {
-        critical: 'border-l-red-500 bg-red-500/10',
-        warning: 'border-l-yellow-500 bg-yellow-500/10',
-        info: 'border-l-blue-500 bg-blue-500/10',
+    const severityConfig = {
+        critical: {
+            bg: 'bg-red-500/10',
+            border: 'border-l-red-500',
+            icon: '🔴',
+            text: 'text-red-400'
+        },
+        warning: {
+            bg: 'bg-yellow-500/10',
+            border: 'border-l-yellow-500',
+            icon: '🟡',
+            text: 'text-yellow-400'
+        },
+        info: {
+            bg: 'bg-blue-500/10',
+            border: 'border-l-blue-500',
+            icon: '🔵',
+            text: 'text-blue-400'
+        },
     }
 
-    const severityIcons = {
-        critical: '🔴',
-        warning: '🟡',
-        info: '🔵',
-    }
+    const config = severityConfig[severity] || severityConfig.info
 
     return (
-        <div className={`border-l-4 ${severityStyles[severity]} rounded-r-lg p-3 flex items-center gap-3`}>
-            <span className="text-lg">{severityIcons[severity]}</span>
-            <div className="flex-1">
-                <p className="text-sm text-gray-100">{message}</p>
-                <p className="text-xs text-gray-500">{time}</p>
+        <div className={`border-l-4 ${config.border} ${config.bg} rounded-r-xl p-4 flex items-center gap-3 backdrop-blur-sm`}>
+            <span className="text-lg">{config.icon}</span>
+            <div className="flex-1 min-w-0">
+                <p className={`text-sm ${config.text} font-medium`}>{message}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{time}</p>
             </div>
         </div>
     )
@@ -71,30 +98,23 @@ function AlertCard({ severity, message, time }) {
 
 // Resource card component
 function ResourceCard({ name, type, state, healthScore, provider }) {
-    const stateStyles = {
-        running: 'running',
-        stopped: 'stopped',
-        failed: 'failed',
+    const stateConfig = {
+        running: { dot: 'running', text: 'text-green-400' },
+        stopped: { dot: 'stopped', text: 'text-gray-400' },
+        failed: { dot: 'failed', text: 'text-red-400' },
     }
 
-    const healthBadge = {
-        healthy: healthScore >= 90,
-        degraded: healthScore >= 70 && healthScore < 90,
-        warning: healthScore >= 50 && healthScore < 70,
-        critical: healthScore < 50,
-    }
-
-    const healthClass = Object.keys(healthBadge).find((k) => healthBadge[k])
+    const config = stateConfig[state] || stateConfig.stopped
 
     return (
-        <div className="glass-card rounded-lg p-4 flex items-center gap-4">
-            <div className={`status-dot ${stateStyles[state]}`}></div>
+        <div className="flex items-center gap-4 p-3 rounded-xl bg-dark-100/50 hover:bg-dark-50/50 transition-colors border border-primary-500/5 hover:border-primary-500/20">
+            <div className={`status-dot ${config.dot}`}></div>
             <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-100 truncate">{name}</p>
+                <p className="font-medium text-white truncate">{name}</p>
                 <p className="text-xs text-gray-500">{provider} • {type}</p>
             </div>
-            <span className={`health-badge ${healthClass}`}>
-                {healthScore}
+            <span className={`text-xs font-mono ${config.text} bg-dark-200 px-2 py-1 rounded`}>
+                {state}
             </span>
         </div>
     )
@@ -121,15 +141,12 @@ export default function Dashboard() {
 
     useEffect(() => {
         loadDashboardData()
-
-        // Refresh every 5 seconds
         const interval = setInterval(loadDashboardData, 5000)
         return () => clearInterval(interval)
     }, [])
 
     async function loadDashboardData() {
         try {
-            // Load telemetry (real system metrics)
             const telemetryRes = await api.get('/telemetry/current')
             const metrics = telemetryRes.data?.metrics || {}
             const systemInfo = telemetryRes.data?.system || {}
@@ -149,13 +166,11 @@ export default function Dashboard() {
                 machine: systemInfo.machine || 'Unknown',
             })
 
-            // Load resources
             const resourcesRes = await api.get('/resources')
-            setResources(resourcesRes.data.slice(0, 5)) // Top 5
+            setResources(resourcesRes.data.slice(0, 5))
 
-            // Load alerts
             const alertsRes = await api.get('/alerts')
-            setAlerts(alertsRes.data.slice(0, 3)) // Top 3
+            setAlerts(alertsRes.data.slice(0, 3))
         } catch (err) {
             console.error('Failed to load dashboard data:', err)
         } finally {
@@ -163,58 +178,74 @@ export default function Dashboard() {
         }
     }
 
+    const getColor = (value, warn, crit) => {
+        if (value >= crit) return 'red'
+        if (value >= warn) return 'yellow'
+        return 'green'
+    }
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+                <div className="w-12 h-12 border-4 border-primary-500/30 border-t-primary-500 rounded-full animate-spin"></div>
             </div>
         )
     }
 
     return (
         <div className="space-y-6 animate-fade-in">
-            {/* Stats grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard
+            {/* Welcome header */}
+            <div className="mb-8">
+                <h1 className="text-3xl font-bold gradient-text">Dashboard</h1>
+                <p className="text-gray-500 mt-1">Welcome to {stats.hostname}</p>
+            </div>
+
+            {/* Metrics grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+                <MetricCard
                     title="CPU Usage"
                     value={stats.cpu}
                     unit="%"
-                    icon="🔲"
-                    color={stats.cpu > 80 ? 'danger' : stats.cpu > 60 ? 'warning' : 'success'}
+                    icon="⚡"
+                    color={getColor(stats.cpu, 60, 80)}
+                    subtitle={`${stats.machine}`}
                 />
-                <div className={`glass-card rounded-xl p-5 bg-gradient-to-br ${stats.memory > 80 ? 'from-red-500/20 to-red-600/10 border-red-500/30' : stats.memory > 60 ? 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30' : 'from-green-500/20 to-green-600/10 border-green-500/30'} border`}>
-                    <div className="flex items-start justify-between mb-3">
-                        <span className="text-2xl">💾</span>
-                        <span className="text-xs text-gray-400">{stats.memory}%</span>
-                    </div>
-                    <p className="text-gray-400 text-sm mb-1">Memory</p>
-                    <p className="text-2xl font-bold text-gray-100">
-                        {stats.memUsedGb}<span className="text-lg font-normal text-gray-400"> / {stats.memTotalGb} GB</span>
-                    </p>
-                </div>
-                <div className={`glass-card rounded-xl p-5 bg-gradient-to-br ${stats.disk > 85 ? 'from-red-500/20 to-red-600/10 border-red-500/30' : stats.disk > 70 ? 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30' : 'from-primary-500/20 to-primary-600/10 border-primary-500/30'} border`}>
-                    <div className="flex items-start justify-between mb-3">
-                        <span className="text-2xl">💽</span>
-                        <span className="text-xs text-gray-400">{stats.disk}%</span>
-                    </div>
-                    <p className="text-gray-400 text-sm mb-1">Disk</p>
-                    <p className="text-2xl font-bold text-gray-100">
-                        {stats.diskUsedGb}<span className="text-lg font-normal text-gray-400"> / {stats.diskTotalGb} GB</span>
-                    </p>
-                </div>
-                <StatCard
+                <MetricCard
+                    title="Memory"
+                    value={stats.memUsedGb}
+                    unit={`/ ${stats.memTotalGb} GB`}
+                    icon="💾"
+                    color={getColor(stats.memory, 60, 80)}
+                    subtitle={`${stats.memory}%`}
+                />
+                <MetricCard
+                    title="Disk"
+                    value={stats.diskUsedGb}
+                    unit={`/ ${stats.diskTotalGb} GB`}
+                    icon="💿"
+                    color={getColor(stats.disk, 70, 85)}
+                    subtitle={`${stats.disk}%`}
+                />
+                <MetricCard
                     title="Temperature"
                     value={stats.temp || 'N/A'}
                     unit={stats.temp ? '°C' : ''}
                     icon="🌡️"
-                    color={stats.temp > 70 ? 'danger' : stats.temp > 60 ? 'warning' : 'success'}
+                    color={getColor(stats.temp, 60, 70)}
+                    subtitle={formatUptime(stats.uptime)}
                 />
             </div>
 
+            {/* Two column layout */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Active Alerts */}
-                <div className="glass-card rounded-xl p-5">
-                    <h3 className="text-lg font-semibold text-gray-100 mb-4">Active Alerts</h3>
+                <div className="glass-card rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-5">
+                        <h3 className="text-lg font-semibold text-white">Active Alerts</h3>
+                        <span className="text-xs text-gray-500 bg-dark-100 px-3 py-1 rounded-full">
+                            {alerts.length} active
+                        </span>
+                    </div>
                     {alerts.length > 0 ? (
                         <div className="space-y-3">
                             {alerts.map((alert, i) => (
@@ -227,18 +258,23 @@ export default function Dashboard() {
                             ))}
                         </div>
                     ) : (
-                        <div className="text-center py-8 text-gray-500">
-                            <span className="text-3xl mb-2 block">✅</span>
-                            <p>No active alerts</p>
+                        <div className="text-center py-10">
+                            <span className="text-4xl mb-3 block">✅</span>
+                            <p className="text-gray-400">All systems operational</p>
                         </div>
                     )}
                 </div>
 
                 {/* Top Resources */}
-                <div className="glass-card rounded-xl p-5">
-                    <h3 className="text-lg font-semibold text-gray-100 mb-4">Top Resources</h3>
+                <div className="glass-card rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-5">
+                        <h3 className="text-lg font-semibold text-white">Services</h3>
+                        <span className="text-xs text-gray-500 bg-dark-100 px-3 py-1 rounded-full">
+                            {resources.filter(r => r.state === 'running').length} running
+                        </span>
+                    </div>
                     {resources.length > 0 ? (
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                             {resources.map((resource) => (
                                 <ResourceCard
                                     key={resource.id}
@@ -251,33 +287,33 @@ export default function Dashboard() {
                             ))}
                         </div>
                     ) : (
-                        <div className="text-center py-8 text-gray-500">
-                            <span className="text-3xl mb-2 block">📦</span>
-                            <p>No resources discovered yet</p>
+                        <div className="text-center py-10">
+                            <span className="text-4xl mb-3 block">📦</span>
+                            <p className="text-gray-400">No services discovered</p>
                         </div>
                     )}
                 </div>
             </div>
 
             {/* System Info */}
-            <div className="glass-card rounded-xl p-5">
-                <h3 className="text-lg font-semibold text-gray-100 mb-4">System Info</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="glass-card rounded-2xl p-6">
+                <h3 className="text-lg font-semibold text-white mb-5">System Info</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                     <div>
-                        <p className="text-gray-500">Hostname</p>
-                        <p className="text-gray-100">{stats.hostname}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Hostname</p>
+                        <p className="text-white font-mono">{stats.hostname}</p>
                     </div>
                     <div>
-                        <p className="text-gray-500">OS</p>
-                        <p className="text-gray-100">{stats.os}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Operating System</p>
+                        <p className="text-white">{stats.os}</p>
                     </div>
                     <div>
-                        <p className="text-gray-500">Uptime</p>
-                        <p className="text-gray-100">{formatUptime(stats.uptime)}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Uptime</p>
+                        <p className="text-white font-mono">{formatUptime(stats.uptime)}</p>
                     </div>
                     <div>
-                        <p className="text-gray-500">Architecture</p>
-                        <p className="text-gray-100">{stats.machine}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Architecture</p>
+                        <p className="text-white font-mono">{stats.machine}</p>
                     </div>
                 </div>
             </div>
