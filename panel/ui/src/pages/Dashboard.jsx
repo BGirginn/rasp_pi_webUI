@@ -105,7 +105,11 @@ export default function Dashboard() {
     const [stats, setStats] = useState({
         cpu: 0,
         memory: 0,
+        memUsedGb: 0,
+        memTotalGb: 0,
         disk: 0,
+        diskUsedGb: 0,
+        diskTotalGb: 0,
         temp: 0,
         uptime: 0,
         hostname: 'Loading...',
@@ -133,7 +137,11 @@ export default function Dashboard() {
             setStats({
                 cpu: Math.round(metrics['host.cpu.pct_total'] || 0),
                 memory: Math.round(metrics['host.mem.pct'] || 0),
+                memUsedGb: ((metrics['host.mem.used_mb'] || 0) / 1024).toFixed(1),
+                memTotalGb: ((metrics['host.mem.total_mb'] || 0) / 1024).toFixed(1),
                 disk: Math.round(metrics['disk._root.used_pct'] || 0),
+                diskUsedGb: (metrics['disk._root.used_gb'] || 0).toFixed(1),
+                diskTotalGb: (metrics['disk._root.total_gb'] || 0).toFixed(1),
                 temp: Math.round(metrics['host.temp.cpu_c'] || 0),
                 uptime: metrics['host.uptime.seconds'] || 0,
                 hostname: systemInfo.hostname || 'Unknown',
@@ -174,24 +182,30 @@ export default function Dashboard() {
                     icon="🔲"
                     color={stats.cpu > 80 ? 'danger' : stats.cpu > 60 ? 'warning' : 'success'}
                 />
-                <StatCard
-                    title="Memory"
-                    value={stats.memory}
-                    unit="%"
-                    icon="💾"
-                    color={stats.memory > 80 ? 'danger' : stats.memory > 60 ? 'warning' : 'success'}
-                />
-                <StatCard
-                    title="Disk"
-                    value={stats.disk}
-                    unit="%"
-                    icon="💽"
-                    color={stats.disk > 85 ? 'danger' : stats.disk > 70 ? 'warning' : 'primary'}
-                />
+                <div className={`glass-card rounded-xl p-5 bg-gradient-to-br ${stats.memory > 80 ? 'from-red-500/20 to-red-600/10 border-red-500/30' : stats.memory > 60 ? 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30' : 'from-green-500/20 to-green-600/10 border-green-500/30'} border`}>
+                    <div className="flex items-start justify-between mb-3">
+                        <span className="text-2xl">💾</span>
+                        <span className="text-xs text-gray-400">{stats.memory}%</span>
+                    </div>
+                    <p className="text-gray-400 text-sm mb-1">Memory</p>
+                    <p className="text-2xl font-bold text-gray-100">
+                        {stats.memUsedGb}<span className="text-lg font-normal text-gray-400"> / {stats.memTotalGb} GB</span>
+                    </p>
+                </div>
+                <div className={`glass-card rounded-xl p-5 bg-gradient-to-br ${stats.disk > 85 ? 'from-red-500/20 to-red-600/10 border-red-500/30' : stats.disk > 70 ? 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30' : 'from-primary-500/20 to-primary-600/10 border-primary-500/30'} border`}>
+                    <div className="flex items-start justify-between mb-3">
+                        <span className="text-2xl">💽</span>
+                        <span className="text-xs text-gray-400">{stats.disk}%</span>
+                    </div>
+                    <p className="text-gray-400 text-sm mb-1">Disk</p>
+                    <p className="text-2xl font-bold text-gray-100">
+                        {stats.diskUsedGb}<span className="text-lg font-normal text-gray-400"> / {stats.diskTotalGb} GB</span>
+                    </p>
+                </div>
                 <StatCard
                     title="Temperature"
-                    value={stats.temp}
-                    unit="°C"
+                    value={stats.temp || 'N/A'}
+                    unit={stats.temp ? '°C' : ''}
                     icon="🌡️"
                     color={stats.temp > 70 ? 'danger' : stats.temp > 60 ? 'warning' : 'success'}
                 />
