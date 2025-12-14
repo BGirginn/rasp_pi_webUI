@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # ===========================================
+  # Caddy - Reverse Proxy with Auto HTTPS
+  # ===========================================
+  caddy:
+    image: caddy:2.7-alpine
+    container_name: pi-control-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    networks:
+      - pi-control-network
+    depends_on:
+      - panel
+
+  # ===========================================
+  # Panel - API + Static UI
+  # ===========================================
+  panel:
+    build:
+      context: ./panel
+      dockerfile: Dockerfile
+    container_name: pi-control-panel
+    environment:
+      - DATABASE_PATH=/data/control.db
+      - TELEMETRY_DB_PATH=/data/telemetry.db
+      - AGENT_SOCKET=/run/agent.sock
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - PANEL_ALLOW_LAN=${PANEL_ALLOW_LAN:-false}
+      - API_DEBUG=${API_DEBUG:-false}
+    volumes:
+      - ./data:/data
+      - agent_socket:/run
+      - ./secrets:/run/secrets:ro
+    restart: unless-stopped
+    networks:
+      - pi-control-network
+    depends_on:
+      - mosquitto
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+
+  # ===========================================
+  # Mosquitto - MQTT Broker
+  # ===========================================
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: pi-control-mqtt
+    ports:
+      - "1883:1883"  # Tailscale network only
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/acl.conf:/mosquitto/config/acl.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - pi-control-network
+
+  # ===========================================
+  # Telemetry API (Read-Only, High Frequency)
+  # Optional: Separate service for load isolation
+  # ===========================================
+  # telemetry:
+  #   build:
+  #     context: ./panel
+  #     dockerfile: Dockerfile.telemetry
+  #   container_name: pi-control-telemetry
+  #   environment:
+  #     - TELEMETRY_DB_PATH=/data/telemetry.db
+  #     - READ_ONLY=true
+  #   volumes:
+  #     - ./data:/data:ro
+  #   restart: unless-stopped
+  #   networks:
+  #     - pi-control-network
+
+networks:
+  pi-control-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  mosquitto_data:
+  mosquitto_log:
+  agent_socket:

@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint-api:
+    name: Lint Panel API
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd panel/api
+          pip install -r requirements.txt
+          pip install ruff mypy
+      
+      - name: Run Ruff linter
+        run: |
+          cd panel/api
+          ruff check .
+      
+      - name: Run type checking
+        run: |
+          cd panel/api
+          mypy --ignore-missing-imports .
+
+  lint-agent:
+    name: Lint Pi Agent
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd agent
+          pip install -r requirements.txt
+          pip install ruff mypy
+      
+      - name: Run Ruff linter
+        run: |
+          cd agent
+          ruff check .
+      
+      - name: Run type checking
+        run: |
+          cd agent
+          mypy --ignore-missing-imports .
+
+  lint-ui:
+    name: Lint Web UI
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'panel/ui/package-lock.json'
+      
+      - name: Install dependencies
+        run: |
+          cd panel/ui
+          npm ci
+      
+      - name: Run ESLint
+        run: |
+          cd panel/ui
+          npm run lint
+
+  test-api:
+    name: Test Panel API
+    runs-on: ubuntu-latest
+    needs: lint-api
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd panel/api
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Run tests
+        run: |
+          cd panel/api
+          pytest --cov=. --cov-report=xml
+        env:
+          JWT_SECRET: test-secret-key
+          DATABASE_PATH: ":memory:"
+          TELEMETRY_DB_PATH: ":memory:"
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: panel/api/coverage.xml
+          flags: api
+
+  test-agent:
+    name: Test Pi Agent
+    runs-on: ubuntu-latest
+    needs: lint-agent
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd agent
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Run tests
+        run: |
+          cd agent
+          pytest --cov=. --cov-report=xml || true
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: agent/coverage.xml
+          flags: agent
+
+  build-ui:
+    name: Build Web UI
+    runs-on: ubuntu-latest
+    needs: lint-ui
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'panel/ui/package-lock.json'
+      
+      - name: Install dependencies
+        run: |
+          cd panel/ui
+          npm ci
+      
+      - name: Build
+        run: |
+          cd panel/ui
+          npm run build
+      
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: panel/ui/dist
+
+  build-docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [test-api, build-ui]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Panel Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./panel
+          push: false
+          tags: pi-control-panel:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'

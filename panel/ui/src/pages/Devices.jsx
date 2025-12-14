@@ -1,0 +1,327 @@
+import { useState, useEffect } from 'react'
+import { api } from '../services/api'
+import { useAuth } from '../hooks/useAuth'
+
+// Device card component
+function DeviceCard({ device, onCommand }) {
+    const { isOperator } = useAuth()
+    const [loading, setLoading] = useState(false)
+    const [commandInput, setCommandInput] = useState('')
+    const [showCommands, setShowCommands] = useState(false)
+
+    const stateColors = {
+        online: 'text-green-400 bg-green-500/20',
+        offline: 'text-gray-400 bg-gray-500/20',
+        connected: 'text-blue-400 bg-blue-500/20',
+        disconnected: 'text-red-400 bg-red-500/20',
+    }
+
+    const typeIcons = {
+        esp: '📡',
+        usb: '🔌',
+        gpio: '⚡',
+        serial: '🔗',
+        bluetooth: '📶',
+    }
+
+    const handleCommand = async (command, payload = null) => {
+        setLoading(true)
+        try {
+            await onCommand(device.id, command, payload)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className="glass-card rounded-xl p-5 animate-slide-in">
+            <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                    <span className="text-2xl">{typeIcons[device.type] || '🔧'}</span>
+                    <div>
+                        <h3 className="font-semibold text-gray-100">{device.name}</h3>
+                        <p className="text-sm text-gray-500">{device.type} • {device.id}</p>
+                    </div>
+                </div>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${stateColors[device.state]}`}>
+                    {device.state}
+                </span>
+            </div>
+
+            {/* Telemetry data */}
+            {device.telemetry && Object.keys(device.telemetry).length > 0 && (
+                <div className="mb-4 p-3 bg-gray-800/50 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-2">Live Telemetry</p>
+                    <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(device.telemetry).map(([key, value]) => (
+                            <div key={key} className="flex justify-between">
+                                <span className="text-sm text-gray-400">{key}:</span>
+                                <span className="text-sm text-gray-100 font-mono">
+                                    {typeof value === 'boolean' ? (value ? '✅' : '❌') : value}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Capabilities */}
+            {device.capabilities && device.capabilities.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-4">
+                    {device.capabilities.map((cap) => (
+                        <span
+                            key={cap}
+                            className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300"
+                        >
+                            {cap}
+                        </span>
+                    ))}
+                </div>
+            )}
+
+            {/* Actions */}
+            {isOperator && device.state === 'online' && (
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setShowCommands(!showCommands)}
+                        className="btn btn-secondary text-sm py-1 px-3 flex-1"
+                    >
+                        {showCommands ? 'Close' : '📤 Send Command'}
+                    </button>
+                    {device.type === 'esp' && (
+                        <button
+                            onClick={() => handleCommand('ping')}
+                            disabled={loading}
+                            className="btn btn-ghost text-sm py-1 px-3"
+                        >
+                            {loading ? '...' : '📶 Ping'}
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {/* Command input */}
+            {showCommands && (
+                <div className="mt-3 p-3 bg-gray-800/50 rounded-lg animate-fade-in">
+                    <p className="text-xs text-gray-500 mb-2">Quick Commands</p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        {device.type === 'esp' && (
+                            <>
+                                <button
+                                    onClick={() => handleCommand('reset')}
+                                    className="btn btn-ghost text-xs py-1 px-2"
+                                >
+                                    🔄 Reset
+                                </button>
+                                <button
+                                    onClick={() => handleCommand('config')}
+                                    className="btn btn-ghost text-xs py-1 px-2"
+                                >
+                                    ⚙️ Config
+                                </button>
+                                {device.capabilities?.includes('relay') && (
+                                    <>
+                                        <button
+                                            onClick={() => handleCommand('set_relay', { state: true })}
+                                            className="btn btn-ghost text-xs py-1 px-2"
+                                        >
+                                            💡 ON
+                                        </button>
+                                        <button
+                                            onClick={() => handleCommand('set_relay', { state: false })}
+                                            className="btn btn-ghost text-xs py-1 px-2"
+                                        >
+                                            💤 OFF
+                                        </button>
+                                    </>
+                                )}
+                            </>
+                        )}
+                    </div>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={commandInput}
+                            onChange={(e) => setCommandInput(e.target.value)}
+                            placeholder="Custom command..."
+                            className="input text-sm flex-1"
+                        />
+                        <button
+                            onClick={() => {
+                                handleCommand(commandInput)
+                                setCommandInput('')
+                            }}
+                            disabled={!commandInput || loading}
+                            className="btn btn-primary text-sm py-1 px-3"
+                        >
+                            Send
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Last seen */}
+            {device.last_seen && (
+                <p className="text-xs text-gray-500 mt-3">
+                    Last seen: {new Date(device.last_seen).toLocaleString()}
+                </p>
+            )}
+        </div>
+    )
+}
+
+// Filter tabs
+function FilterTabs({ filters, active, onChange }) {
+    return (
+        <div className="flex gap-2 flex-wrap">
+            {filters.map((f) => (
+                <button
+                    key={f.value}
+                    onClick={() => onChange(f.value)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${active === f.value
+                            ? 'bg-primary-600 text-white'
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        }`}
+                >
+                    {f.icon} {f.label}
+                    {f.count !== undefined && (
+                        <span className="ml-2 px-2 py-0.5 rounded-full bg-gray-700 text-xs">
+                            {f.count}
+                        </span>
+                    )}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+export default function Devices() {
+    const [devices, setDevices] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState(null)
+    const [filter, setFilter] = useState('all')
+
+    useEffect(() => {
+        loadDevices()
+
+        // Refresh every 10 seconds
+        const interval = setInterval(loadDevices, 10000)
+        return () => clearInterval(interval)
+    }, [])
+
+    async function loadDevices() {
+        try {
+            const response = await api.get('/devices')
+            setDevices(response.data)
+        } catch (err) {
+            setError('Failed to load devices')
+            console.error(err)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    async function handleCommand(deviceId, command, payload) {
+        try {
+            await api.post(`/devices/${deviceId}/command`, { command, payload })
+            // Reload after command
+            await loadDevices()
+        } catch (err) {
+            console.error('Command failed:', err)
+            alert(`Command failed: ${err.message}`)
+        }
+    }
+
+    // Filter devices
+    const filteredDevices = filter === 'all'
+        ? devices
+        : devices.filter((d) => d.type === filter)
+
+    // Calculate counts
+    const counts = {
+        all: devices.length,
+        esp: devices.filter((d) => d.type === 'esp').length,
+        usb: devices.filter((d) => d.type === 'usb').length,
+        gpio: devices.filter((d) => d.type === 'gpio').length,
+        serial: devices.filter((d) => d.type === 'serial').length,
+    }
+
+    const filters = [
+        { value: 'all', label: 'All', icon: '📱', count: counts.all },
+        { value: 'esp', label: 'ESP/MQTT', icon: '📡', count: counts.esp },
+        { value: 'usb', label: 'USB', icon: '🔌', count: counts.usb },
+        { value: 'gpio', label: 'GPIO', icon: '⚡', count: counts.gpio },
+        { value: 'serial', label: 'Serial', icon: '🔗', count: counts.serial },
+    ]
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-6 animate-fade-in">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <h2 className="text-2xl font-bold text-gray-100">Devices</h2>
+                <div className="flex gap-3">
+                    <button onClick={loadDevices} className="btn btn-secondary">
+                        🔄 Refresh
+                    </button>
+                    <button className="btn btn-ghost">
+                        📡 Scan USB
+                    </button>
+                </div>
+            </div>
+
+            {/* Filters */}
+            <FilterTabs filters={filters} active={filter} onChange={setFilter} />
+
+            {/* Error */}
+            {error && (
+                <div className="p-4 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400">
+                    {error}
+                </div>
+            )}
+
+            {/* Grid */}
+            {filteredDevices.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredDevices.map((device) => (
+                        <DeviceCard
+                            key={device.id}
+                            device={device}
+                            onCommand={handleCommand}
+                        />
+                    ))}
+                </div>
+            ) : (
+                <div className="glass-card rounded-xl p-8 text-center">
+                    <span className="text-5xl mb-4 block">🔌</span>
+                    <h3 className="text-xl font-semibold text-gray-100 mb-2">
+                        No devices found
+                    </h3>
+                    <p className="text-gray-500">
+                        {filter === 'all'
+                            ? 'Connect USB or configure ESP devices to get started'
+                            : `No ${filter.toUpperCase()} devices detected`}
+                    </p>
+                </div>
+            )}
+
+            {/* GPIO Pins Section */}
+            <div className="glass-card rounded-xl p-5">
+                <h3 className="text-lg font-semibold text-gray-100 mb-4">GPIO Pins</h3>
+                <p className="text-gray-500 text-sm mb-4">
+                    Configure and monitor GPIO pins on your Raspberry Pi
+                </p>
+                <button className="btn btn-secondary">
+                    ⚡ Open GPIO Manager
+                </button>
+            </div>
+        </div>
+    )
+}
