@@ -175,12 +175,14 @@ async def get_dashboard_data(user: dict = Depends(get_current_user)):
     """Get aggregated dashboard data."""
     from db import get_control_db
     
-    # Try to get live telemetry
+    # Try to get live telemetry (either from agent or local system)
     try:
         telemetry = await agent_client.get_current_telemetry()
         metrics = telemetry.get("metrics", {})
     except Exception:
-        metrics = {}
+        # Fallback: Get local system metrics
+        local_data = await _get_local_system_metrics()
+        metrics = local_data.get("metrics", {})
     
     # Get resource counts from DB
     db = await get_control_db()
@@ -202,17 +204,17 @@ async def get_dashboard_data(user: dict = Depends(get_current_user)):
             cpu_pct=metrics.get("host.cpu.pct_total", 0),
             memory_pct=metrics.get("host.mem.pct", 0),
             memory_used_mb=metrics.get("host.mem.used_mb", 0),
-            memory_total_mb=metrics.get("host.mem.available_mb", 0) + metrics.get("host.mem.used_mb", 0),
+            memory_total_mb=metrics.get("host.mem.total_mb", 0),
             disk_pct=metrics.get("disk._root.used_pct", 0),
             disk_used_gb=metrics.get("disk._root.used_gb", 0),
-            disk_total_gb=0,
+            disk_total_gb=metrics.get("disk._root.total_gb", 0),
             temperature_c=metrics.get("host.temp.cpu_c"),
             load_1m=metrics.get("host.load.1m", 0),
             load_5m=metrics.get("host.load.5m", 0),
             load_15m=metrics.get("host.load.15m", 0),
-            network_rx_bytes=int(metrics.get("net.eth0.rx_bytes", 0)),
-            network_tx_bytes=int(metrics.get("net.eth0.tx_bytes", 0)),
-            uptime_seconds=0,
+            network_rx_bytes=int(metrics.get("host.net.rx_bytes", 0)),
+            network_tx_bytes=int(metrics.get("host.net.tx_bytes", 0)),
+            uptime_seconds=int(metrics.get("host.uptime.seconds", 0)),
         ),
         resource_counts=resource_counts,
         alert_counts=alert_counts,
