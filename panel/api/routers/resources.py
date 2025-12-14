@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from db import get_control_db
+from services.agent_client import agent_client
 from .auth import get_current_user, require_role
 
 router = APIRouter()
@@ -254,17 +255,23 @@ async def execute_action(
     """Execute an action on a resource."""
     db = await get_control_db()
     
-    # Get resource
+    # Get resource from DB
     cursor = await db.execute(
         "SELECT id, name, class, provider FROM resources WHERE id = ?",
         (resource_id,)
     )
     row = await cursor.fetchone()
     
-    if not row:
+    # If not in DB but it's a systemd service, allow action
+    if not row and resource_id.startswith("systemd-"):
+        service_name = resource_id.replace("systemd-", "")
+        resource_name = service_name
+        resource_class = "APP"
+        provider = "systemd"
+    elif not row:
         raise HTTPException(status_code=404, detail="Resource not found")
-    
-    resource_name, resource_class, provider = row[1], row[2], row[3]
+    else:
+        resource_name, resource_class, provider = row[1], row[2], row[3]
     
     # Check CORE protection
     if resource_class == "CORE":
@@ -282,8 +289,17 @@ async def execute_action(
                 detail=f"Operators can only {allowed_actions} on SYSTEM resources"
             )
     
-    # TODO: Call agent RPC to execute action
-    # For now, return placeholder
+    # Execute the action based on provider type
+    action_result = None
+    if provider == "systemd" and resource_id.startswith("systemd-"):
+        service_name = resource_id.replace("systemd-", "")
+        action_result = await _execute_systemd_action(service_name, request.action)
+    else:
+        # Try agent RPC for other providers
+        try:
+            action_result = await agent_client.execute_action(resource_id, request.action, request.params)
+        except Exception:
+            action_result = {"success": False, "message": "Agent unavailable"}
     
     # Audit log
     await db.execute(
@@ -293,11 +309,54 @@ async def execute_action(
     )
     await db.commit()
     
+    if action_result and not action_result.get("success", True):
+        raise HTTPException(status_code=500, detail=action_result.get("message", "Action failed"))
+    
     return ActionResponse(
         success=True,
         message=f"Action '{request.action}' executed on {resource_name}",
-        data={"resource_id": resource_id, "action": request.action}
+        data={"resource_id": resource_id, "action": request.action, "result": action_result}
     )
+
+
+async def _execute_systemd_action(service_name: str, action: str) -> dict:
+    """Execute a systemctl action on a service."""
+    import subprocess
+    
+    # Allowed actions
+    allowed = ["start", "stop", "restart", "status"]
+    if action not in allowed:
+        return {"success": False, "message": f"Action '{action}' not allowed. Use: {allowed}"}
+    
+    # Protected services that cannot be stopped
+    protected = ["sshd", "ssh", "pi-control", "systemd-journald", "dbus", "NetworkManager"]
+    if action in ["stop"] and service_name in protected:
+        return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
+    
+    try:
+        result = subprocess.run(
+            ["sudo", "systemctl", action, f"{service_name}.service"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0:
+            return {
+                "success": True,
+                "message": f"Service {service_name} {action} successful",
+                "output": result.stdout
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to {action} {service_name}",
+                "error": result.stderr
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": f"Timeout executing {action} on {service_name}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 @router.post("/{resource_id}/manage")
