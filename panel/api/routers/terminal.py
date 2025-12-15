@@ -32,30 +32,39 @@ class TerminalSession:
         self.running = False
     
     async def start(self, cols: int = 80, rows: int = 24):
-        """Start a new terminal session - connects to host system."""
+        """Start a new terminal session - connects to host system via SSH."""
         # Fork a pseudo-terminal
         self.pid, self.fd = pty.fork()
         
         if self.pid == 0:
-            # Child process - execute shell on HOST system
+            # Child process - SSH to host
             os.environ["TERM"] = "xterm-256color"
             os.environ["COLORTERM"] = "truecolor"
             
-            # Use nsenter to access host namespace (requires privileged container)
-            # If running in privileged mode with PID namespace access
+            # Get host gateway IP (default route to host)
+            import subprocess
             try:
-                # Try to access host via nsenter
-                os.execvp("nsenter", [
-                    "nsenter",
-                    "-t", "1",  # PID 1 (init on host)
-                    "-m", "-u", "-i", "-n", "-p",  # All namespaces
-                    "--",
-                    "/bin/bash", "-l"
-                ])
+                result = subprocess.run(
+                    ["ip", "route", "show", "default"],
+                    capture_output=True, text=True
+                )
+                # Parse: default via 172.19.0.1 dev eth0
+                gateway = result.stdout.split()[2] if result.stdout else "host.docker.internal"
             except:
-                # Fallback to container shell
-                shell = os.environ.get("SHELL", "/bin/bash")
-                os.execvp(shell, [shell, "-l"])
+                gateway = "host.docker.internal"
+            
+            # SSH to host (assuming SSH key or password-less setup)
+            # Use -o options to skip host key verification in container
+            # Using sshpass for password auth (password from env)
+            ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
+            os.execvp("sshpass", [
+                "sshpass", "-p", ssh_password,
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                f"bgirgin@{gateway}",  # Connect to host via gateway
+            ])
         else:
             # Parent process
             self.running = True
