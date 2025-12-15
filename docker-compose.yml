@@ -28,6 +28,9 @@ services:
       context: ./panel
       dockerfile: Dockerfile
     container_name: pi-control-panel
+    # Required for terminal to access host system
+    privileged: true
+    pid: host
     environment:
       - DATABASE_PATH=/data/control.db
       - TELEMETRY_DB_PATH=/data/telemetry.db

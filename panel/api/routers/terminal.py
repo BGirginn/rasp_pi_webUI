@@ -32,18 +32,30 @@ class TerminalSession:
         self.running = False
     
     async def start(self, cols: int = 80, rows: int = 24):
-        """Start a new terminal session."""
+        """Start a new terminal session - connects to host system."""
         # Fork a pseudo-terminal
         self.pid, self.fd = pty.fork()
         
         if self.pid == 0:
-            # Child process - execute shell
+            # Child process - execute shell on HOST system
             os.environ["TERM"] = "xterm-256color"
             os.environ["COLORTERM"] = "truecolor"
             
-            # Execute bash or sh
-            shell = os.environ.get("SHELL", "/bin/bash")
-            os.execvp(shell, [shell, "-l"])
+            # Use nsenter to access host namespace (requires privileged container)
+            # If running in privileged mode with PID namespace access
+            try:
+                # Try to access host via nsenter
+                os.execvp("nsenter", [
+                    "nsenter",
+                    "-t", "1",  # PID 1 (init on host)
+                    "-m", "-u", "-i", "-n", "-p",  # All namespaces
+                    "--",
+                    "/bin/bash", "-l"
+                ])
+            except:
+                # Fallback to container shell
+                shell = os.environ.get("SHELL", "/bin/bash")
+                os.execvp(shell, [shell, "-l"])
         else:
             # Parent process
             self.running = True
