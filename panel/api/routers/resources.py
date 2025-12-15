@@ -96,114 +96,159 @@ async def list_resources(
 
 
 async def _get_live_systemd_services() -> List[ResourceResponse]:
-    """Get real systemd services from the system."""
-    import subprocess
+    """Get real systemd services from the HOST system via SSH."""
     from datetime import datetime
+    from services.host_exec import run_host_command_simple
     
     services = []
     
-    # Common services to monitor on a Pi
-    important_services = [
-        "tailscaled",     # Tailscale VPN
-        "docker",         # Docker
-        "sshd", "ssh",    # SSH
-        "nginx", "caddy", # Web servers
-        "mosquitto",      # MQTT
-        "bluetooth",      # Bluetooth
-        "avahi-daemon",   # mDNS
-        "cups",           # Printing
-        "cron",           # Cron jobs
-        "minecraft",      # Minecraft server
-        "picontrol",      # Pi Control Panel
-        "home-assistant", # Home Assistant
-        "zigbee2mqtt",    # Zigbee
-        "node-red",       # Node-RED
-        "grafana",        # Grafana
-        "prometheus",     # Prometheus
-        "influxdb",       # InfluxDB
+    # === APP Services (user can start/stop/restart) ===
+    app_services = [
+        "tailscaled",      # Tailscale VPN
+        "docker",          # Docker
+        "minecraft-server", "minecraft",  # Minecraft
+        "home-assistant",  # Home Assistant
+        "zigbee2mqtt",     # Zigbee
+        "node-red",        # Node-RED
+        "grafana-server", "grafana",  # Grafana
+        "prometheus",      # Prometheus
+        "influxdb",        # InfluxDB
+        "mosquitto",       # MQTT
+        "nginx",           # Nginx
+        "apache2", "httpd",  # Apache
+        "postgresql", "postgres",  # PostgreSQL
+        "mysql", "mariadb",  # MySQL/MariaDB
+        "redis-server", "redis",  # Redis
+        "pihole-FTL",      # Pi-hole
+        "jellyfin",        # Jellyfin
+        "plex",            # Plex
+        "transmission-daemon",  # Transmission
+        "cups",            # Printing
+        "samba", "smbd",   # Samba
+    ]
+    
+    # === SYSTEM Services (can restart, but be careful) ===
+    system_services = [
+        "ssh", "sshd",           # SSH
+        "bluetooth",             # Bluetooth
+        "NetworkManager",        # Network Manager
+        "wpa_supplicant",        # WiFi
+        "avahi-daemon",          # mDNS/Bonjour
+        "cron", "cronie",        # Cron
+        "rsyslog",               # Syslog
+        "ntp", "systemd-timesyncd", "chrony",  # Time sync
+        "udev", "systemd-udevd", # Device manager
+        "dnsmasq",               # DNS
+        "dhcpcd",                # DHCP
+    ]
+    
+    # === CORE Services (read-only, never modify) ===
+    core_services = [
+        "systemd-journald",
+        "systemd-logind",
+        "dbus",
+        "polkit",
+        "systemd-resolved",
     ]
     
     try:
-        # Get all active services
-        result = subprocess.run(
-            ["systemctl", "list-units", "--type=service", "--all", "--no-pager", "--plain"],
-            capture_output=True,
-            text=True,
-            timeout=10
+        # Get running services from HOST
+        output = run_host_command_simple(
+            "systemctl list-units --type=service --state=running --no-pager --plain",
+            timeout=15
         )
         
-        if result.returncode != 0:
+        if not output:
             return []
         
-        lines = result.stdout.strip().split("\n")
-        
-        for line in lines[1:]:  # Skip header
-            if not line.strip():
+        running_names = set()
+        for line in output.strip().split("\n"):
+            if not line.strip() or line.startswith("UNIT"):
                 continue
-            
             parts = line.split()
-            if len(parts) < 4:
-                continue
+            if parts and parts[0].endswith(".service"):
+                name = parts[0].replace(".service", "")
+                running_names.add(name)
+        
+        # Get all important services status
+        all_target_services = app_services + system_services + core_services
+        
+        for svc_name in all_target_services:
+            # Check if service exists and get its status
+            status_output = run_host_command_simple(
+                f"systemctl is-active {svc_name}.service 2>/dev/null || echo inactive",
+                timeout=5
+            ).strip()
             
-            unit = parts[0]
-            if not unit.endswith(".service"):
-                continue
-            
-            name = unit.replace(".service", "")
-            load_state = parts[1] if len(parts) > 1 else "unknown"
-            active_state = parts[2] if len(parts) > 2 else "unknown"
-            sub_state = parts[3] if len(parts) > 3 else "unknown"
-            
-            # Filter: show important services + running services
-            is_important = any(svc in name for svc in important_services)
-            is_running = active_state == "active" and sub_state == "running"
-            
-            if not (is_important or is_running):
-                continue
+            # Filter: only show running services or explicitly listed important services
+            if status_output == "inactive" and svc_name not in running_names:
+                # Check if service even exists
+                exists = run_host_command_simple(
+                    f"systemctl cat {svc_name}.service >/dev/null 2>&1 && echo yes || echo no",
+                    timeout=3
+                ).strip()
+                if exists != "yes":
+                    continue
             
             # Map state
-            state = "stopped"
-            if active_state == "active":
-                if sub_state == "running":
-                    state = "running"
-                elif sub_state == "exited":
-                    state = "stopped"
-            elif active_state == "failed":
+            if status_output == "active":
+                state = "running"
+            elif status_output == "inactive":
+                state = "stopped"
+            elif status_output == "failed":
                 state = "failed"
-            elif active_state == "activating":
+            elif status_output == "activating":
                 state = "restarting"
+            else:
+                state = "unknown"
             
             # Determine class
-            # CORE = system-critical (can only view)
-            # SYSTEM = important (can restart)
-            # APP = user apps (can start/stop/restart)
-            core_services = ["systemd", "dbus", "init", "kernel"]
-            system_services = ["docker", "sshd", "ssh", "cron", "systemd-journald", "tailscaled"]
-            
-            if any(c in name for c in core_services):
+            if svc_name in core_services:
                 resource_class = "CORE"
-            elif name in system_services:
+            elif svc_name in system_services:
                 resource_class = "SYSTEM"
             else:
-                resource_class = "APP"  # User apps - full control
+                resource_class = "APP"
             
             services.append(ResourceResponse(
-                id=f"systemd-{name}",
-                name=name,
+                id=f"systemd-{svc_name}",
+                name=svc_name,
                 type="service",
                 resource_class=resource_class,
                 provider="systemd",
                 state=state,
-                health_score=100 if state == "running" else 0,
+                health_score=100 if state == "running" else (50 if state == "stopped" else 0),
                 managed=True,
                 updated_at=datetime.utcnow().isoformat()
             ))
         
+        # Also add any OTHER running services not in our lists (as APP)
+        for svc_name in running_names:
+            if svc_name not in all_target_services:
+                # Skip internal systemd services
+                if svc_name.startswith("systemd-") or svc_name.startswith("user@"):
+                    continue
+                if any(x in svc_name for x in ["getty", "init", "mount", "swap"]):
+                    continue
+                
+                services.append(ResourceResponse(
+                    id=f"systemd-{svc_name}",
+                    name=svc_name,
+                    type="service",
+                    resource_class="APP",
+                    provider="systemd",
+                    state="running",
+                    health_score=100,
+                    managed=True,
+                    updated_at=datetime.utcnow().isoformat()
+                ))
+        
     except Exception as e:
         print(f"Failed to get systemd services: {e}")
     
-    # Sort by name
-    return sorted(services, key=lambda s: s.name)
+    # Sort by class then name
+    class_order = {"APP": 0, "SYSTEM": 1, "CORE": 2}
+    return sorted(services, key=lambda s: (class_order.get(s.resource_class, 3), s.name))
 
 
 @router.get("/unmanaged", response_model=List[ResourceResponse])

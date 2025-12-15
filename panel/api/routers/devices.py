@@ -71,92 +71,133 @@ async def list_devices(
 
 
 async def _local_device_discovery() -> List[DeviceResponse]:
-    """Fallback local device discovery when agent is unavailable."""
-    import platform
-    import subprocess
-    import json as json_lib
+    """Discover devices from HOST system via SSH."""
+    from services.host_exec import run_host_command_simple
     
     devices = []
-    system = platform.system()
     
-    # Discover USB devices locally
-    if system == "Darwin":  # macOS
-        try:
-            result = subprocess.run(
-                ["system_profiler", "SPUSBDataType", "-json"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                data = json_lib.loads(result.stdout)
-                for bus in data.get("SPUSBDataType", []):
-                    _parse_macos_usb(bus, devices)
-        except Exception:
-            pass
+    # === USB Devices ===
+    try:
+        # Get USB devices from host using lsusb
+        output = run_host_command_simple("lsusb 2>/dev/null", timeout=10)
+        
+        if output:
+            for line in output.strip().split("\n"):
+                # Parse: Bus 001 Device 002: ID 0951:1666 Kingston Technology DataTraveler
+                if "ID" not in line:
+                    continue
+                
+                parts = line.split("ID ")
+                if len(parts) < 2:
+                    continue
+                
+                id_and_name = parts[1]
+                id_parts = id_and_name.split(" ", 1)
+                if len(id_parts) < 2:
+                    continue
+                
+                usb_id = id_parts[0]  # e.g., "0951:1666"
+                name = id_parts[1].strip()  # e.g., "Kingston Technology DataTraveler"
+                
+                # Skip root hubs and Linux Foundation internal devices
+                if "root hub" in name.lower() or "Linux Foundation" in name:
+                    continue
+                
+                # Extract vendor from name
+                vendor = name.split()[0] if name else "Unknown"
+                
+                # Detect device type
+                name_lower = name.lower()
+                if any(word in name_lower for word in ["keyboard", "kbd"]):
+                    dev_type = "keyboard"
+                    caps = ["input"]
+                elif any(word in name_lower for word in ["mouse", "pointing"]):
+                    dev_type = "mouse"
+                    caps = ["input"]
+                elif any(word in name_lower for word in ["disk", "storage", "flash", "traveler", "cruzer", "kyson", "usb3", "mass"]):
+                    dev_type = "storage"
+                    caps = ["storage", "read", "write", "eject"]
+                elif any(word in name_lower for word in ["camera", "webcam", "video"]):
+                    dev_type = "camera"
+                    caps = ["video", "capture"]
+                elif any(word in name_lower for word in ["audio", "sound", "speaker", "microphone"]):
+                    dev_type = "audio"
+                    caps = ["audio"]
+                elif any(word in name_lower for word in ["bluetooth", "bt"]):
+                    dev_type = "bluetooth"
+                    caps = ["bluetooth"]
+                elif any(word in name_lower for word in ["wifi", "wireless", "wlan"]):
+                    dev_type = "wifi"
+                    caps = ["network"]
+                elif any(word in name_lower for word in ["ethernet", "lan", "rj45"]):
+                    dev_type = "ethernet"
+                    caps = ["network"]
+                elif any(word in name_lower for word in ["hub"]):
+                    dev_type = "hub"
+                    caps = ["hub"]
+                else:
+                    dev_type = "usb"
+                    caps = ["read"]
+                
+                devices.append(DeviceResponse(
+                    id=f"usb-{usb_id.replace(':', '-')}",
+                    name=name,
+                    type=dev_type,
+                    state="connected",
+                    vendor=vendor,
+                    product=usb_id,
+                    capabilities=caps
+                ))
+    except Exception as e:
+        print(f"USB discovery failed: {e}")
     
-    elif system == "Linux":
-        # Use lsusb for better product names
-        try:
-            result = subprocess.run(
-                ["lsusb"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split("\n"):
-                    # Parse: Bus 001 Device 002: ID 0951:1666 Kingston Technology DataTraveler 100 G3/G4/SE9 G2/50 Kyson
-                    if "ID" not in line:
+    # === Block Devices (Storage) ===
+    try:
+        output = run_host_command_simple(
+            "lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL 2>/dev/null",
+            timeout=10
+        )
+        if output:
+            import json
+            data = json.loads(output)
+            for dev in data.get("blockdevices", []):
+                if dev.get("type") == "disk":
+                    name = dev.get("name", "unknown")
+                    model = dev.get("model", "Storage Device")
+                    size = dev.get("size", "")
+                    
+                    # Skip loop devices
+                    if name.startswith("loop"):
                         continue
-                    
-                    parts = line.split("ID ")
-                    if len(parts) < 2:
-                        continue
-                    
-                    id_and_name = parts[1]
-                    id_parts = id_and_name.split(" ", 1)
-                    if len(id_parts) < 2:
-                        continue
-                    
-                    usb_id = id_parts[0]  # e.g., "0951:1666"
-                    name = id_parts[1].strip()  # e.g., "Kingston Technology DataTraveler 100..."
-                    
-                    # Skip root hubs and Linux Foundation devices
-                    if "root hub" in name.lower() or "Linux Foundation" in name:
-                        continue
-                    
-                    # Extract vendor and product from name
-                    vendor = name.split()[0] if name else "Unknown"
-                    
-                    # Check if it's a storage device
-                    is_storage = any(word in name.lower() for word in ["disk", "storage", "stick", "flash", "traveler", "cruzer", "kyson"])
                     
                     devices.append(DeviceResponse(
-                        id=f"usb-{usb_id.replace(':', '-')}",
-                        name=name,
-                        type="usb",
+                        id=f"block-{name}",
+                        name=f"{model} ({size})" if model else f"/dev/{name} ({size})",
+                        type="disk",
                         state="connected",
-                        vendor=vendor,
-                        capabilities=["storage", "read", "write", "eject"] if is_storage else ["read"]
+                        capabilities=["storage", "read", "write"],
+                        metadata={"path": f"/dev/{name}", "size": size}
                     ))
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"Block device discovery failed: {e}")
     
-    # Check for serial ports
-    import glob
-    serial_patterns = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/cu.usbserial*", "/dev/cu.usbmodem*"]
-    for pattern in serial_patterns:
-        for port in glob.glob(pattern):
-            port_name = port.split("/")[-1]
-            devices.append(DeviceResponse(
-                id=f"serial-{port_name}",
-                name=f"Serial Port ({port_name})",
-                type="serial",
-                state="connected",
-                capabilities=["serial", "read", "write"],
-                metadata={"path": port}
-            ))
+    # === Serial Ports ===
+    try:
+        output = run_host_command_simple("ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true", timeout=5)
+        if output:
+            for port in output.strip().split("\n"):
+                if port:
+                    port_name = port.split("/")[-1]
+                    devices.append(DeviceResponse(
+                        id=f"serial-{port_name}",
+                        name=f"Serial Port ({port_name})",
+                        type="serial",
+                        state="connected",
+                        capabilities=["serial", "read", "write"],
+                        metadata={"path": port}
+                    ))
+    except:
+        pass
     
     return devices
 
