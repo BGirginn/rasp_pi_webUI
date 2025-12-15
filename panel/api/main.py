@@ -18,7 +18,7 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal
 from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
@@ -138,9 +138,6 @@ app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(network.router, prefix="/api/network", tags=["Network"])
 app.include_router(devices.router, prefix="/api/devices", tags=["Devices"])
 app.include_router(admin_console.router, prefix="/api/admin", tags=["Admin Console"])
-app.include_router(sse.router, prefix="/api/sse", tags=["SSE"])
-app.include_router(audit.router, prefix="/api/audit", tags=["Audit"])
-app.include_router(manifests.router, prefix="/api/manifests", tags=["Manifests"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])
 
 
