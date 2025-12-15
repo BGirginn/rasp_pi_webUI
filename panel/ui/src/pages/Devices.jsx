@@ -179,8 +179,8 @@ function FilterTabs({ filters, active, onChange }) {
                     key={f.value}
                     onClick={() => onChange(f.value)}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${active === f.value
-                            ? 'bg-primary-600 text-white'
-                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                         }`}
                 >
                     {f.icon} {f.label}
@@ -198,26 +198,32 @@ function FilterTabs({ filters, active, onChange }) {
 export default function Devices() {
     const [devices, setDevices] = useState([])
     const [loading, setLoading] = useState(true)
+    const [refreshing, setRefreshing] = useState(false)
     const [error, setError] = useState(null)
     const [filter, setFilter] = useState('all')
+    const [lastUpdate, setLastUpdate] = useState(null)
 
     useEffect(() => {
         loadDevices()
 
-        // Refresh every 10 seconds
-        const interval = setInterval(loadDevices, 10000)
+        // Auto-refresh every 30 seconds
+        const interval = setInterval(loadDevices, 30000)
         return () => clearInterval(interval)
     }, [])
 
     async function loadDevices() {
+        if (!loading) setRefreshing(true)
         try {
             const response = await api.get('/devices')
             setDevices(response.data)
+            setLastUpdate(new Date())
+            setError(null)
         } catch (err) {
             setError('Failed to load devices')
             console.error(err)
         } finally {
             setLoading(false)
+            setRefreshing(false)
         }
     }
 
@@ -237,22 +243,26 @@ export default function Devices() {
         ? devices
         : devices.filter((d) => d.type === filter)
 
-    // Calculate counts
+    // Calculate counts for all device types
     const counts = {
         all: devices.length,
-        esp: devices.filter((d) => d.type === 'esp').length,
+        keyboard: devices.filter((d) => d.type === 'keyboard').length,
+        storage: devices.filter((d) => d.type === 'storage').length,
+        disk: devices.filter((d) => d.type === 'disk').length,
         usb: devices.filter((d) => d.type === 'usb').length,
-        gpio: devices.filter((d) => d.type === 'gpio').length,
         serial: devices.filter((d) => d.type === 'serial').length,
+        esp: devices.filter((d) => d.type === 'esp').length,
     }
 
     const filters = [
         { value: 'all', label: 'All', icon: '📱', count: counts.all },
-        { value: 'esp', label: 'ESP/MQTT', icon: '📡', count: counts.esp },
+        { value: 'keyboard', label: 'Keyboard', icon: '⌨️', count: counts.keyboard },
+        { value: 'storage', label: 'Storage', icon: '💾', count: counts.storage },
+        { value: 'disk', label: 'Disk', icon: '💿', count: counts.disk },
         { value: 'usb', label: 'USB', icon: '🔌', count: counts.usb },
-        { value: 'gpio', label: 'GPIO', icon: '⚡', count: counts.gpio },
         { value: 'serial', label: 'Serial', icon: '🔗', count: counts.serial },
-    ]
+        { value: 'esp', label: 'ESP/MQTT', icon: '📡', count: counts.esp },
+    ].filter(f => f.value === 'all' || f.count > 0)  // Only show tabs with devices
 
     if (loading) {
         return (
@@ -266,10 +276,27 @@ export default function Devices() {
         <div className="space-y-6 animate-fade-in">
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h2 className="text-2xl font-bold text-gray-100">Devices</h2>
+                <div>
+                    <h2 className="text-2xl font-bold text-gray-100">Devices</h2>
+                    {lastUpdate && (
+                        <p className="text-xs text-gray-500 mt-1">
+                            Last updated: {lastUpdate.toLocaleTimeString()}
+                            {refreshing && <span className="ml-2 text-purple-400">• Refreshing...</span>}
+                        </p>
+                    )}
+                </div>
                 <div className="flex gap-3">
-                    <button onClick={loadDevices} className="btn btn-secondary">
-                        🔄 Refresh
+                    <button
+                        onClick={loadDevices}
+                        disabled={refreshing}
+                        className={`btn btn-secondary ${refreshing ? 'opacity-50' : ''}`}
+                    >
+                        {refreshing ? (
+                            <span className="flex items-center gap-2">
+                                <span className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></span>
+                                Refreshing...
+                            </span>
+                        ) : '🔄 Refresh'}
                     </button>
                     <button className="btn btn-ghost">
                         📡 Scan USB
