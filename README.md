@@ -101,16 +101,21 @@ chmod +x deploy.sh
 Open your browser and go to:
 
 ```
-http://<your-tailscale-ip>
+http://<your-tailscale-ip>:8080
 ```
 
-**Example:** `http://100.80.90.68`
+**Example:** `http://100.80.90.68:8080`
 
-**Default credentials:**
-- Username: `admin`
-- Password: `admin123`
+> 💡 **Note:** If `:8080` doesn't work, try without the port: `http://100.80.90.68`
 
-> ⚠️ **Change the default password immediately!**
+**Default Login Credentials:**
+
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `admin123` |
+
+> ⚠️ **Change the default password immediately after first login!**
 
 ---
 
