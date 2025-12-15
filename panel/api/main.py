@@ -57,8 +57,12 @@ async def lifespan(app: FastAPI):
     
     await init_db()
     
-    # Start background services
-    await agent_client.start()
+    # Start background services (agent is optional)
+    try:
+        await agent_client.connect()
+    except Exception as e:
+        logger.warning("Agent not available, running without it", error=str(e))
+    
     await alert_manager.start()
     
     yield
@@ -66,7 +70,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
     await alert_manager.stop()
-    await agent_client.stop()
+    await agent_client.disconnect()
     await close_db()
 
 
