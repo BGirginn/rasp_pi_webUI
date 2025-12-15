@@ -227,14 +227,45 @@ async def _get_local_system_metrics() -> Dict:
     except:
         pass
     
+    # Get CPU model and architecture (not Pi model name)
+    cpu_model = "Unknown"
+    arch = "unknown"
+    
     try:
+        # Get architecture
         with open(f"{host_root}/proc/cpuinfo", "r") as f:
             for line in f:
-                if line.startswith("model name") or line.startswith("Model"):
-                    machine = line.split(":")[1].strip()
+                # Look for CPU implementer/part for ARM chips
+                if line.startswith("CPU implementer"):
+                    implementer = line.split(":")[1].strip()
+                elif line.startswith("CPU part"):
+                    part = line.split(":")[1].strip()
+                    # Decode common ARM CPU parts
+                    cpu_parts = {
+                        "0xd0b": "ARM Cortex-A76",
+                        "0xd07": "ARM Cortex-A57", 
+                        "0xd08": "ARM Cortex-A72",
+                        "0xd03": "ARM Cortex-A53",
+                        "0xd04": "ARM Cortex-A35",
+                    }
+                    cpu_model = cpu_parts.get(part, f"ARM ({part})")
+                    break
+                elif line.startswith("model name"):
+                    cpu_model = line.split(":")[1].strip()
                     break
     except:
         pass
+    
+    try:
+        # Get architecture from uname
+        import subprocess
+        result = subprocess.run(["uname", "-m"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            arch = result.stdout.strip()  # e.g., aarch64, x86_64
+    except:
+        pass
+    
+    machine = f"{cpu_model} ({arch})"
     
     return {
         "timestamp": datetime.utcnow().isoformat(),
