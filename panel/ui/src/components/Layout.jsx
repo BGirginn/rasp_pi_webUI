@@ -2,19 +2,18 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import clsx from 'clsx'
 
-// Icons (emoji-based for simplicity)
+// Icons
 const icons = {
-    dashboard: '🏠',
-    services: '⚙️',
-    devices: '🔌',
-    telemetry: '📊',
-    jobs: '⏰',
-    settings: '🔧',
-    logout: '🚪',
-    alerts: '🔔',
-    user: '👤',
-    network: '🌐',
-    terminal: '💻',
+    dashboard: '◆',
+    services: '⚙',
+    devices: '⬢',
+    telemetry: '◈',
+    network: '◎',
+    terminal: '▣',
+    alerts: '◉',
+    settings: '⚡',
+    logout: '↗',
+    user: '●',
 }
 
 function Sidebar() {
@@ -37,23 +36,27 @@ function Sidebar() {
     }
 
     return (
-        <aside className="w-64 h-screen sticky top-0 bg-dark-200/80 backdrop-blur-xl border-r border-primary-500/10 flex flex-col">
-            {/* Logo with glow */}
-            <div className="p-6 border-b border-primary-500/10 flex-shrink-0">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-neon">
-                        <span className="text-xl">🥧</span>
+        <aside className="w-72 h-screen sticky top-0 bg-[#050507] border-r border-white/[0.03] flex flex-col relative">
+            {/* Sidebar glow line */}
+            <div className="sidebar-glow"></div>
+
+            {/* Logo */}
+            <div className="p-6 border-b border-white/[0.03]">
+                <div className="flex items-center gap-4">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center shadow-[0_0_30px_rgba(168,85,247,0.4)]">
+                        <span className="text-xl text-white">π</span>
                     </div>
                     <div>
                         <h1 className="text-lg font-bold gradient-text">Pi Control</h1>
-                        <p className="text-xs text-gray-500">Universal Panel</p>
+                        <p className="text-[11px] text-zinc-600 tracking-wide">UNIVERSAL PANEL</p>
                     </div>
                 </div>
             </div>
 
             {/* Navigation */}
             <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-                {navItems.map((item) => (
+                <p className="px-4 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Main</p>
+                {navItems.slice(0, 4).map((item) => (
                     <NavLink
                         key={item.path}
                         to={item.path}
@@ -62,42 +65,59 @@ function Sidebar() {
                             clsx('nav-link', isActive && 'active')
                         }
                     >
-                        <span className="text-lg">{item.icon}</span>
-                        <span className="font-medium">{item.label}</span>
+                        <span className="text-sm opacity-70">{item.icon}</span>
+                        <span>{item.label}</span>
                     </NavLink>
                 ))}
 
-                {isAdmin && (
+                <p className="px-4 py-2 mt-4 text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">System</p>
+                {navItems.slice(4).map((item) => (
                     <NavLink
-                        to="/settings"
+                        key={item.path}
+                        to={item.path}
                         className={({ isActive }) =>
                             clsx('nav-link', isActive && 'active')
                         }
                     >
-                        <span className="text-lg">{icons.settings}</span>
-                        <span className="font-medium">Settings</span>
+                        <span className="text-sm opacity-70">{item.icon}</span>
+                        <span>{item.label}</span>
                     </NavLink>
+                ))}
+
+                {isAdmin && (
+                    <>
+                        <p className="px-4 py-2 mt-4 text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Admin</p>
+                        <NavLink
+                            to="/settings"
+                            className={({ isActive }) =>
+                                clsx('nav-link', isActive && 'active')
+                            }
+                        >
+                            <span className="text-sm opacity-70">{icons.settings}</span>
+                            <span>Settings</span>
+                        </NavLink>
+                    </>
                 )}
             </nav>
 
             {/* User section */}
-            <div className="p-4 border-t border-primary-500/10 flex-shrink-0 bg-dark-200/50">
-                <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center">
-                        <span className="text-lg">{icons.user}</span>
+            <div className="p-4 border-t border-white/[0.03]">
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02]">
+                    <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-600/50 to-pink-600/50 flex items-center justify-center">
+                        <span className="text-xs text-purple-300">{icons.user}</span>
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{user?.username}</p>
-                        <p className="text-xs text-primary-400 capitalize">{user?.role}</p>
+                        <p className="text-sm font-medium text-white truncate">{user?.username}</p>
+                        <p className="text-[10px] text-purple-400 uppercase tracking-wider">{user?.role}</p>
                     </div>
+                    <button
+                        onClick={handleLogout}
+                        className="p-2 rounded-lg hover:bg-white/[0.05] text-zinc-500 hover:text-red-400 transition-colors"
+                        title="Logout"
+                    >
+                        <span className="text-sm">{icons.logout}</span>
+                    </button>
                 </div>
-                <button
-                    onClick={handleLogout}
-                    className="w-full btn btn-ghost text-sm justify-start gap-2 text-gray-400 hover:text-red-400"
-                >
-                    <span>{icons.logout}</span>
-                    <span>Logout</span>
-                </button>
             </div>
         </aside>
     )
@@ -107,26 +127,25 @@ function Header() {
     const navigate = useNavigate()
 
     return (
-        <header className="h-16 bg-dark-200/50 backdrop-blur-xl border-b border-primary-500/10 flex items-center justify-between px-6">
+        <header className="h-16 bg-[#050507]/80 backdrop-blur-xl border-b border-white/[0.03] flex items-center justify-between px-6">
             <div className="flex items-center gap-4">
-                {/* Breadcrumb or page title can go here */}
+                {/* Breadcrumb placeholder */}
             </div>
 
-            <div className="flex items-center gap-3">
-                {/* Quick actions */}
+            <div className="flex items-center gap-2">
                 <button
                     onClick={() => navigate('/alerts')}
-                    className="relative p-2.5 rounded-xl bg-dark-100/50 hover:bg-primary-500/10 border border-primary-500/10 transition-all group"
+                    className="relative p-3 rounded-xl bg-white/[0.02] hover:bg-purple-500/10 border border-white/[0.03] hover:border-purple-500/20 transition-all group"
                 >
-                    <span className="text-lg group-hover:scale-110 transition-transform inline-block">{icons.alerts}</span>
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                    <span className="text-zinc-400 group-hover:text-purple-400 transition-colors">{icons.alerts}</span>
+                    <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
                 </button>
 
                 <button
                     onClick={() => navigate('/terminal')}
-                    className="p-2.5 rounded-xl bg-dark-100/50 hover:bg-primary-500/10 border border-primary-500/10 transition-all group"
+                    className="p-3 rounded-xl bg-white/[0.02] hover:bg-purple-500/10 border border-white/[0.03] hover:border-purple-500/20 transition-all group"
                 >
-                    <span className="text-lg group-hover:scale-110 transition-transform inline-block">{icons.terminal}</span>
+                    <span className="text-zinc-400 group-hover:text-purple-400 transition-colors">{icons.terminal}</span>
                 </button>
             </div>
         </header>
@@ -135,11 +154,11 @@ function Header() {
 
 export default function Layout() {
     return (
-        <div className="min-h-screen flex bg-dark-300 bg-aurora">
+        <div className="min-h-screen flex bg-black aurora-bg">
             <Sidebar />
             <div className="flex-1 flex flex-col min-w-0">
                 <Header />
-                <main className="flex-1 p-6 overflow-auto">
+                <main className="flex-1 p-8 overflow-auto">
                     <Outlet />
                 </main>
             </div>

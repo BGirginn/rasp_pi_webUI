@@ -3,132 +3,239 @@
 @tailwind utilities;
 
 /* ========================================
-   CYBERPUNK PURPLE THEME - Pi Control Panel
+   DEEP DARK NEON PURPLE THEME
+   Inspired by: Fey, Antimetal, GitHub Codespaces
    ======================================== */
 
 :root {
-  /* Background colors */
-  --bg-primary: #0a0a0f;
-  --bg-surface: #13131a;
-  --bg-elevated: #1a1a24;
-  --bg-hover: #1f1f2e;
+  /* Ultra dark backgrounds */
+  --bg-void: #000000;
+  --bg-deep: #050507;
+  --bg-primary: #08080c;
+  --bg-surface: #0c0c12;
+  --bg-elevated: #101018;
+  --bg-hover: #14141e;
 
-  /* Purple accent spectrum */
-  --accent-primary: #8b5cf6;
-  --accent-secondary: #a855f7;
-  --accent-tertiary: #c084fc;
-  --accent-subtle: rgba(139, 92, 246, 0.1);
-  --accent-glow: rgba(139, 92, 246, 0.4);
+  /* Neon purple spectrum - more vibrant */
+  --neon-purple: #bf5af2;
+  --neon-violet: #9d4edd;
+  --neon-pink: #e040fb;
+  --neon-blue: #5e60ce;
+  --neon-cyan: #00d9ff;
 
-  /* Text colors */
-  --text-primary: #ffffff;
+  /* Accent colors */
+  --accent-primary: #a855f7;
+  --accent-bright: #d946ef;
+  --accent-glow: rgba(168, 85, 247, 0.6);
+  --accent-subtle: rgba(168, 85, 247, 0.08);
+
+  /* Text */
+  --text-bright: #ffffff;
+  --text-primary: #e4e4e7;
   --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
+  --text-muted: #52525b;
 
-  /* Semantic colors */
-  --success: #22c55e;
+  /* Semantic */
+  --success: #10b981;
+  --success-glow: rgba(16, 185, 129, 0.5);
   --warning: #f59e0b;
   --error: #ef4444;
-  --info: #3b82f6;
+  --error-glow: rgba(239, 68, 68, 0.5);
 
   /* Borders */
-  --border-subtle: rgba(139, 92, 246, 0.15);
-  --border-accent: rgba(139, 92, 246, 0.3);
+  --border-dim: rgba(255, 255, 255, 0.03);
+  --border-subtle: rgba(168, 85, 247, 0.1);
+  --border-glow: rgba(168, 85, 247, 0.3);
 }
 
-/* Custom scrollbar - purple theme */
+/* ========================================
+   SCROLLBAR - Ultra minimal
+   ======================================== */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-surface);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.3);
-  border-radius: 3px;
+  background: var(--neon-purple);
+  border-radius: 2px;
+  opacity: 0.3;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.5);
-}
-
-/* Base body with aurora effect */
-body {
-  min-height: 100vh;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
-    var(--bg-primary);
-  color: var(--text-primary);
+  background: var(--neon-pink);
 }
 
 /* ========================================
-   GLASS CARDS - Purple tinted
+   BODY - Deep void with aurora
+   ======================================== */
+body {
+  min-height: 100vh;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Aurora gradient overlay */
+.aurora-bg {
+  background:
+    radial-gradient(ellipse 100% 80% at 50% -30%, rgba(168, 85, 247, 0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(217, 70, 239, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 30% at 20% 80%, rgba(94, 96, 206, 0.06) 0%, transparent 50%),
+    var(--bg-void);
+}
+
+/* ========================================
+   GLASS CARDS - Fey/Antimetal style
    ======================================== */
 .glass-card {
-  background: rgba(19, 19, 26, 0.8);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border-subtle);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.02) inset,
-    0 4px 24px rgba(0, 0, 0, 0.3);
-  transition: all 0.3s ease;
+  background: linear-gradient(135deg,
+      rgba(12, 12, 18, 0.9) 0%,
+      rgba(8, 8, 12, 0.95) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--border-dim);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg,
+      rgba(168, 85, 247, 0.03) 0%,
+      transparent 50%);
+  opacity: 0;
+  transition: opacity 0.4s;
 }
 
 .glass-card:hover {
-  border-color: var(--border-accent);
+  border-color: var(--border-subtle);
+  transform: translateY(-2px);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    0 0 40px rgba(139, 92, 246, 0.05);
+    0 20px 40px rgba(0, 0, 0, 0.4),
+    0 0 60px rgba(168, 85, 247, 0.08);
+}
+
+.glass-card:hover::before {
+  opacity: 1;
 }
 
 /* ========================================
-   GRADIENT & NEON TEXT
+   METRIC CARDS - Neon glow style
+   ======================================== */
+.metric-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-dim);
+  border-radius: 20px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--neon-purple), transparent);
+  opacity: 0.5;
+}
+
+.metric-card::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.03) 0%, transparent 50%);
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.metric-card:hover {
+  border-color: var(--border-glow);
+  box-shadow:
+    0 0 30px rgba(168, 85, 247, 0.1),
+    inset 0 0 20px rgba(168, 85, 247, 0.02);
+}
+
+.metric-card:hover::after {
+  opacity: 1;
+}
+
+.metric-card:hover::before {
+  opacity: 1;
+  animation: neon-pulse 2s ease-in-out infinite;
+}
+
+@keyframes neon-pulse {
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ========================================
+   GRADIENT TEXT - Neon style
    ======================================== */
 .gradient-text {
-  background: linear-gradient(135deg, #8b5cf6 0%, #c084fc 50%, #a855f7 100%);
+  background: linear-gradient(135deg, #bf5af2 0%, #e040fb 50%, #a855f7 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .neon-text {
-  color: var(--accent-primary);
+  color: var(--neon-purple);
   text-shadow:
-    0 0 10px rgba(139, 92, 246, 0.5),
-    0 0 30px rgba(139, 92, 246, 0.3);
+    0 0 10px rgba(191, 90, 242, 0.5),
+    0 0 30px rgba(191, 90, 242, 0.3),
+    0 0 50px rgba(191, 90, 242, 0.1);
 }
 
 /* ========================================
-   STATUS INDICATORS - Enhanced glow
+   STATUS DOTS - Bright neon glow
    ======================================== */
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   position: relative;
 }
 
-.status-dot::before {
+.status-dot::after {
   content: '';
   position: absolute;
-  inset: -3px;
+  inset: -4px;
   border-radius: 50%;
-  opacity: 0.3;
-  animation: pulse-ring 2s ease-out infinite;
+  animation: status-glow 2s ease-out infinite;
 }
 
 .status-dot.running {
   background: var(--success);
-  box-shadow: 0 0 12px var(--success);
+  box-shadow: 0 0 16px var(--success-glow);
 }
 
-.status-dot.running::before {
+.status-dot.running::after {
   background: var(--success);
+  opacity: 0.2;
 }
 
 .status-dot.stopped {
@@ -137,118 +244,130 @@ body {
 
 .status-dot.failed {
   background: var(--error);
-  box-shadow: 0 0 12px var(--error);
+  box-shadow: 0 0 16px var(--error-glow);
 }
 
-.status-dot.failed::before {
+.status-dot.failed::after {
   background: var(--error);
+  opacity: 0.2;
 }
 
 .status-dot.warning,
 .status-dot.restarting {
   background: var(--warning);
-  box-shadow: 0 0 12px var(--warning);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.5);
 }
 
-@keyframes pulse-ring {
-  0% {
+@keyframes status-glow {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 0.3;
   }
 
-  100% {
-    transform: scale(1.8);
+  50% {
+    transform: scale(1.5);
     opacity: 0;
   }
 }
 
 /* ========================================
-   HEALTH & CLASS BADGES
+   BADGES - Outlined neon style
    ======================================== */
 .health-badge {
-  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .health-badge.healthy {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.3);
-}
-
-.health-badge.degraded {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
 .health-badge.critical {
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.1);
   color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 .class-badge {
-  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .class-badge.core {
-  background: rgba(139, 92, 246, 0.15);
-  color: #a78bfa;
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: rgba(168, 85, 247, 0.1);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.2);
 }
 
 .class-badge.system {
-  background: rgba(59, 130, 246, 0.15);
+  background: rgba(59, 130, 246, 0.1);
   color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  border: 1px solid rgba(59, 130, 246, 0.2);
 }
 
 .class-badge.app {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
 .class-badge.device {
-  background: rgba(6, 182, 212, 0.15);
-  color: #22d3ee;
-  border: 1px solid rgba(6, 182, 212, 0.3);
+  background: rgba(0, 217, 255, 0.1);
+  color: #00d9ff;
+  border: 1px solid rgba(0, 217, 255, 0.2);
 }
 
 /* ========================================
-   BUTTONS - Neon glow style
+   BUTTONS - Neon gradient style
    ======================================== */
 .btn {
-  @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-all duration-300;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
-}
-
-.btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-.btn:hover::before {
-  opacity: 1;
+  cursor: pointer;
+  border: none;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
+  background: linear-gradient(135deg, #9333ea 0%, #a855f7 50%, #c026d3 100%);
   color: white;
-  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3);
+  box-shadow:
+    0 4px 20px rgba(168, 85, 247, 0.4),
+    0 0 40px rgba(168, 85, 247, 0.1);
 }
 
 .btn-primary:hover {
-  box-shadow: 0 6px 24px rgba(139, 92, 246, 0.5);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 30px rgba(168, 85, 247, 0.5),
+    0 0 60px rgba(168, 85, 247, 0.2);
 }
 
-.btn-primary::before {
-  background: linear-gradient(135deg, #a855f7 0%, #c084fc 100%);
+.btn-primary:active {
+  transform: translateY(0);
 }
 
 .btn-secondary {
@@ -259,19 +378,20 @@ body {
 
 .btn-secondary:hover {
   background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-accent);
+  color: var(--text-bright);
+  border-color: var(--border-glow);
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.1);
 }
 
 .btn-danger {
   background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
   color: white;
-  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
 }
 
 .btn-danger:hover {
-  box-shadow: 0 6px 24px rgba(239, 68, 68, 0.5);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(239, 68, 68, 0.4);
 }
 
 .btn-ghost {
@@ -281,17 +401,21 @@ body {
 
 .btn-ghost:hover {
   background: var(--accent-subtle);
-  color: var(--accent-primary);
+  color: var(--neon-purple);
 }
 
 /* ========================================
-   INPUTS - Purple focus
+   INPUTS - Fey-style minimal
    ======================================== */
 .input {
-  @apply w-full px-4 py-2.5 rounded-lg transition-all duration-300;
+  width: 100%;
+  padding: 14px 18px;
   background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
+  border: 1px solid var(--border-dim);
+  border-radius: 12px;
+  color: var(--text-bright);
+  font-size: 15px;
+  transition: all 0.3s ease;
 }
 
 .input::placeholder {
@@ -300,30 +424,36 @@ body {
 
 .input:focus {
   outline: none;
-  border-color: var(--accent-primary);
+  border-color: var(--neon-purple);
   box-shadow:
-    0 0 0 3px rgba(139, 92, 246, 0.15),
-    0 0 20px rgba(139, 92, 246, 0.1);
+    0 0 0 3px rgba(168, 85, 247, 0.1),
+    0 0 30px rgba(168, 85, 247, 0.1);
 }
 
 /* ========================================
-   SIDEBAR NAVIGATION
+   NAVIGATION - Antimetal style
    ======================================== */
 .nav-link {
-  @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
   color: var(--text-muted);
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  position: relative;
 }
 
 .nav-link:hover {
   color: var(--text-primary);
-  background: var(--accent-subtle);
+  background: rgba(168, 85, 247, 0.05);
 }
 
 .nav-link.active {
-  color: var(--accent-primary);
-  background: rgba(139, 92, 246, 0.1);
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
-  position: relative;
+  color: var(--neon-purple);
+  background: rgba(168, 85, 247, 0.08);
 }
 
 .nav-link.active::before {
@@ -333,17 +463,20 @@ body {
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
-  height: 60%;
-  background: linear-gradient(180deg, #8b5cf6, #c084fc);
-  border-radius: 0 2px 2px 0;
-  box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
+  height: 24px;
+  background: linear-gradient(180deg, var(--neon-purple), var(--neon-pink));
+  border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 15px var(--accent-glow);
 }
 
 /* ========================================
    LOG VIEWER
    ======================================== */
 .log-line {
-  @apply font-mono text-sm py-1 px-3 rounded;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
   transition: background 0.2s;
 }
 
@@ -352,41 +485,19 @@ body {
 }
 
 .log-line.error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
   border-left: 2px solid var(--error);
 }
 
 .log-line.warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+  color: #fcd34d;
   border-left: 2px solid var(--warning);
 }
 
 .log-line.info {
-  color: #60a5fa;
-}
-
-/* ========================================
-   METRIC CARDS - Dashboard
-   ======================================== */
-.metric-card {
-  @apply glass-card rounded-2xl p-5 relative overflow-hidden;
-}
-
-.metric-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-  opacity: 0.5;
-}
-
-.metric-card:hover::before {
-  opacity: 1;
+  color: #93c5fd;
 }
 
 /* ========================================
@@ -402,10 +513,10 @@ body {
   }
 }
 
-@keyframes slideIn {
+@keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(16px);
   }
 
   to {
@@ -414,15 +525,15 @@ body {
   }
 }
 
-@keyframes glow {
+@keyframes glow-pulse {
 
   0%,
   100% {
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.3);
   }
 
   50% {
-    box-shadow: 0 0 40px rgba(139, 92, 246, 0.5);
+    box-shadow: 0 0 40px rgba(168, 85, 247, 0.5);
   }
 }
 
@@ -434,42 +545,35 @@ body {
   }
 
   50% {
-    transform: translateY(-5px);
+    transform: translateY(-6px);
   }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+  animation: fadeIn 0.4s ease-out;
 }
 
 .animate-slide-in {
-  animation: slideIn 0.4s ease-out;
+  animation: slideUp 0.5s ease-out;
 }
 
 .animate-glow {
-  animation: glow 3s ease-in-out infinite;
+  animation: glow-pulse 3s ease-in-out infinite;
 }
 
 .animate-float {
-  animation: float 3s ease-in-out infinite;
+  animation: float 4s ease-in-out infinite;
 }
 
 /* ========================================
-   UTILITY CLASSES
+   UTILITIES
    ======================================== */
-.bg-aurora {
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139, 92, 246, 0.2) 0%, transparent 50%),
-    var(--bg-primary);
+.bg-void {
+  background: var(--bg-void);
 }
 
-.border-glow {
-  border: 1px solid var(--border-accent);
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
-}
-
-.text-accent {
-  color: var(--accent-primary);
+.bg-deep {
+  background: var(--bg-deep);
 }
 
 .bg-surface {
@@ -478,4 +582,39 @@ body {
 
 .bg-elevated {
   background: var(--bg-elevated);
+}
+
+.text-neon {
+  color: var(--neon-purple);
+}
+
+.text-bright {
+  color: var(--text-bright);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.border-glow {
+  border: 1px solid var(--border-glow);
+  box-shadow: 0 0 30px rgba(168, 85, 247, 0.1);
+}
+
+/* ========================================
+   SIDEBAR GLOW LINE
+   ======================================== */
+.sidebar-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg,
+      transparent 0%,
+      var(--neon-purple) 20%,
+      var(--neon-pink) 50%,
+      var(--neon-purple) 80%,
+      transparent 100%);
+  opacity: 0.3;
 }
