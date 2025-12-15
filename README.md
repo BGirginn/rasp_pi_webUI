@@ -104,9 +104,9 @@ Open your browser and go to:
 http://<your-tailscale-ip>:8080
 ```
 
-**Example:** `http://100.80.90.68:8080`
+**Example:** `http://100.10.90.80:8080`
 
-> 💡 **Note:** If `:8080` doesn't work, try without the port: `http://100.80.90.68`
+> 💡 **Note:** If `:8080` doesn't work, try without the port: `http://100.10.90.80`
 
 **Default Login Credentials:**
 
