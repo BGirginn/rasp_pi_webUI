@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 
@@ -163,20 +163,59 @@ function CreateRuleModal({ onClose, onCreate }) {
         severity: 'warning',
         cooldown_minutes: 15,
     })
+    const [loading, setLoading] = useState(false)
+    const overlayRef = useRef(null)
 
-    const handleSubmit = (e) => {
+    // Handle ESC key
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') onClose()
+        }
+        document.addEventListener('keydown', handleKeyDown)
+        document.body.style.overflow = 'hidden'
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown)
+            document.body.style.overflow = ''
+        }
+    }, [onClose])
+
+    // Handle click outside
+    const handleOverlayClick = (e) => {
+        if (e.target === overlayRef.current) onClose()
+    }
+
+    const handleSubmit = async (e) => {
         e.preventDefault()
-        onCreate(form)
+        setLoading(true)
+        try {
+            await onCreate(form)
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="glass-card rounded-2xl p-6 w-full max-w-md animate-slide-in">
-                <h2 className="text-xl font-semibold text-gray-100 mb-4">Create Alert Rule</h2>
+        <div
+            ref={overlayRef}
+            onClick={handleOverlayClick}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in"
+        >
+            <div className="glass-card rounded-2xl w-full max-w-md animate-slide-in">
+                {/* Header */}
+                <div className="flex items-center justify-between p-5 border-b border-white/[0.03]">
+                    <h2 className="text-lg font-semibold text-white">Create Alert Rule</h2>
+                    <button
+                        onClick={onClose}
+                        className="w-8 h-8 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] flex items-center justify-center text-zinc-400 hover:text-white transition-colors"
+                    >
+                        ✕
+                    </button>
+                </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Form */}
+                <form onSubmit={handleSubmit} className="p-5 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">Name</label>
+                        <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Name</label>
                         <input
                             type="text"
                             value={form.name}
@@ -184,11 +223,23 @@ function CreateRuleModal({ onClose, onCreate }) {
                             className="input"
                             placeholder="High CPU Usage"
                             required
+                            autoFocus
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">Metric</label>
+                        <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Description</label>
+                        <input
+                            type="text"
+                            value={form.description}
+                            onChange={(e) => setForm({ ...form, description: e.target.value })}
+                            className="input"
+                            placeholder="Alert when CPU usage is too high"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Metric</label>
                         <select
                             value={form.metric}
                             onChange={(e) => setForm({ ...form, metric: e.target.value })}
@@ -204,7 +255,7 @@ function CreateRuleModal({ onClose, onCreate }) {
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Condition</label>
+                            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Condition</label>
                             <select
                                 value={form.condition}
                                 onChange={(e) => setForm({ ...form, condition: e.target.value })}
@@ -218,7 +269,7 @@ function CreateRuleModal({ onClose, onCreate }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Threshold</label>
+                            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Threshold</label>
                             <input
                                 type="number"
                                 value={form.threshold}
@@ -231,7 +282,7 @@ function CreateRuleModal({ onClose, onCreate }) {
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Severity</label>
+                            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Severity</label>
                             <select
                                 value={form.severity}
                                 onChange={(e) => setForm({ ...form, severity: e.target.value })}
@@ -243,7 +294,7 @@ function CreateRuleModal({ onClose, onCreate }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Cooldown (min)</label>
+                            <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Cooldown (min)</label>
                             <input
                                 type="number"
                                 value={form.cooldown_minutes}
@@ -255,9 +306,13 @@ function CreateRuleModal({ onClose, onCreate }) {
                         </div>
                     </div>
 
-                    <div className="flex gap-3">
-                        <button type="submit" className="btn btn-primary flex-1">Create Rule</button>
-                        <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
+                    <div className="flex gap-3 pt-2">
+                        <button type="submit" disabled={loading} className="btn btn-primary flex-1">
+                            {loading ? 'Creating...' : 'Create Rule'}
+                        </button>
+                        <button type="button" onClick={onClose} className="btn btn-secondary">
+                            Cancel
+                        </button>
                     </div>
                 </form>
             </div>
