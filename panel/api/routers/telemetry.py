@@ -74,97 +74,176 @@ async def get_current_metrics(user: dict = Depends(get_current_user)):
 
 
 async def _get_local_system_metrics() -> Dict:
-    """Get real system metrics using psutil."""
+    """Get real HOST system metrics by reading from mounted /host filesystem."""
     import platform
-    
-    try:
-        import psutil
-    except ImportError:
-        # psutil not available, return minimal data
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "degrade_mode": True,
-            "error": "psutil not installed",
-            "metrics": {}
-        }
+    import subprocess
+    import os
     
     metrics = {}
     
-    # CPU
-    cpu_percent = psutil.cpu_percent(interval=0.1)
-    metrics["host.cpu.pct_total"] = cpu_percent
+    # Check if we have host access via /host mount
+    host_root = "/host" if os.path.exists("/host/proc") else ""
     
-    # Memory
-    mem = psutil.virtual_memory()
-    metrics["host.mem.pct"] = mem.percent
-    metrics["host.mem.used_mb"] = mem.used / (1024 * 1024)
-    metrics["host.mem.available_mb"] = mem.available / (1024 * 1024)
-    metrics["host.mem.total_mb"] = mem.total / (1024 * 1024)
-    
-    # Disk
-    disk = psutil.disk_usage("/")
-    metrics["disk._root.used_pct"] = disk.percent
-    metrics["disk._root.used_gb"] = disk.used / (1024 ** 3)
-    metrics["disk._root.total_gb"] = disk.total / (1024 ** 3)
-    
-    # Load average (Unix only)
-    if hasattr(psutil, "getloadavg"):
-        load = psutil.getloadavg()
-        metrics["host.load.1m"] = load[0]
-        metrics["host.load.5m"] = load[1]
-        metrics["host.load.15m"] = load[2]
-    
-    # Temperature (platform specific)
+    # ============ CPU Usage ============
     try:
-        temps = psutil.sensors_temperatures()
-        if temps:
-            # Try common sensor names
-            for key in ["cpu_thermal", "coretemp", "cpu-thermal", "k10temp"]:
-                if key in temps and temps[key]:
-                    metrics["host.temp.cpu_c"] = temps[key][0].current
-                    break
-    except (AttributeError, KeyError):
-        pass
-    
-    # macOS specific temperature (if available)
-    if platform.system() == "Darwin" and "host.temp.cpu_c" not in metrics:
+        # Read from /proc/stat for accurate CPU
+        with open(f"{host_root}/proc/stat", "r") as f:
+            cpu_line = f.readline()
+            parts = cpu_line.split()
+            # cpu user nice system idle iowait irq softirq steal guest guest_nice
+            if len(parts) >= 5:
+                idle = int(parts[4])
+                total = sum(int(p) for p in parts[1:])
+                # Store for delta calculation (simplified - single sample)
+                cpu_percent = 100 * (1 - idle / total) if total > 0 else 0
+                metrics["host.cpu.pct_total"] = round(cpu_percent, 1)
+    except:
         try:
-            import subprocess
-            # Try to get CPU temp on macOS using powermetrics (requires sudo) or osx-cpu-temp
-            result = subprocess.run(
-                ["osx-cpu-temp"],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            if result.returncode == 0:
-                temp_str = result.stdout.strip().replace("°C", "")
-                metrics["host.temp.cpu_c"] = float(temp_str)
-        except Exception:
+            import psutil
+            metrics["host.cpu.pct_total"] = psutil.cpu_percent(interval=0.5)
+        except:
+            metrics["host.cpu.pct_total"] = 0
+    
+    # ============ Memory ============
+    try:
+        with open(f"{host_root}/proc/meminfo", "r") as f:
+            meminfo = {}
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    key = parts[0].rstrip(":")
+                    meminfo[key] = int(parts[1])  # in kB
+            
+            total = meminfo.get("MemTotal", 0)
+            available = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
+            used = total - available
+            
+            metrics["host.mem.total_mb"] = round(total / 1024, 1)
+            metrics["host.mem.used_mb"] = round(used / 1024, 1)
+            metrics["host.mem.available_mb"] = round(available / 1024, 1)
+            metrics["host.mem.pct"] = round(100 * used / total, 1) if total > 0 else 0
+    except:
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            metrics["host.mem.pct"] = mem.percent
+            metrics["host.mem.used_mb"] = mem.used / (1024 * 1024)
+            metrics["host.mem.total_mb"] = mem.total / (1024 * 1024)
+        except:
             pass
     
-    # Network
-    net = psutil.net_io_counters()
-    metrics["host.net.rx_bytes"] = net.bytes_recv
-    metrics["host.net.tx_bytes"] = net.bytes_sent
+    # ============ Disk ============
+    try:
+        # Use df command for host disk
+        result = subprocess.run(
+            ["df", "-B1", f"{host_root}/" if host_root else "/"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().split("\n")
+            if len(lines) >= 2:
+                parts = lines[1].split()
+                if len(parts) >= 5:
+                    total = int(parts[1])
+                    used = int(parts[2])
+                    pct = int(parts[4].rstrip("%"))
+                    metrics["disk._root.total_gb"] = round(total / (1024**3), 1)
+                    metrics["disk._root.used_gb"] = round(used / (1024**3), 1)
+                    metrics["disk._root.used_pct"] = pct
+    except:
+        try:
+            import psutil
+            disk = psutil.disk_usage("/")
+            metrics["disk._root.used_pct"] = disk.percent
+            metrics["disk._root.used_gb"] = disk.used / (1024**3)
+            metrics["disk._root.total_gb"] = disk.total / (1024**3)
+        except:
+            pass
     
-    # Uptime
-    boot_time = psutil.boot_time()
-    uptime_seconds = int(time.time() - boot_time)
-    metrics["host.uptime.seconds"] = uptime_seconds
+    # ============ Load Average ============
+    try:
+        with open(f"{host_root}/proc/loadavg", "r") as f:
+            parts = f.read().split()
+            metrics["host.load.1m"] = float(parts[0])
+            metrics["host.load.5m"] = float(parts[1])
+            metrics["host.load.15m"] = float(parts[2])
+    except:
+        pass
     
-    # System info
-    uname = platform.uname()
+    # ============ Temperature (Raspberry Pi specific) ============
+    try:
+        # Try Raspberry Pi thermal zone
+        temp_path = f"{host_root}/sys/class/thermal/thermal_zone0/temp"
+        if os.path.exists(temp_path):
+            with open(temp_path, "r") as f:
+                temp_millic = int(f.read().strip())
+                metrics["host.temp.cpu_c"] = round(temp_millic / 1000, 1)
+    except:
+        pass
+    
+    # ============ Network ============
+    try:
+        with open(f"{host_root}/proc/net/dev", "r") as f:
+            rx_total = tx_total = 0
+            for line in f:
+                if ":" in line and not line.strip().startswith("lo"):
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        values = parts[1].split()
+                        if len(values) >= 9:
+                            rx_total += int(values[0])
+                            tx_total += int(values[8])
+            metrics["host.net.rx_bytes"] = rx_total
+            metrics["host.net.tx_bytes"] = tx_total
+    except:
+        pass
+    
+    # ============ Uptime ============
+    try:
+        with open(f"{host_root}/proc/uptime", "r") as f:
+            uptime_seconds = int(float(f.read().split()[0]))
+            metrics["host.uptime.seconds"] = uptime_seconds
+    except:
+        pass
+    
+    # ============ System Info (from HOST) ============
+    hostname = "raspberrypi"
+    os_info = "Linux"
+    machine = "aarch64"
+    
+    try:
+        with open(f"{host_root}/etc/hostname", "r") as f:
+            hostname = f.read().strip()
+    except:
+        pass
+    
+    try:
+        with open(f"{host_root}/proc/version", "r") as f:
+            version_line = f.read().strip()
+            # Extract kernel version
+            parts = version_line.split()
+            if len(parts) >= 3:
+                os_info = f"Linux {parts[2]}"
+    except:
+        pass
+    
+    try:
+        with open(f"{host_root}/proc/cpuinfo", "r") as f:
+            for line in f:
+                if line.startswith("model name") or line.startswith("Model"):
+                    machine = line.split(":")[1].strip()
+                    break
+    except:
+        pass
     
     return {
         "timestamp": datetime.utcnow().isoformat(),
         "degrade_mode": False,
-        "source": "local",
+        "source": "host" if host_root else "container",
         "system": {
-            "hostname": uname.node,
-            "os": f"{uname.system} {uname.release}",
-            "machine": uname.machine,
-            "python": platform.python_version(),
+            "hostname": hostname,
+            "os": os_info,
+            "machine": machine,
         },
         "metrics": metrics
     }

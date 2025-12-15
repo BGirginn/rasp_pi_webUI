@@ -42,6 +42,10 @@ services:
       - ./data:/data
       - agent_socket:/run
       - ./secrets:/run/secrets:ro
+      # Mount host filesystem for accurate system metrics
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/hostname:/host/etc/hostname:ro
     restart: unless-stopped
     networks:
       - pi-control-network
@@ -60,7 +64,7 @@ services:
     image: eclipse-mosquitto:2.0
     container_name: pi-control-mqtt
     ports:
-      - "1883:1883"  # Tailscale network only
+      - "1883:1883" # Tailscale network only
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/acl.conf:/mosquitto/config/acl.conf:ro
@@ -70,7 +74,6 @@ services:
     restart: unless-stopped
     networks:
       - pi-control-network
-
   # ===========================================
   # Telemetry API (Read-Only, High Frequency)
   # Optional: Separate service for load isolation
