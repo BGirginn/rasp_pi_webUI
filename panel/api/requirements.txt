@@ -31,6 +31,7 @@ sse-starlette>=1.8.0
 python-dotenv>=1.0.0
 structlog>=23.2.0
 python-multipart>=0.0.6
+psutil>=5.9.0
 
 # Agent RPC client
 # Uses same protocol as agent
