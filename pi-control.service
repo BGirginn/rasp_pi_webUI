@@ -19,9 +19,9 @@ Restart=always
 RestartSec=5
 
 # Security hardening (relaxed for terminal PTY access)
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/pi-control
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/var/lib/pi-control /opt/pi-control /home/bgirgin
 PrivateTmp=true
 
 [Install]
