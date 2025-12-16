@@ -1,9 +1,25 @@
-# Pi Control Panel - Caddy Configuration
+# Pi Control Panel - Caddy Configuration (Native)
 
-# Main site - local development  
+# Main site
 :80 {
-    # Reverse proxy everything to Panel (API + Static files)
-    reverse_proxy panel:8080
+    # Reverse proxy to Panel API (native systemd service)
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    
+    # Server-Sent Events for live updates
+    handle /api/*/stream {
+        reverse_proxy 127.0.0.1:8080 {
+            flush_interval -1
+        }
+    }
+    
+    # Static UI files (built React app)
+    handle {
+        root * /opt/pi-control/panel/ui/dist
+        try_files { path } /index.html
+        file_server
+    }
     
     # Security headers
     header {
@@ -25,3 +41,4 @@
 :8081 {
     respond /health 200
 }
+
