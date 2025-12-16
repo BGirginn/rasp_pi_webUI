@@ -149,16 +149,12 @@ async def _get_local_system_metrics() -> Dict:
                     pct = int(parts[4].rstrip("%"))
                     metrics["disk._root.total_gb"] = round(total / (1024**3), 1)
                     metrics["disk._root.used_gb"] = round(used / (1024**3), 1)
-                    metrics["disk._root.pct"] = pct
-        else:
-            metrics["disk._root.pct"] = 0
-            metrics["disk._root.used_gb"] = 0
-            metrics["disk._root.total_gb"] = 0
+                    metrics["disk._root.used_pct"] = pct
     except:
         try:
             import psutil
             disk = psutil.disk_usage("/")
-            metrics["disk._root.pct"] = disk.percent
+            metrics["disk._root.used_pct"] = disk.percent
             metrics["disk._root.used_gb"] = disk.used / (1024**3)
             metrics["disk._root.total_gb"] = disk.total / (1024**3)
         except:

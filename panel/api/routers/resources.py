@@ -103,9 +103,8 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
     services = []
     
     # === APP Services (user can start/stop/restart) ===
-    # These are prioritized as APPS. Anything else defaults to SYSTEM.
     app_services = [
-        "tailscaled",      # Tailscale VPN - Moved to APP
+        "tailscaled",      # Tailscale VPN
         "docker",          # Docker
         "minecraft-server", "minecraft",  # Minecraft
         "home-assistant",  # Home Assistant
@@ -128,8 +127,7 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
         "samba", "smbd",   # Samba
     ]
     
-    # === SYSTEM Services (known common ones) ===
-    # We keep this list just for reference or specific overrides if needed
+    # === SYSTEM Services (can restart, but be careful) ===
     system_services = [
         "ssh", "sshd",           # SSH
         "bluetooth",             # Bluetooth
@@ -142,7 +140,6 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
         "udev", "systemd-udevd", # Device manager
         "dnsmasq",               # DNS
         "dhcpcd",                # DHCP
-        "ModemManager",
     ]
     
     # === CORE Services (read-only, never modify) ===
@@ -152,77 +149,100 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
         "dbus",
         "polkit",
         "systemd-resolved",
-        "systemd-networkd",
-        "init",
     ]
     
     try:
-        # Get ALL loaded services (active, failed, inactive-but-loaded)
-        # We use --all to see everything systemd knows about
+        # Get running services from HOST
         output = run_host_command_simple(
-            "systemctl list-units --type=service --all --no-pager --plain",
-            timeout=30
+            "systemctl list-units --type=service --state=running --no-pager --plain",
+            timeout=15
         )
         
         if not output:
-             return []
+            return []
         
-        found_services = {}
-        
+        running_names = set()
         for line in output.strip().split("\n"):
-            if not line.strip() or line.startswith("UNIT") or line.startswith("LOAD"):
+            if not line.strip() or line.startswith("UNIT"):
                 continue
+            parts = line.split()
+            if parts and parts[0].endswith(".service"):
+                name = parts[0].replace(".service", "")
+                running_names.add(name)
+        
+        # Get all important services status
+        all_target_services = app_services + system_services + core_services
+        
+        for svc_name in all_target_services:
+            # Check if service exists and get its status
+            status_output = run_host_command_simple(
+                f"systemctl is-active {svc_name}.service 2>/dev/null || echo inactive",
+                timeout=5
+            ).strip()
             
-            # Format: unit load active sub description
-            # docker.service loaded active running Docker Application Container Engine
-            parts = line.split(None, 4)
-            if len(parts) < 4:
-                continue
-                
-            unit_name = parts[0]
-            if not unit_name.endswith(".service"):
-                continue
-                
-            name = unit_name.replace(".service", "")
-            active_state = parts[2] # active, inactive, failed
-            sub_state = parts[3]    # running, dead, exited
+            # Filter: only show running services or explicitly listed important services
+            if status_output == "inactive" and svc_name not in running_names:
+                # Check if service even exists
+                exists = run_host_command_simple(
+                    f"systemctl cat {svc_name}.service >/dev/null 2>&1 && echo yes || echo no",
+                    timeout=3
+                ).strip()
+                if exists != "yes":
+                    continue
             
             # Map state
-            if active_state == "active":
+            if status_output == "active":
                 state = "running"
-            elif active_state == "activating":
-                state = "restarting"
-            elif active_state == "failed":
-                state = "failed"
-            else:
+            elif status_output == "inactive":
                 state = "stopped"
-                
-            # Determine Class
-            # Priority: Core > App > System (Default)
-            if name in core_services:
-                resource_class = "CORE"
-            elif name in app_services:
-                resource_class = "APP"
+            elif status_output == "failed":
+                state = "failed"
+            elif status_output == "activating":
+                state = "restarting"
             else:
-                # Default everyone else to SYSTEM
-                resource_class = "SYSTEM"
-
-            # Filter out some very noisy/internal system services if desired
-            # For now, we list EVERYTHING as requested
+                state = "unknown"
             
-            # Avoid kernel threads or devices if they sneak in (though type=service prevents most)
+            # Determine class
+            if svc_name in core_services:
+                resource_class = "CORE"
+            elif svc_name in system_services:
+                resource_class = "SYSTEM"
+            else:
+                resource_class = "APP"
             
             services.append(ResourceResponse(
-                id=f"systemd-{name}",
-                name=name,
-                type="systemd", # Reverted to "systemd" to match frontend expectations
-                resource_class=resource_class, 
+                id=f"systemd-{svc_name}",
+                name=svc_name,
+                type="service",
+                resource_class=resource_class,
                 provider="systemd",
                 state=state,
-                health_score=100 if state == "running" else (0 if state == "failed" else 50),
-                managed=True, # Changed from 1 to True
+                health_score=100 if state == "running" else (50 if state == "stopped" else 0),
+                managed=True,
                 updated_at=datetime.utcnow().isoformat()
             ))
+        
+        # Also add any OTHER running services not in our lists (as APP)
+        for svc_name in running_names:
+            if svc_name not in all_target_services:
+                # Skip internal systemd services
+                if svc_name.startswith("systemd-") or svc_name.startswith("user@"):
+                    continue
+                if any(x in svc_name for x in ["getty", "init", "mount", "swap"]):
+                    continue
+                
+                services.append(ResourceResponse(
+                    id=f"systemd-{svc_name}",
+                    name=svc_name,
+                    type="service",
+                    resource_class="APP",
+                    provider="systemd",
+                    state="running",
+                    health_score=100,
+                    managed=True,
+                    updated_at=datetime.utcnow().isoformat()
+                ))
+        
     except Exception as e:
         print(f"Failed to get systemd services: {e}")
     
@@ -350,8 +370,7 @@ async def execute_action(
     await db.commit()
     
     if action_result and not action_result.get("success", True):
-        # Return 400 for command failure, not 500
-        raise HTTPException(status_code=400, detail=action_result.get("message", "Action failed"))
+        raise HTTPException(status_code=500, detail=action_result.get("message", "Action failed"))
     
     return ActionResponse(
         success=True,
@@ -391,7 +410,7 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
         else:
             return {
                 "success": False,
-                "message": f"Failed to {action} {service_name}: {result.stderr}",
+                "message": f"Failed to {action} {service_name}",
                 "error": result.stderr
             }
     except subprocess.TimeoutExpired:
