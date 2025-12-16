@@ -1,13 +1,43 @@
 """
 Host Command Execution Helper
 
-Executes commands on the host system from within the Docker container.
-Uses SSH to connect to the host via the gateway IP.
+Native mode: Executes commands directly on the system.
+Docker mode: Uses SSH to connect to the host via the gateway IP.
 """
 
 import subprocess
 import os
-from typing import Tuple, Optional
+from typing import Tuple
+
+
+def is_running_in_docker() -> bool:
+    """Check if running inside a Docker container."""
+    # Check for Docker-specific files
+    if os.path.exists("/.dockerenv"):
+        return True
+    # Check cgroup
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            return "docker" in f.read()
+    except:
+        return False
+
+
+def run_native_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
+    """Execute a command directly on the system."""
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return result.stdout, result.stderr, result.returncode
+    except subprocess.TimeoutExpired:
+        return "", "Command timed out", 124
+    except Exception as e:
+        return "", str(e), 1
 
 
 def get_host_gateway() -> str:
@@ -27,9 +57,9 @@ def get_host_gateway() -> str:
     return "host.docker.internal"
 
 
-def run_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
+def run_docker_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
     """
-    Execute a command on the host system via SSH.
+    Execute a command on the host system via SSH (for Docker mode).
     
     Returns:
         Tuple of (stdout, stderr, returncode)
@@ -59,6 +89,18 @@ def run_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
         return "", "Command timed out", 124
     except Exception as e:
         return "", str(e), 1
+
+
+def run_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
+    """
+    Execute a command on the host system.
+    
+    Automatically detects if running in Docker or native mode.
+    """
+    if is_running_in_docker():
+        return run_docker_host_command(command, timeout)
+    else:
+        return run_native_command(command, timeout)
 
 
 def run_host_command_simple(command: str, timeout: int = 30) -> str:
