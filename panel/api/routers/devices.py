@@ -344,23 +344,60 @@ async def mute_esp_device(
 
 # === GPIO ===
 
+async def _get_local_gpio_status():
+    """Get status of all GPIO pins using raspi-gpio."""
+    from services.host_exec import run_host_command_simple
+    import re
+    
+    # Try raspi-gpio first (common on Pi OS)
+    # If not available, we return empty list to avoid crashing or lying
+    try:
+        output = run_host_command_simple("raspi-gpio get", timeout=2)
+        if not output or "command not found" in output:
+             # Fallback to reading /sys/class/gpio or pinctrl if needed
+             # For now, return empty or a minimal set if tool missing
+             return {"pins": [], "msg": "raspi-gpio not found"}
+    except:
+        return {"pins": []}
+
+    pins = []
+    # Parse output: "GPIO 2: level=1 fsel=1 func=OUTPUT pull=UP"
+    # Regex might need adjustment depending on version
+    for line in output.splitlines():
+        match = re.search(r'GPIO (\d+): level=(\d) fsel=\d+ func=(\w+)', line)
+        if match:
+            pin = int(match.group(1))
+            val = int(match.group(2))
+            func = match.group(3)
+            
+            # Filter for user accessible pins (BCM 0-27 usually)
+            if pin > 27: continue
+
+            mode = "output" if func == "OUTPUT" else "input"
+            # Try to grab pull if present
+            pull = None
+            if "pull=UP" in line: pull = "up"
+            elif "pull=DOWN" in line: pull = "down"
+
+            pins.append({
+                "pin": pin,
+                "mode": mode,
+                "value": val,
+                "pull": pull,
+                "name": f"GPIO {pin}" # Default name, maybe user can alias later
+            })
+            
+    return {"pins": pins}
+
 @router.get("/gpio/pins")
 async def list_gpio_pins(user: dict = Depends(get_current_user)):
     """List GPIO pins and their current states."""
     try:
-        result = await agent_client.call("devices.gpio.list")
-        return result
+        # Try agent first
+        return await agent_client.call("devices.gpio.list")
     except Exception:
-        # Return Raspberry Pi 4 GPIO layout
-        return {
-            "pins": [
-                {"pin": 2, "mode": "output", "value": 0, "name": "LED Green"},
-                {"pin": 3, "mode": "output", "value": 1, "name": "LED Red"},
-                {"pin": 4, "mode": "input", "value": 0, "pull": "up", "name": "Button 1"},
-                {"pin": 17, "mode": "input", "value": 0, "pull": "up", "name": "Motion Sensor"},
-            ],
-            "available_pins": [2, 3, 4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
-        }
+        # Fallback to local execution
+        return await _get_local_gpio_status()
 
 
 @router.post("/gpio/configure")
@@ -369,20 +406,31 @@ async def configure_gpio(
     user: dict = Depends(require_role("admin"))
 ):
     """Configure a GPIO pin."""
+    from services.host_exec import run_host_command_simple
+    
     db = await get_control_db()
     
-    await db.execute(
-        """INSERT INTO audit_log (user_id, action, details)
-           VALUES (?, ?, ?)""",
-        (user["id"], "device.gpio.configure", json.dumps(config.dict()))
+    await db.run(
+        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (:uid, 'device.gpio.configure', :details, '127.0.0.1')",
+        {"uid": user["id"], "details": json.dumps(config.dict())}
     )
-    await db.commit()
     
-    try:
-        await agent_client.call("devices.gpio.configure", config.dict())
-        return {"message": f"GPIO pin {config.pin} configured"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Execute change
+    # raspi-gpio set <pin> [ip|op] [pu|pd|pn] [dh|dl]
+    cmd = f"raspi-gpio set {config.pin}"
+    if config.mode == "input":
+        cmd += " ip"
+    elif config.mode == "output":
+         cmd += " op"
+         
+    if config.pull == "up":
+        cmd += " pu"
+    elif config.pull == "down":
+        cmd += " pd"
+        
+    run_host_command_simple(cmd)
+    
+    return {"message": f"GPIO pin {config.pin} configured"}
 
 
 @router.post("/gpio/{pin}/write")
@@ -392,11 +440,13 @@ async def write_gpio(
     user: dict = Depends(require_role("admin", "operator"))
 ):
     """Write value to a GPIO output pin."""
-    try:
-        await agent_client.call("devices.gpio.write", {"pin": pin, "value": value})
-        return {"message": f"GPIO {pin} set to {value}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    from services.host_exec import run_host_command_simple
+    
+    # raspi-gpio set <pin> dh (high) or dl (low)
+    state = "dh" if value == 1 else "dl"
+    run_host_command_simple(f"raspi-gpio set {pin} {state}")
+    
+    return {"message": f"GPIO {pin} set to {value}"}
 
 
 @router.get("/gpio/{pin}/read")

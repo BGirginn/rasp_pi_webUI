@@ -85,23 +85,38 @@ async def _get_local_system_metrics() -> Dict:
     host_root = "/host" if os.path.exists("/host/proc") else ""
     
     # ============ CPU Usage ============
+    # ============ CPU Usage ============
     try:
-        # Read from /proc/stat for accurate CPU
-        with open(f"{host_root}/proc/stat", "r") as f:
-            cpu_line = f.readline()
-            parts = cpu_line.split()
-            # cpu user nice system idle iowait irq softirq steal guest guest_nice
-            if len(parts) >= 5:
-                idle = int(parts[4])
-                total = sum(int(p) for p in parts[1:])
-                # Store for delta calculation (simplified - single sample)
-                cpu_percent = 100 * (1 - idle / total) if total > 0 else 0
-                metrics["host.cpu.pct_total"] = round(cpu_percent, 1)
+        import psutil
+        # This blocks for 0.5s to calculate accurate delta
+        metrics["host.cpu.pct_total"] = psutil.cpu_percent(interval=0.5)
     except:
         try:
-            import psutil
-            metrics["host.cpu.pct_total"] = psutil.cpu_percent(interval=0.5)
-        except:
+            # Manual fallback: Read /proc/stat twice
+            def read_stat():
+                with open(f"{host_root}/proc/stat", "r") as f:
+                    line = f.readline()
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        idle = int(parts[4])
+                        total = sum(int(p) for p in parts[1:])
+                        return total, idle
+                return 0, 0
+
+            t1, i1 = read_stat()
+            if t1 > 0:
+                time.sleep(0.5)
+                t2, i2 = read_stat()
+                delta_total = t2 - t1
+                delta_idle = i2 - i1
+                if delta_total > 0:
+                   metrics["host.cpu.pct_total"] = round(100 * (1 - delta_idle / delta_total), 1)
+                else:
+                   metrics["host.cpu.pct_total"] = 0
+            else:
+                metrics["host.cpu.pct_total"] = 0
+        except Exception as e:
+            print(f"CPU calc error: {e}")
             metrics["host.cpu.pct_total"] = 0
     
     # ============ Memory ============
@@ -149,11 +164,13 @@ async def _get_local_system_metrics() -> Dict:
                     pct = int(parts[4].rstrip("%"))
                     metrics["disk._root.total_gb"] = round(total / (1024**3), 1)
                     metrics["disk._root.used_gb"] = round(used / (1024**3), 1)
+                    metrics["disk._root.pct"] = pct # Legacy key
                     metrics["disk._root.used_pct"] = pct
     except:
         try:
             import psutil
             disk = psutil.disk_usage("/")
+            metrics["disk._root.pct"] = disk.percent
             metrics["disk._root.used_pct"] = disk.percent
             metrics["disk._root.used_gb"] = disk.used / (1024**3)
             metrics["disk._root.total_gb"] = disk.total / (1024**3)

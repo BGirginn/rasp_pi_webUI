@@ -118,16 +118,45 @@ async def shutdown_system(
     db = await get_control_db()
     
     # Audit log
-    await db.execute(
-        "INSERT INTO audit_log (user_id, action, details) VALUES (?, ?, ?)",
-        (user["id"], "system.shutdown", "System shutdown initiated via API")
+    await db.run(
+        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (:uid, 'power.shutdown', 'System shutdown initiated', '127.0.0.1')",
+        {"uid": user["id"]}
     )
-    await db.commit()
     
-    # Schedule shutdown
-    background_tasks.add_task(execute_power_command, "poweroff")
-    
+    background_tasks.add_task(execute_power_command, "shutdown now")
     return {"message": "System is shutting down..."}
+
+@router.get("/processes")
+async def get_processes(user: dict = Depends(get_current_user)):
+    """Get top running processes."""
+    import psutil
+    
+    procs = []
+    for p in psutil.process_iter(['pid', 'name', 'username']):
+        try:
+            # Use onshot to get info efficiently
+            with p.oneshot():
+                # cpu_percent(interval=None) returns 0.0 on first call, but subsequent calls work.
+                # Since we can't persist process objects easily across requests in stateless HTTP, 
+                # we might accept that CPU is 0 or try a small trick.
+                # However, memory is accurate.
+                cpu = p.cpu_percent(interval=None)
+                mem = p.memory_info().rss / (1024 * 1024) # MB
+                
+                procs.append({
+                    "pid": p.pid,
+                    "name": p.name(),
+                    "cpu": round(cpu, 1),
+                    "memory": round(mem, 1)
+                })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+            
+    # Sort by memory usage descending (since CPU might be 0 often without persistent tracking)
+    # Or sort by CPU if non-zero
+    procs.sort(key=lambda x: x['memory'], reverse=True)
+    
+    return procs[:10] # Return top 10
 
 @router.post("/update")
 async def update_system(
