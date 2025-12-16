@@ -31,40 +31,59 @@ class TerminalSession:
         self.pid: Optional[int] = None
         self.running = False
     
+    def _is_running_in_docker(self) -> bool:
+        """Check if running inside a Docker container."""
+        if os.path.exists("/.dockerenv"):
+            return True
+        try:
+            with open("/proc/1/cgroup", "r") as f:
+                return "docker" in f.read()
+        except:
+            return False
+    
     async def start(self, cols: int = 80, rows: int = 24):
-        """Start a new terminal session - connects to host system via SSH."""
+        """Start a new terminal session - native bash or SSH via Docker."""
         # Fork a pseudo-terminal
         self.pid, self.fd = pty.fork()
         
         if self.pid == 0:
-            # Child process - SSH to host
+            # Child process
             os.environ["TERM"] = "xterm-256color"
             os.environ["COLORTERM"] = "truecolor"
             
-            # Get host gateway IP (default route to host)
-            import subprocess
-            try:
-                result = subprocess.run(
-                    ["ip", "route", "show", "default"],
-                    capture_output=True, text=True
-                )
-                # Parse: default via 172.19.0.1 dev eth0
-                gateway = result.stdout.split()[2] if result.stdout else "host.docker.internal"
-            except:
-                gateway = "host.docker.internal"
+            # Check if running in Docker or native mode
+            in_docker = os.path.exists("/.dockerenv")
+            if not in_docker:
+                try:
+                    with open("/proc/1/cgroup", "r") as f:
+                        in_docker = "docker" in f.read()
+                except:
+                    pass
             
-            # SSH to host (assuming SSH key or password-less setup)
-            # Use -o options to skip host key verification in container
-            # Using sshpass for password auth (password from env)
-            ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
-            os.execvp("sshpass", [
-                "sshpass", "-p", ssh_password,
-                "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                f"bgirgin@{gateway}",  # Connect to host via gateway
-            ])
+            if in_docker:
+                # Docker mode: SSH to host via gateway
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["ip", "route", "show", "default"],
+                        capture_output=True, text=True
+                    )
+                    gateway = result.stdout.split()[2] if result.stdout else "host.docker.internal"
+                except:
+                    gateway = "host.docker.internal"
+                
+                ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
+                os.execvp("sshpass", [
+                    "sshpass", "-p", ssh_password,
+                    "ssh",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    f"bgirgin@{gateway}",
+                ])
+            else:
+                # Native mode: Direct bash shell
+                os.execvp("/bin/bash", ["/bin/bash", "-l"])
         else:
             # Parent process
             self.running = True

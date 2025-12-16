@@ -18,10 +18,9 @@ ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5
 
-# Security hardening
-NoNewPrivileges=true
+# Security hardening (relaxed for terminal PTY access)
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ReadWritePaths=/var/lib/pi-control
 PrivateTmp=true
 

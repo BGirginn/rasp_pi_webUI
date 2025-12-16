@@ -2,8 +2,8 @@
 
 # Main site
 :80 {
-    # Reverse proxy to Panel API (native systemd service)
-    handle /api/* {
+    # WebSocket for terminal (must be before other /api/* handlers)
+    handle /api/terminal/ws {
         reverse_proxy 127.0.0.1:8080
     }
     
@@ -14,10 +14,15 @@
         }
     }
     
+    # Reverse proxy to Panel API (native systemd service)
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    
     # Static UI files (built React app)
     handle {
         root * /opt/pi-control/panel/ui/dist
-        try_files { path } /index.html
+        try_files {path} /index.html
         file_server
     }
     
