@@ -21,9 +21,9 @@ router = APIRouter()
 class InterfaceResponse(BaseModel):
     name: str
     type: str  # ethernet, wifi, bluetooth, loopback
-    state: str
-    mac_address: Optional[str]
-    ip_address: Optional[str]
+    status: str
+    mac: Optional[str]
+    ip: Optional[str]
     subnet_mask: Optional[str]
     gateway: Optional[str]
     rx_bytes: int = 0
@@ -139,9 +139,9 @@ async def _get_local_interfaces() -> List[InterfaceResponse]:
         interfaces.append(InterfaceResponse(
             name=iface_name,
             type=iface_type,
-            state="up" if is_up else "down",
-            mac_address=mac_address,
-            ip_address=ip_address,
+            status="up" if is_up else "down",
+            mac=mac_address,
+            ip=ip_address,
             subnet_mask=subnet_mask,
             gateway=gateway,
             rx_bytes=rx_bytes,
@@ -237,29 +237,8 @@ async def scan_wifi_networks(user: dict = Depends(get_current_user)):
         networks = await agent_client.scan_wifi()
         return [WifiNetwork(**n) for n in networks]
     except Exception:
-        # Return mock data
-        return [
-            WifiNetwork(
-                ssid="HomeNetwork",
-                bssid="aa:bb:cc:dd:ee:ff",
-                signal_strength=-45,
-                signal_quality=80,
-                channel=6,
-                frequency="2.4GHz",
-                security="wpa2",
-                connected=True
-            ),
-            WifiNetwork(
-                ssid="Neighbor-5G",
-                bssid="11:22:33:44:55:66",
-                signal_strength=-65,
-                signal_quality=50,
-                channel=36,
-                frequency="5GHz",
-                security="wpa3",
-                connected=False
-            ),
-        ]
+        # Return empty list on failure
+        return []
 
 
 @router.get("/wifi/status")
@@ -269,14 +248,7 @@ async def wifi_status(user: dict = Depends(get_current_user)):
         result = await agent_client.call("network.wifi.status")
         return result
     except Exception:
-        return {
-            "connected": True,
-            "ssid": "HomeNetwork",
-            "signal_strength": -45,
-            "signal_quality": 80,
-            "ip_address": "192.168.1.101",
-            "frequency": "2.4GHz",
-        }
+        return {"connected": False}
 
 
 @router.post("/wifi/connect")

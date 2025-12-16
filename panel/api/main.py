@@ -18,10 +18,15 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system
 from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
+
+# ... existing code ...
+
+# Include routers
+
 
 # Configure structured logging
 structlog.configure(
@@ -143,6 +148,7 @@ app.include_router(network.router, prefix="/api/network", tags=["Network"])
 app.include_router(devices.router, prefix="/api/devices", tags=["Devices"])
 app.include_router(admin_console.router, prefix="/api/admin", tags=["Admin Console"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])
+app.include_router(system.router, prefix="/api/system", tags=["System"])
 
 
 # Health check endpoint

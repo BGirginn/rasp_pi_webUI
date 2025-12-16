@@ -1,0 +1,15 @@
+[Unit]
+Description=Minecraft Server
+After=network.target
+
+[Service]
+User=bgirgin
+WorkingDirectory=/home/bgirgin/minecraft
+ExecStart=/usr/bin/java -Xmx2G -Xms1G -jar minecraft_server.jar nogui
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -82,9 +82,24 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against hash (async - runs in thread pool)."""
+    import asyncio
+    try:
+        return await asyncio.to_thread(bcrypt.checkpw, plain_password.encode(), hashed_password.encode())
+    except Exception:
+        return False
+
+
 def hash_password(password: str) -> str:
     """Hash password."""
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+async def hash_password_async(password: str) -> str:
+    """Hash password (async - runs in thread pool)."""
+    import asyncio
+    return await asyncio.to_thread(lambda: bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
@@ -153,8 +168,8 @@ async def login(request: LoginRequest, response: Response, req: Request):
     
     user_id, username, password_hash, role, totp_secret = row
     
-    # Verify password
-    if not verify_password(request.password, password_hash):
+    # Verify password (using async version to avoid blocking)
+    if not await verify_password_async(request.password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     # Verify TOTP if enabled
