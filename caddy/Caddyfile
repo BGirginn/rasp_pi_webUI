@@ -2,24 +2,8 @@
 
 # Main site - local development  
 :80 {
-    # Reverse proxy to Panel API
-    handle /api/* {
-        reverse_proxy panel:8080
-    }
-    
-    # Server-Sent Events for live updates
-    handle /api/*/stream {
-        reverse_proxy panel:8080 {
-            flush_interval -1
-        }
-    }
-    
-    # Static UI files
-    handle {
-        root * /srv/ui
-        try_files {path} /index.html
-        file_server
-    }
+    # Reverse proxy everything to Panel (API + Static files)
+    reverse_proxy panel:8080
     
     # Security headers
     header {
@@ -41,4 +25,3 @@
 :8081 {
     respond /health 200
 }
-
