@@ -29,6 +29,8 @@ class ResourceResponse(BaseModel):
     health_score: int
     managed: bool
     updated_at: str
+    cpu_usage: Optional[float] = 0.0
+    memory_usage: Optional[float] = 0.0
 
 
 class ActionRequest(BaseModel):
@@ -100,155 +102,150 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
     from datetime import datetime
     from services.host_exec import run_host_command_simple
     
+    # Get Usage Data first (single ps command)
+    usage_map = {}
+    try:
+        # ps -axo unit,pcpu,pmem --no-headers
+        ps_out = run_host_command_simple("ps -axo unit,pcpu,pmem --no-headers", timeout=5)
+        if ps_out:
+            for line in ps_out.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                     unit = parts[0]
+                     try:
+                         usage_map[unit] = {
+                             "cpu": float(parts[1]),
+                             "mem": float(parts[2])
+                         }
+                     except: pass
+    except Exception:
+        pass
+
     services = []
     
-    # === APP Services (user can start/stop/restart) ===
+    # === APP Services ===
     app_services = [
-        "tailscaled",      # Tailscale VPN
-        "docker",          # Docker
-        "minecraft-server", "minecraft",  # Minecraft
-        "home-assistant",  # Home Assistant
-        "zigbee2mqtt",     # Zigbee
-        "node-red",        # Node-RED
-        "grafana-server", "grafana",  # Grafana
-        "prometheus",      # Prometheus
-        "influxdb",        # InfluxDB
-        "mosquitto",       # MQTT
-        "nginx",           # Nginx
-        "apache2", "httpd",  # Apache
-        "postgresql", "postgres",  # PostgreSQL
-        "mysql", "mariadb",  # MySQL/MariaDB
-        "redis-server", "redis",  # Redis
-        "pihole-FTL",      # Pi-hole
-        "jellyfin",        # Jellyfin
-        "plex",            # Plex
-        "transmission-daemon",  # Transmission
-        "cups",            # Printing
-        "samba", "smbd",   # Samba
+        "tailscaled", "docker", "minecraft-server", "minecraft", "home-assistant", 
+        "zigbee2mqtt", "node-red", "grafana-server", "grafana", "prometheus", 
+        "influxdb", "mosquitto", "nginx", "apache2", "httpd", "postgresql", 
+        "postgres", "mysql", "mariadb", "redis-server", "redis", "pihole-FTL", 
+        "jellyfin", "plex", "transmission-daemon", "cups", "samba", "smbd"
     ]
     
-    # === SYSTEM Services (can restart, but be careful) ===
+    # === SYSTEM Services ===
     system_services = [
-        "ssh", "sshd",           # SSH
-        "bluetooth",             # Bluetooth
-        "NetworkManager",        # Network Manager
-        "wpa_supplicant",        # WiFi
-        "avahi-daemon",          # mDNS/Bonjour
-        "cron", "cronie",        # Cron
-        "rsyslog",               # Syslog
-        "ntp", "systemd-timesyncd", "chrony",  # Time sync
-        "udev", "systemd-udevd", # Device manager
-        "dnsmasq",               # DNS
-        "dhcpcd",                # DHCP
+        "ssh", "sshd", "bluetooth", "NetworkManager", "wpa_supplicant", 
+        "avahi-daemon", "cron", "cronie", "rsyslog", "ntp", 
+        "systemd-timesyncd", "chrony", "udev", "systemd-udevd", "dnsmasq", "dhcpcd"
     ]
     
-    # === CORE Services (read-only, never modify) ===
+    # === CORE Services ===
     core_services = [
-        "systemd-journald",
-        "systemd-logind",
-        "dbus",
-        "polkit",
-        "systemd-resolved",
+        "systemd-journald", "systemd-logind", "dbus", "polkit", "systemd-resolved"
     ]
     
     try:
-        # Get running services from HOST
+        # Get list of ALL loaded services (running, failed, exited, loaded)
         output = run_host_command_simple(
-            "systemctl list-units --type=service --state=running --no-pager --plain",
+            "systemctl list-units --type=service --all --no-pager --plain --no-legend",
             timeout=15
         )
         
         if not output:
-            return []
+             output = ""
+
+        now = datetime.utcnow().isoformat()
+        processed_units = set()
+
+        # Parse loaded services (active or inactive but loaded)
+        for line in output.splitlines():
+             parts = line.split()
+             if len(parts) < 1: continue
+             
+             unit_name = parts[0]
+             if not unit_name.endswith(".service"): continue
+             
+             name = unit_name.replace(".service", "")
+             processed_units.add(name)
+             
+             # Determine category
+             r_class = "APP" 
+             if name in app_services: r_class = "APP"
+             elif name in system_services: r_class = "SYSTEM"
+             elif name in core_services: r_class = "CORE"
+             # If not in lists but starts with systemd-, classify as SYSTEM or CORE
+             elif name.startswith("systemd-"): r_class = "SYSTEM"
+             
+             # Filter noisy kernel/system ones if needed. 
+             # If it's not in our lists and it's NOT running, we probably don't care about it (clutter).
+             # If it IS running, we show it (discovery).
+             active_state = parts[2] if len(parts) > 2 else "unknown"
+             sub_state = parts[3] if len(parts) > 3 else "unknown"
+             
+             is_running = active_state == "active"
+             
+             if not is_running and name not in app_services and name not in system_services and name not in core_services:
+                 continue
+
+             use_data = usage_map.get(unit_name, {"cpu": 0.0, "mem": 0.0})
+             
+             state = "running" if is_running else "stopped"
+             if active_state == "failed": state = "failed"
+             
+             services.append(ResourceResponse(
+                 id=f"systemd-{name}",
+                 name=name,
+                 type="service",
+                 resource_class=r_class,
+                 provider="systemd",
+                 state=state,
+                 health_score=100 if state == "running" else (0 if state == "failed" else 50),
+                 managed=True,
+                 updated_at=now,
+                 cpu_usage=use_data["cpu"],
+                 memory_usage=use_data["mem"]
+             ))
+             
+        # Check for important services that were NOT loaded (completely stopped/disabled)
+        all_important = app_services + system_services
+        missing_services = [s for s in all_important if s not in processed_units]
         
-        running_names = set()
-        for line in output.strip().split("\n"):
-            if not line.strip() or line.startswith("UNIT"):
-                continue
-            parts = line.split()
-            if parts and parts[0].endswith(".service"):
-                name = parts[0].replace(".service", "")
-                running_names.add(name)
-        
-        # Get all important services status
-        all_target_services = app_services + system_services + core_services
-        
-        for svc_name in all_target_services:
-            # Check if service exists and get its status
-            status_output = run_host_command_simple(
-                f"systemctl is-active {svc_name}.service 2>/dev/null || echo inactive",
-                timeout=5
-            ).strip()
+        if missing_services:
+            # Check existence in batch
+            check_cmd = "systemctl list-unit-files " + " ".join([f"{s}.service" for s in missing_services]) + " --no-legend"
+            check_out = run_host_command_simple(check_cmd, timeout=10)
             
-            # Filter: only show running services or explicitly listed important services
-            if status_output == "inactive" and svc_name not in running_names:
-                # Check if service even exists
-                exists = run_host_command_simple(
-                    f"systemctl cat {svc_name}.service >/dev/null 2>&1 && echo yes || echo no",
-                    timeout=3
-                ).strip()
-                if exists != "yes":
-                    continue
-            
-            # Map state
-            if status_output == "active":
-                state = "running"
-            elif status_output == "inactive":
-                state = "stopped"
-            elif status_output == "failed":
-                state = "failed"
-            elif status_output == "activating":
-                state = "restarting"
-            else:
-                state = "unknown"
-            
-            # Determine class
-            if svc_name in core_services:
-                resource_class = "CORE"
-            elif svc_name in system_services:
-                resource_class = "SYSTEM"
-            else:
-                resource_class = "APP"
-            
-            services.append(ResourceResponse(
-                id=f"systemd-{svc_name}",
-                name=svc_name,
-                type="service",
-                resource_class=resource_class,
-                provider="systemd",
-                state=state,
-                health_score=100 if state == "running" else (50 if state == "stopped" else 0),
-                managed=True,
-                updated_at=datetime.utcnow().isoformat()
-            ))
-        
-        # Also add any OTHER running services not in our lists (as APP)
-        for svc_name in running_names:
-            if svc_name not in all_target_services:
-                # Skip internal systemd services
-                if svc_name.startswith("systemd-") or svc_name.startswith("user@"):
-                    continue
-                if any(x in svc_name for x in ["getty", "init", "mount", "swap"]):
-                    continue
-                
-                services.append(ResourceResponse(
-                    id=f"systemd-{svc_name}",
-                    name=svc_name,
-                    type="service",
-                    resource_class="APP",
-                    provider="systemd",
-                    state="running",
-                    health_score=100,
-                    managed=True,
-                    updated_at=datetime.utcnow().isoformat()
-                ))
-        
+            if check_out:
+                for line in check_out.splitlines():
+                    parts = line.split()
+                    if len(parts) < 1: continue
+                    unit_file = parts[0]
+                    if not unit_file.endswith(".service"): continue
+                    
+                    name = unit_file.replace(".service", "")
+                    
+                    # Determine category
+                    r_class = "APP"
+                    if name in app_services: r_class = "APP"
+                    elif name in system_services: r_class = "SYSTEM"
+                    
+                    services.append(ResourceResponse(
+                        id=f"systemd-{name}",
+                        name=name,
+                        type="service",
+                        resource_class=r_class,
+                        provider="systemd",
+                        state="stopped",
+                        health_score=50,
+                        managed=True,
+                        updated_at=now
+                    ))
+
+        return sorted(services, key=lambda s: (s.resource_class != "APP", s.name))
+
     except Exception as e:
-        print(f"Failed to get systemd services: {e}")
-    
-    # Sort by class then name
-    class_order = {"APP": 0, "SYSTEM": 1, "CORE": 2}
-    return sorted(services, key=lambda s: (class_order.get(s.resource_class, 3), s.name))
+        print(f"Error fetching services: {e}")
+        return []
 
 
 @router.get("/unmanaged", response_model=List[ResourceResponse])

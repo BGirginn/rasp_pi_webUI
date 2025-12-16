@@ -22,6 +22,7 @@ from routers import auth, resources, telemetry, logs, jobs, alerts, network, dev
 from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
+from services.telemetry_collector import telemetry_collector
 
 # ... existing code ...
 
@@ -69,11 +70,13 @@ async def lifespan(app: FastAPI):
         logger.warning("Agent not available, running without it", error=str(e))
     
     await alert_manager.start()
+    await telemetry_collector.start()
     
     yield
     
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    await telemetry_collector.stop()
     await alert_manager.stop()
     await agent_client.disconnect()
     await close_db()
