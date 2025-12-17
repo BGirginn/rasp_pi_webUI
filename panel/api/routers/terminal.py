@@ -77,6 +77,11 @@ class TerminalSession:
                     gateway = "host.docker.internal"
                 
                 ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
+                # Get SSH user from environment or detect dynamically
+                import subprocess as sp
+                ssh_user = os.environ.get("SSH_HOST_USER") or sp.run(
+                    ["whoami"], capture_output=True, text=True
+                ).stdout.strip() or "pi"
                 # Use sshpass to auto-login
                 os.execvp("sshpass", [
                     "sshpass", "-p", ssh_password,
@@ -84,7 +89,7 @@ class TerminalSession:
                     "-o", "StrictHostKeyChecking=no",
                     "-o", "UserKnownHostsFile=/dev/null",
                     "-o", "LogLevel=ERROR",
-                    f"bgirgin@{gateway}",
+                    f"{ssh_user}@{gateway}",
                 ])
             else:
                 # Native mode: Direct bash shell

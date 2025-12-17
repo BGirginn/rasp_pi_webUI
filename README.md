@@ -62,6 +62,23 @@ chmod +x install.sh
 ./install.sh
 ```
 
+### 🔄 Auto-Start Setup (Recommended)
+
+One command to install and configure everything to auto-start on boot:
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+sudo ./setup-autostart.sh
+```
+
+This script will:
+- ✅ Install all dependencies (Python, Node.js, Caddy)
+- ✅ Build the UI
+- ✅ Configure systemd services
+- ✅ Enable auto-start on boot
+- ✅ Start all services
+
 ---
 
 ## 🔧 Architecture

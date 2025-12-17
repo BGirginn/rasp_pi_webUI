@@ -4,7 +4,13 @@
 
 set -e
 
-PI_HOST="${1:-bgirgin@100.80.90.68}"
+PI_HOST="${1:-}"
+
+if [ -z "$PI_HOST" ]; then
+    echo "Usage: ./deploy-native.sh user@pi-ip-address"
+    echo "Example: ./deploy-native.sh pi@192.168.1.100"
+    exit 1
+fi
 PROJECT_DIR="/opt/pi-control"
 DATA_DIR="/var/lib/pi-control"
 CONFIG_DIR="/etc/pi-control"

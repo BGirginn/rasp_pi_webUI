@@ -66,7 +66,10 @@ def run_docker_host_command(command: str, timeout: int = 30) -> Tuple[str, str, 
     """
     gateway = get_host_gateway()
     ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
-    ssh_user = os.environ.get("SSH_HOST_USER", "bgirgin")
+    # Get SSH user from environment or detect current user
+    ssh_user = os.environ.get("SSH_HOST_USER") or subprocess.run(
+        ["whoami"], capture_output=True, text=True
+    ).stdout.strip() or "pi"
     
     try:
         result = subprocess.run(
