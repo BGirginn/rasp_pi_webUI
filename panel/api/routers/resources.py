@@ -13,6 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from db import get_control_db
 from services.agent_client import agent_client
+from services.host_exec import run_host_command_simple, run_host_command, is_running_in_docker
 from .auth import get_current_user, require_role
 
 router = APIRouter()
@@ -100,7 +101,7 @@ async def list_resources(
 async def _get_live_systemd_services() -> List[ResourceResponse]:
     """Get real systemd services from the HOST system via SSH."""
     from datetime import datetime
-    from services.host_exec import run_host_command_simple
+
     
     # Get Usage Data first (single ps command)
     usage_map = {}
@@ -118,8 +119,9 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                              "mem": float(parts[2])
                          }
                      except: pass
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Discovery usage map error: {e}")
+
 
     services = []
     
@@ -398,8 +400,8 @@ async def execute_action(
 
 async def _execute_systemd_action(service_name: str, action: str) -> dict:
     """Execute a systemctl action on a service via host_exec."""
-    from services.host_exec import run_host_command, is_running_in_docker
     import os
+
     
     # Allowed actions
     allowed = ["start", "stop", "restart", "status"]
