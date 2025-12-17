@@ -377,8 +377,8 @@ async def execute_action(
 
 
 async def _execute_systemd_action(service_name: str, action: str) -> dict:
-    """Execute a systemctl action on a service."""
-    import subprocess
+    """Execute a systemctl action on a service via host_exec."""
+    from services.host_exec import run_host_command
     
     # Allowed actions
     allowed = ["start", "stop", "restart", "status"]
@@ -391,29 +391,27 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
         return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
     
     try:
-        result = subprocess.run(
-            ["/usr/bin/sudo", "/usr/bin/systemctl", action, f"{service_name}.service"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
-        )
+        # Use run_host_command which handles both native and Docker modes (SSH escape)
+        command = f"sudo systemctl {action} {service_name}.service"
+        print(f"Executing systemd action: {command}")
         
-        if result.returncode == 0:
+        stdout, stderr, returncode = run_host_command(command, timeout=30)
+        
+        if returncode == 0:
             return {
                 "success": True,
                 "message": f"Service {service_name} {action} successful",
-                "output": result.stdout
+                "output": stdout
             }
         else:
+            print(f"Systemd action failed: {stderr}")
             return {
                 "success": False,
                 "message": f"Failed to {action} {service_name}",
-                "error": result.stderr
+                "error": stderr
             }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "message": f"Timeout executing {action} on {service_name}"}
     except Exception as e:
+        print(f"Systemd execution exception: {e}")
         return {"success": False, "message": str(e)}
 
 
