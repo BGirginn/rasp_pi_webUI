@@ -579,6 +579,16 @@ generate_secrets() {
     else
         success "JWT secret exists"
     fi
+    
+    # Sudoers for systemctl (required for service control from web UI)
+    local sudoers_file="/etc/sudoers.d/pi-control"
+    if [[ ! -f "$sudoers_file" ]]; then
+        echo "$INSTALL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl" > "$sudoers_file"
+        chmod 440 "$sudoers_file"
+        success "Sudoers configured for systemctl"
+    else
+        success "Sudoers already configured"
+    fi
 }
 
 configure_systemd() {
