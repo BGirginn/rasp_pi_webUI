@@ -248,8 +248,6 @@ http://<tailscale-ip>/api/docs
 
 ## 📜 License
 
-MIT License — Free for personal and commercial use.
-
----
-
-Made by [BGirginn](https://github.com/BGirginn)
+© Bora Girgin (BGirginn)
+This project is not open source.
+Download and use are permitted. All other rights are reserved.
