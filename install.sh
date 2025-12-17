@@ -64,7 +64,7 @@ VERBOSE=false
 
 # State
 STEP=0
-TOTAL_STEPS=12
+TOTAL_STEPS=14
 START_TIME=$(date +%s)
 
 # ============================================================================
