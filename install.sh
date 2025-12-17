@@ -95,7 +95,7 @@ print_banner() {
 }
 
 print_step() {
-    ((STEP++))
+    STEP=$((STEP + 1))
     echo ""
     echo -e "${BLUE}${BOLD}[$STEP/$TOTAL_STEPS] $1${NC}"
     echo -e "${BLUE}$(printf '%.0s─' {1..60})${NC}"
