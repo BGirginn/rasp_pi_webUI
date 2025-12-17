@@ -378,7 +378,8 @@ async def execute_action(
 
 async def _execute_systemd_action(service_name: str, action: str) -> dict:
     """Execute a systemctl action on a service via host_exec."""
-    from services.host_exec import run_host_command
+    from services.host_exec import run_host_command, is_running_in_docker
+    import os
     
     # Allowed actions
     allowed = ["start", "stop", "restart", "status"]
@@ -391,9 +392,19 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
         return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
     
     try:
-        # Use run_host_command which handles both native and Docker modes (SSH escape)
+        # Determine command strategy
         command = f"sudo systemctl {action} {service_name}.service"
-        print(f"Executing systemd action: {command}")
+        
+        # If running native (not Docker) and we might need a password for sudo
+        if not is_running_in_docker():
+            # Try to get password from env
+            password = os.environ.get("SUDO_PASSWORD") or os.environ.get("SSH_HOST_PASSWORD")
+            if password:
+                # Use sudo -S to accept password from stdin
+                # We pipe via shell: echo 'pass' | sudo -S command
+                command = f"echo '{password}' | sudo -S systemctl {action} {service_name}.service"
+
+        print(f"Executing systemd action: {command.replace(os.environ.get('SUDO_PASSWORD', 'checking-vars'), '***')}")
         
         stdout, stderr, returncode = run_host_command(command, timeout=30)
         
@@ -407,7 +418,7 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
             print(f"Systemd action failed: {stderr}")
             return {
                 "success": False,
-                "message": f"Failed to {action} {service_name}",
+                "message": f"Failed to {action} {service_name}. Error: {stderr.strip() or 'Exit code ' + str(returncode)}",
                 "error": stderr
             }
     except Exception as e:
