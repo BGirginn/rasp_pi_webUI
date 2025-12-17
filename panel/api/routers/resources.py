@@ -350,7 +350,27 @@ async def execute_action(
     action_result = None
     if provider == "systemd" and resource_id.startswith("systemd-"):
         service_name = resource_id.replace("systemd-", "")
-        action_result = await _execute_systemd_action(service_name, request.action)
+        
+        # Try agent RPC first (Preferred: Agent runs as root)
+        try:
+            # Agent expects ID like "service.service"
+            agent_resource_id = f"{service_name}.service"
+            print(f"Attempting agent action on {agent_resource_id}")
+            action_result = await agent_client.execute_action(agent_resource_id, request.action, request.params)
+            
+            # If agent returns explicit failure (but communication worked), respect it?
+            # Or fall back if it says "Resource not found"?
+            # For now, if communication works, we trust the result.
+            if action_result and action_result.get("success"):
+                pass  # Success!
+            elif action_result and action_result.get("error") == "NOT_FOUND":
+                # Agent doesn't know about it (maybe just created?), try local fallback
+                print("Agent resource not found, falling back to local action")
+                raise Exception("Agent resource not found")
+                
+        except Exception as e:
+            print(f"Agent action failed ({e}), falling back to local execution")
+            action_result = await _execute_systemd_action(service_name, request.action)
     else:
         # Try agent RPC for other providers
         try:
