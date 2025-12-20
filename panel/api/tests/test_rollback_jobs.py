@@ -86,7 +86,7 @@ async def test_create_rollback_job():
     assert row[1] == "net.toggle_wifi"  # action_id
     assert row[2] == "net.toggle_wifi"  # rollback_action_id
     assert json.loads(row[3]) == {"enabled": False}  # payload_json
-    assert row[4] == 1  # created_by_user_id
+    assert row[4] == "1"  # created_by_user_id (SQLite stores as TEXT)
     assert row[5] >= now + 29  # due_at
     assert row[7] == "pending"  # status
     

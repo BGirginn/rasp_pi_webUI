@@ -40,6 +40,8 @@ async def run_migrations(db_path: str):
             ("002_default_admin", migrate_002_default_admin),
             ("003_ignored_resources", migrate_003_ignored_resources),
             ("004_alert_history", migrate_004_alert_history),
+            ("005_owner_role_and_settings", migrate_005_owner_role_and_settings),
+            ("006_rollback_jobs", migrate_006_rollback_jobs),
         ]
         
         # Apply pending migrations
