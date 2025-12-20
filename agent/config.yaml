@@ -1,0 +1,133 @@
+# Pi Control Panel - Agent Configuration
+
+# ===========================================
+# Agent Identity
+# ===========================================
+agent:
+  name: "pi-agent"
+  version: "1.0.0"
+  
+# ===========================================
+# Socket Configuration
+# ===========================================
+socket:
+  path: "/run/pi-agent/agent.sock"
+  permissions: "0660"
+
+# ===========================================
+# Discovery Settings
+# ===========================================
+discovery:
+  # Interval between discovery scans (seconds)
+  interval: 30
+  
+  # Providers to enable
+  providers:
+    - docker
+    - systemd
+    - network
+    - devices
+
+# ===========================================
+# Telemetry Settings
+# ===========================================
+telemetry:
+  # Collection interval (seconds)
+  interval: 2
+  
+  # Database path
+  db_path: "/data/telemetry.db"
+  
+  # Batch size for writes
+  batch_size: 500
+  
+  # Degrade mode thresholds
+  degrade:
+    queue_size: 10000
+    cpu_percent: 90
+    io_wait_percent: 50
+    
+  # Metrics to collect
+  metrics:
+    host:
+      cpu: true
+      memory: true
+      disk: true
+      temperature: true
+      network: true
+    containers: true
+    services: true
+
+# ===========================================
+# Health Beacon
+# ===========================================
+health:
+  # Beacon interval (seconds)
+  interval: 10
+  
+  # Endpoint to report to
+  endpoint: "http://localhost:8080/api/agent/health"
+
+# ===========================================
+# Job Runner
+# ===========================================
+jobs:
+  # Maximum concurrent jobs
+  max_concurrent: 2
+  
+  # Default timeout (seconds)
+  default_timeout: 600
+  
+  # State persistence
+  db_path: "/data/control.db"
+
+# ===========================================
+# MQTT Bridge
+# ===========================================
+mqtt:
+  enabled: true
+  host: "localhost"
+  port: 1883
+  username: "panel"
+  password_file: "/run/secrets/mqtt_password"
+  
+  # Topics
+  topics:
+    devices: "devices/+/telemetry"
+    status: "devices/+/status"
+    commands: "devices/{device_id}/command"
+
+# ===========================================
+# Logging
+# ===========================================
+logging:
+  level: "INFO"
+  format: "json"
+  file: "/var/log/pi-agent/agent.log"
+  max_size_mb: 10
+  backup_count: 5
+
+# ===========================================
+# Resource Classification
+# ===========================================
+classification:
+  # CORE services (read-only, cannot be stopped)
+  core:
+    - "docker.service"
+    - "tailscaled.service"
+    - "pi-agent.service"
+    - "systemd-journald.service"
+    - "networking.service"
+    - "systemd-networkd.service"
+    - "systemd-resolved.service"
+    - "dbus.service"
+    
+  # SYSTEM services (can restart, cannot stop)
+  system:
+    - "ssh.service"
+    - "sshd.service"
+    - "nginx.service"
+    - "mosquitto.service"
+    - "avahi-daemon.service"
+    - "bluetooth.service"
+    - "wpa_supplicant.service"

@@ -1,0 +1,16 @@
+# Pi Control Panel - Sudoers Configuration
+# Install to: /etc/sudoers.d/pi-control
+#
+# This allows the pi-control service to manage systemd services without a password
+# The INSTALL_USER_PLACEHOLDER will be replaced during installation
+
+# Allow pi-control user to run specific systemctl commands without password
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-enabled *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl list-units *
+INSTALL_USER_PLACEHOLDER ALL=(ALL) NOPASSWD: /usr/bin/systemctl list-unit-files *

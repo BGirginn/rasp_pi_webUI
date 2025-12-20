@@ -1,0 +1,13 @@
+// PolicyKit rules for Pi Control Panel
+// This allows the pi-control service user to manage systemd services without sudo
+// Install to: /etc/polkit-1/rules.d/10-pi-control.rules
+
+polkit.addRule(function(action, subject) {
+    // Allow managing systemd units
+    if ((action.id == "org.freedesktop.systemd1.manage-units" ||
+         action.id == "org.freedesktop.systemd1.manage-unit-files" ||
+         action.id == "org.freedesktop.systemd1.reload-daemon") &&
+        subject.isInGroup("pi-control")) {
+        return polkit.Result.YES;
+    }
+});

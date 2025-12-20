@@ -1,0 +1,338 @@
+version: 1
+defaults:
+  audit: true
+  cooldown_seconds: 2
+  requires_confirmation: false
+  rollback:
+    supported: false
+    auto: false
+    timeout_seconds: null
+
+roles:
+  viewer:   { description: "Read-only" }
+  operator: { description: "Safe operations" }
+  admin:    { description: "Configuration + lifecycle" }
+  owner:    { description: "Emergency recovery actions (still no raw shell)" }
+
+targets:
+  services_allowlist:
+    - ssh
+    - tailscaled
+    - docker
+    - mosquitto
+    - pi-agent
+    - caddy
+    - panel-api
+
+  network_profiles:
+    - primary
+
+  storage_mount_points:
+    - /mnt/external
+
+actions:
+
+  # -------------------------
+  # OBSERVABILITY (READ ONLY)
+  # -------------------------
+  - id: obs.get_system_status
+    title: "System Status"
+    category: observability
+    risk: low
+    roles_allowed: [viewer, operator, admin, owner]
+    handler: handler.obs.get_system_status
+    params_schema: {}
+
+  - id: obs.get_metrics_snapshot
+    title: "Metrics Snapshot"
+    category: observability
+    risk: low
+    roles_allowed: [viewer, operator, admin, owner]
+    handler: handler.obs.get_metrics_snapshot
+    params_schema:
+      include:
+        type: array
+        items: { type: string }
+        default: ["cpu","mem","disk","net","temp"]
+
+  - id: obs.get_logs
+    title: "View Logs"
+    category: observability
+    risk: low
+    roles_allowed: [viewer, operator, admin, owner]
+    handler: handler.obs.get_logs
+    params_schema:
+      source:
+        type: string
+        enum: ["system","service","panel","agent"]
+      service:
+        type: string
+        nullable: true
+      limit:
+        type: integer
+        minimum: 50
+        maximum: 2000
+        default: 400
+
+  # -------------------------
+  # POWER
+  # -------------------------
+  - id: power.reboot_safe
+    title: "Reboot"
+    category: power
+    risk: medium
+    roles_allowed: [operator, admin, owner]
+    handler: handler.power.reboot_safe
+    requires_confirmation: true
+    cooldown_seconds: 10
+    params_schema: {}
+
+  - id: power.shutdown_safe
+    title: "Shutdown"
+    category: power
+    risk: medium
+    roles_allowed: [operator, admin, owner]
+    handler: handler.power.shutdown_safe
+    requires_confirmation: true
+    cooldown_seconds: 10
+    params_schema: {}
+
+  # -------------------------
+  # SERVICES (SYSTEMD)
+  # -------------------------
+  - id: svc.restart
+    title: "Restart Service"
+    category: services
+    risk: medium
+    roles_allowed: [operator, admin, owner]
+    handler: handler.svc.restart
+    params_schema:
+      service:
+        type: string
+        allowlist_ref: services_allowlist
+
+  - id: svc.start
+    title: "Start Service"
+    category: services
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.svc.start
+    params_schema:
+      service:
+        type: string
+        allowlist_ref: services_allowlist
+
+  - id: svc.stop
+    title: "Stop Service"
+    category: services
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.svc.stop
+    params_schema:
+      service:
+        type: string
+        allowlist_ref: services_allowlist
+    requires_confirmation: true
+
+  - id: svc.enable
+    title: "Enable Service"
+    category: services
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.svc.enable
+    params_schema:
+      service:
+        type: string
+        allowlist_ref: services_allowlist
+    requires_confirmation: true
+
+  - id: svc.disable
+    title: "Disable Service"
+    category: services
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.svc.disable
+    params_schema:
+      service:
+        type: string
+        allowlist_ref: services_allowlist
+    requires_confirmation: true
+    cooldown_seconds: 60
+
+  # -------------------------
+  # NETWORK (ROLLBACK REQUIRED)
+  # -------------------------
+  - id: net.toggle_wifi
+    title: "Toggle Wi-Fi"
+    category: network
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.net.toggle_wifi
+    params_schema:
+      enabled: { type: boolean }
+    rollback:
+      supported: true
+      auto: true
+      timeout_seconds: 30
+    requires_confirmation: true
+
+  - id: net.reset_safe
+    title: "Safe Network Reset"
+    category: network
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.net.reset_safe
+    params_schema:
+      profile: { type: string, enum: ["primary"] }
+    rollback:
+      supported: true
+      auto: true
+      timeout_seconds: 60
+    requires_confirmation: true
+    cooldown_seconds: 60
+
+  - id: net.tailscale.enable
+    title: "Enable Tailscale"
+    category: network
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.net.tailscale_enable
+    params_schema: {}
+
+  - id: net.tailscale.disable
+    title: "Disable Tailscale"
+    category: network
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.net.tailscale_disable
+    params_schema: {}
+    requires_confirmation: true
+    cooldown_seconds: 60
+
+  # -------------------------
+  # DOCKER
+  # -------------------------
+  - id: docker.list
+    title: "List Containers"
+    category: docker
+    risk: low
+    roles_allowed: [viewer, operator, admin, owner]
+    handler: handler.docker.list
+    params_schema: {}
+
+  - id: docker.restart_container
+    title: "Restart Container"
+    category: docker
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.docker.restart_container
+    params_schema:
+      container_id: { type: string }
+
+  - id: docker.stop_container
+    title: "Stop Container"
+    category: docker
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.docker.stop_container
+    params_schema:
+      container_id: { type: string }
+    requires_confirmation: true
+
+  # -------------------------
+  # STORAGE (GUIDED ONLY)
+  # -------------------------
+  - id: storage.mount_external
+    title: "Mount External Disk"
+    category: storage
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.storage.mount_external
+    params_schema:
+      mount_point:
+        type: string
+        allowlist_ref: storage_mount_points
+      device_hint:
+        type: string
+    requires_confirmation: true
+
+  - id: storage.unmount_external
+    title: "Unmount External Disk"
+    category: storage
+    risk: medium
+    roles_allowed: [admin, owner]
+    handler: handler.storage.unmount_external
+    params_schema:
+      mount_point:
+        type: string
+        allowlist_ref: storage_mount_points
+    requires_confirmation: true
+
+  # -------------------------
+  # AUTH (PRODUCT HARDENING)
+  # -------------------------
+  - id: auth.create_user
+    title: "Create User"
+    category: auth
+    risk: medium
+    roles_allowed: [owner]
+    handler: handler.auth.create_user
+    params_schema:
+      username: { type: string, minLength: 3, maxLength: 32 }
+      role: { type: string, enum: ["viewer","operator","admin"] }
+      temporary_password: { type: string, minLength: 12, maxLength: 128 }
+    requires_confirmation: true
+
+  - id: auth.rotate_jwt_secret
+    title: "Rotate JWT Secret"
+    category: auth
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.auth.rotate_jwt_secret
+    params_schema: {}
+    requires_confirmation: true
+    cooldown_seconds: 300
+
+  # -------------------------
+  # UPDATES
+  # -------------------------
+  - id: update.check
+    title: "Check Updates"
+    category: updates
+    risk: low
+    roles_allowed: [admin, owner]
+    handler: handler.update.check
+    params_schema: {}
+
+  - id: update.apply
+    title: "Apply Update"
+    category: updates
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.update.apply
+    params_schema:
+      channel: { type: string, enum: ["stable"] }
+      backup_before: { type: boolean, default: true }
+    requires_confirmation: true
+    cooldown_seconds: 300
+
+  # -------------------------
+  # EMERGENCY
+  # -------------------------
+  - id: emergency.rollback_last_network_change
+    title: "Rollback Last Network Change"
+    category: emergency
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.emergency.rollback_last_network_change
+    params_schema: {}
+    requires_confirmation: true
+
+  - id: emergency.safe_mode_enable
+    title: "Enable Safe Mode"
+    category: emergency
+    risk: high
+    roles_allowed: [owner]
+    handler: handler.emergency.safe_mode_enable
+    params_schema: {}
+    requires_confirmation: true
