@@ -120,6 +120,29 @@ async def execute_action(
         # Handler should return dict with success field
         if isinstance(result, dict) and result.get("success") is not False:
             audit_status = "success"
+            
+            # A4.2: Create rollback job if action supports it
+            rollback_config = action_def.get("rollback")
+            if rollback_config and rollback_config.get("supported") and rollback_config.get("auto"):
+                from core.rollback.manager import create_rollback_job, determine_rollback_payload
+                
+                rollback_payload = determine_rollback_payload(action_id, validated_params)
+                if rollback_payload:
+                    timeout_seconds = rollback_config.get("timeout_seconds", 30)
+                    
+                    rollback_job_id = await create_rollback_job(
+                        db=db,
+                        action_id=action_id,
+                        rollback_action_id=action_id,  # Same action with inverse params
+                        payload=rollback_payload,
+                        user_id=user["id"],
+                        timeout_seconds=timeout_seconds
+                    )
+                    
+                    # Add rollback info to result
+                    if isinstance(result, dict):
+                        result["rollback_job_id"] = rollback_job_id
+                        result["rollback_timeout_seconds"] = timeout_seconds
         else:
             audit_status = "fail"
             audit_error = result.get("message") or result.get("error") or "Handler returned failure"

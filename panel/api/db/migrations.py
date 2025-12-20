@@ -319,3 +319,28 @@ async def migrate_005_owner_role_and_settings(db):
         )
     
     print("  Settings table initialized with first_run_complete=false")
+
+
+async def migrate_006_rollback_jobs(db):
+    """Create rollback_jobs table for network action rollback system."""
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS rollback_jobs (
+            id TEXT PRIMARY KEY,
+            action_id TEXT NOT NULL,
+            rollback_action_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_by_user_id TEXT NOT NULL,
+            due_at INTEGER NOT NULL,
+            confirmed_at INTEGER,
+            status TEXT NOT NULL CHECK (status IN ('pending','confirmed','rolled_back','expired')),
+            created_at INTEGER NOT NULL
+        )
+    """)
+    
+    # Create index for background worker queries
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rollback_jobs_status_due 
+        ON rollback_jobs(status, due_at)
+    """)
+    
+    print("  Rollback jobs table created for network action safety")
