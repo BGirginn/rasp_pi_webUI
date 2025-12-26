@@ -1,13 +1,8 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
-import { useAuth } from '../hooks/useAuth'
 
 // Device card component
-function DeviceCard({ device, onCommand }) {
-    const { isOperator } = useAuth()
-    const [loading, setLoading] = useState(false)
-    const [commandInput, setCommandInput] = useState('')
-    const [showCommands, setShowCommands] = useState(false)
+function DeviceCard({ device }) {
 
     const stateColors = {
         online: 'text-green-400 bg-green-500/20',
@@ -22,15 +17,6 @@ function DeviceCard({ device, onCommand }) {
         gpio: '⚡',
         serial: '🔗',
         bluetooth: '📶',
-    }
-
-    const handleCommand = async (command, payload = null) => {
-        setLoading(true)
-        try {
-            await onCommand(device.id, command, payload)
-        } finally {
-            setLoading(false)
-        }
     }
 
     return (
@@ -76,87 +62,6 @@ function DeviceCard({ device, onCommand }) {
                             {cap}
                         </span>
                     ))}
-                </div>
-            )}
-
-            {/* Actions */}
-            {isOperator && device.state === 'online' && (
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => setShowCommands(!showCommands)}
-                        className="btn btn-secondary text-sm py-1 px-3 flex-1"
-                    >
-                        {showCommands ? 'Close' : '📤 Send Command'}
-                    </button>
-                    {device.type === 'esp' && (
-                        <button
-                            onClick={() => handleCommand('ping')}
-                            disabled={loading}
-                            className="btn btn-ghost text-sm py-1 px-3"
-                        >
-                            {loading ? '...' : '📶 Ping'}
-                        </button>
-                    )}
-                </div>
-            )}
-
-            {/* Command input */}
-            {showCommands && (
-                <div className="mt-3 p-3 bg-gray-800/50 rounded-lg animate-fade-in">
-                    <p className="text-xs text-gray-500 mb-2">Quick Commands</p>
-                    <div className="flex flex-wrap gap-2 mb-3">
-                        {device.type === 'esp' && (
-                            <>
-                                <button
-                                    onClick={() => handleCommand('reset')}
-                                    className="btn btn-ghost text-xs py-1 px-2"
-                                >
-                                    🔄 Reset
-                                </button>
-                                <button
-                                    onClick={() => handleCommand('config')}
-                                    className="btn btn-ghost text-xs py-1 px-2"
-                                >
-                                    ⚙️ Config
-                                </button>
-                                {device.capabilities?.includes('relay') && (
-                                    <>
-                                        <button
-                                            onClick={() => handleCommand('set_relay', { state: true })}
-                                            className="btn btn-ghost text-xs py-1 px-2"
-                                        >
-                                            💡 ON
-                                        </button>
-                                        <button
-                                            onClick={() => handleCommand('set_relay', { state: false })}
-                                            className="btn btn-ghost text-xs py-1 px-2"
-                                        >
-                                            💤 OFF
-                                        </button>
-                                    </>
-                                )}
-                            </>
-                        )}
-                    </div>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={commandInput}
-                            onChange={(e) => setCommandInput(e.target.value)}
-                            placeholder="Custom command..."
-                            className="input text-sm flex-1"
-                        />
-                        <button
-                            onClick={() => {
-                                handleCommand(commandInput)
-                                setCommandInput('')
-                            }}
-                            disabled={!commandInput || loading}
-                            className="btn btn-primary text-sm py-1 px-3"
-                        >
-                            Send
-                        </button>
-                    </div>
                 </div>
             )}
 
@@ -224,17 +129,6 @@ export default function Devices() {
         } finally {
             setLoading(false)
             setRefreshing(false)
-        }
-    }
-
-    async function handleCommand(deviceId, command, payload) {
-        try {
-            await api.post(`/devices/${deviceId}/command`, { command, payload })
-            // Reload after command
-            await loadDevices()
-        } catch (err) {
-            console.error('Command failed:', err)
-            alert(`Command failed: ${err.message}`)
         }
     }
 
@@ -321,7 +215,6 @@ export default function Devices() {
                         <DeviceCard
                             key={device.id}
                             device={device}
-                            onCommand={handleCommand}
                         />
                     ))}
                 </div>

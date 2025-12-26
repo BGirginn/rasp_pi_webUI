@@ -22,8 +22,7 @@ async def reset_network_safe(profile: str = "primary") -> dict:
     Returns:
         Result dict
     """
-    # TODO: TASK 16 - Implement with rollback support
-    return {"success": False, "message": "TODO: not implemented yet"}
+    return {"success": False, "message": "Disabled until snapshot support implemented"}
 
 
 async def enable_tailscale() -> dict:

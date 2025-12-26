@@ -26,7 +26,8 @@ async def write_audit(db, event: AuditEvent) -> None:
         "params": event.params_masked,
         "status": event.status,
         "duration_ms": event.duration_ms,
-        "role": event.role
+        "role": event.role,
+        "username": event.username,
     }
     
     if event.error:
@@ -34,19 +35,16 @@ async def write_audit(db, event: AuditEvent) -> None:
     
     details_json = json.dumps(details)
     
-    # Write to audit_log table
-    # Schema: user_id, username, action, resource_id, details, created_at
-    # We use 'action' for action_id, resource_id can be NULL for non-resource actions
+    # Write to audit_log table (use common columns across schemas).
     await db.execute(
-        """INSERT INTO audit_log (user_id, username, action, resource_id, details, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO audit_log (user_id, action, resource_id, details, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
         (
             event.user_id,
-            event.username,
-            event.action_id,  # Store in 'action' column
-            None,  # resource_id not needed for AR actions
+            event.action_id,
+            None,
             details_json,
-            event.created_at.isoformat()
-        )
+            event.created_at.isoformat(),
+        ),
     )
     await db.commit()

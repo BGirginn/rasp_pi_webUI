@@ -1,4 +1,3 @@
-```md
 # AI_RULES.md — NON-NEGOTIABLE RULESET (MUST OBEY)
 This file is a **hard policy contract** for any AI agent (Cursor, Copilot, etc.) working on this repository.
 These rules are **mandatory** and must be followed **exactly**. If a request conflicts with these rules, the AI must refuse and stop.
@@ -177,4 +176,4 @@ If any of the above is false, the work is incomplete and must be fixed.
 
 ---
 END OF AI_RULES.md
-```
+

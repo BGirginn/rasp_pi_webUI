@@ -45,6 +45,12 @@ class ExecuteActionResponse(BaseModel):
     message: Optional[str] = None
     data: Optional[dict] = None
     error: Optional[str] = None
+    rollback: Optional[dict] = None
+
+
+class ConfirmRollbackRequest(BaseModel):
+    """Request to confirm (cancel) a rollback job."""
+    rollback_job_id: str
 
 
 # -------------------------
@@ -114,7 +120,8 @@ async def execute_action_endpoint(
                 success=result.get("success", True),
                 message=result.get("message"),
                 data=result.get("data"),
-                error=result.get("error")
+                error=result.get("error"),
+                rollback=result.get("rollback")
             )
         else:
             # Handler returned non-dict (shouldn't happen)
@@ -136,3 +143,42 @@ async def execute_action_endpoint(
                 "message": str(e)
             }
         )
+
+
+@router.post("/confirm")
+async def confirm_rollback(
+    request: ConfirmRollbackRequest,
+    user: dict = Depends(current_user)
+):
+    """Confirm a rollback job to prevent auto-rollback."""
+    from core.audit.models import AuditEvent
+    from core.audit.writer import write_audit
+    from core.rollback.jobs import get_job, mark_job_confirmed
+    from datetime import datetime
+    import time
+
+    db = await get_control_db()
+    job = await get_job(db, request.rollback_job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Rollback job not found")
+
+    if job["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Rollback job not pending")
+
+    now_ts = int(time.time())
+    await mark_job_confirmed(db, request.rollback_job_id, now_ts)
+
+    audit_event = AuditEvent(
+        user_id=user["id"],
+        username=user["username"],
+        role=user["role"],
+        action_id="rollback.confirm",
+        params_masked={"rollback_job_id": request.rollback_job_id},
+        status="success",
+        error=None,
+        duration_ms=0,
+        created_at=datetime.utcnow()
+    )
+    await write_audit(db, audit_event)
+
+    return {"success": True, "rollback_job_id": request.rollback_job_id}

@@ -3,7 +3,7 @@ Audit Event Models
 Type definitions for audit logging.
 """
 
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -14,7 +14,7 @@ class AuditEvent(BaseModel):
     
     All fields are required except error (only populated on failure).
     """
-    user_id: int
+    user_id: Union[int, str]
     username: str
     role: str
     action_id: str

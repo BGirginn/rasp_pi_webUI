@@ -7,7 +7,8 @@
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
 </p>
 
-A **modern, beautiful web dashboard** to monitor and control your Raspberry Pi from anywhere via Tailscale VPN.
+A **modern, beautiful web dashboard** to monitor and control your Raspberry Pi from anywhere via Tailscale VPN.  
+Phase‑1 is **Tailscale‑first** and **not internet‑facing**.
 
 ---
 
@@ -22,6 +23,28 @@ A **modern, beautiful web dashboard** to monitor and control your Raspberry Pi f
 | 💻 **Terminal** | Full browser-based shell access |
 | 🔔 **Alerts** | Configurable alert rules with notifications |
 | 📈 **Telemetry** | Historical charts and analytics |
+
+---
+
+## 📸 Screenshots
+
+Take a look at the modern, beautiful interface:
+
+````carousel
+![Dashboard Overview - Real-time system monitoring with CPU, memory, and temperature metrics](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.47.58.png)
+<!-- slide -->
+![Service Management - Control systemd services with one click](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.30.png)
+<!-- slide -->
+![Device Discovery - View USB, serial, and IoT devices](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.41.png)
+<!-- slide -->
+![Network Monitoring - Manage network interfaces and connections](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.52.png)
+<!-- slide -->
+![Alert Configuration - Set up custom alert rules and notifications](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.05.png)
+<!-- slide -->
+![Telemetry Analytics - Historical charts and system insights](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.14.png)
+<!-- slide -->
+![Terminal Access - Full browser-based shell interface](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.24.png)
+````
 
 ---
 
@@ -174,14 +197,10 @@ The service reads configuration from systemd environment:
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret key file |
 | `API_DEBUG` | `false` | Enable debug mode |
 
-### Default Credentials
+### First-Run Setup
 
-| Field | Value |
-|-------|-------|
-| Username | `admin` |
-| Password | `admin123` |
-
-> ⚠️ **Change the default password immediately after first login!**
+On first launch, the API requires creation of an **owner** account via the first-run endpoint.
+There are **no default credentials** shipped with the product.
 
 ---
 

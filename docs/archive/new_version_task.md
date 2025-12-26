@@ -1071,6 +1071,668 @@ Use these prompts exactly, in order. Do NOT ask extra questions. Do NOT do multi
 ## Prompt for TASK 20
 "Run TASK 20 release checklist exactly. Fix anything failing until all commands pass."
 
+````md
+# MASTER_PLAN.md — rasp_pi_webUI Productization (AR-First, Tailscale-First, No-Shell, Rollback-Safe)
+Repo: BGirginn/rasp_pi_webUI  
+Branch: **AR** (work only here; `main` must remain stable)  
+Primary Goal: Convert the current working code into a **commercial-grade**, **secure-by-default** control plane with **Action Registry (AR)** as the only mutation interface.  
+Phase-1 Connectivity Model: **LAN + Tailscale only** (NOT internet-facing).  
+Hard Constraint: **No irreversible operations for entry/low-mid users**. All dangerous operations require `owner` + confirmation + cooldown, and network mutations require rollback.
+
 ---
 
-END OF PLAN
+## 0) NON-NEGOTIABLE RULES (MUST NEVER BREAK)
+### R0.1 — No terminal / no raw shell / no free-form execution
+The product must contain **zero** of:
+- `shell=True`, `pty.*`, `os.system`, `exec*`, arbitrary command endpoints
+- any “Terminal” UI page, websocket shell, command console
+- any API that accepts user-provided command strings (cmd/script/exec)
+
+### R0.2 — Single mutation entrypoint
+After migration:
+- all state-changing operations MUST pass through Action Engine:
+  - `POST /api/actions/execute`
+- the only additional mutation endpoint allowed is:
+  - `POST /api/actions/confirm` (rollback confirm)
+
+### R0.3 — RBAC enforced server-side in engine
+- UI is untrusted.
+- Deny-by-default for unknown role or unknown action.
+
+### R0.4 — Allowlist everything that mutates state
+- systemd service names only from allowlist
+- mount points only from allowlist
+- network profiles only from allowlist
+- docker operations are limited to container IDs and known operations (no docker CLI passthrough)
+
+### R0.5 — Network-changing actions require timed rollback
+Any action that can break connectivity MUST:
+- create a rollback job automatically
+- rollback automatically if confirm not received by timeout
+
+### R0.6 — Audit is mandatory
+Every action attempt must be audited:
+- who, role, action_id, masked params, result, duration, timestamp
+Audit cannot be disabled.
+
+### R0.7 — No “invent new product”
+You may add plumbing (AR/engine/adapters/tests), but you may not add new capabilities beyond what AR defines.
+
+---
+
+## 1) DELIVERABLES (FILES THAT MUST EXIST IN REPO ROOT)
+- `MASTER_PLAN.md` (this file)
+- `AI_RULES.md` (hard rules for AI agents; must match R0.*)
+- `README.md` (minimal, clear; must state “Tailscale-first, not internet-facing in Phase-1”)
+
+---
+
+## 2) FINAL TARGET ARCHITECTURE (PANEL SIDE)
+Create/organize into exactly:
+
+panel/api/
+  core/
+    actions/
+      __init__.py
+      registry.yaml
+      loader.py
+      validate.py
+      guards.py
+      engine.py
+      handlers.py
+    auth/
+      __init__.py
+      rbac.py
+      masking.py
+      first_run.py
+    audit/
+      __init__.py
+      models.py
+      writer.py
+    rollback/
+      __init__.py
+      jobs.py
+      network.py
+      worker.py
+  adapters/
+    __init__.py
+    agent_rpc.py
+    systemd.py
+    network.py
+    power.py
+    logs.py
+    docker.py
+    storage.py
+    updates.py
+  api/
+    __init__.py
+    deps.py
+    routers/
+      __init__.py
+      actions.py
+      audit.py
+      auth.py
+      health.py
+      observability.py
+  db/
+    __init__.py
+    migrations.py
+  main.py
+  tests/
+    test_no_shell_surface.py
+    test_registry_loader.py
+    test_rbac_matrix.py
+    test_action_validation.py
+    test_guards_confirmation_cooldown.py
+    test_actions_api.py
+    test_rollback_jobs.py
+    test_rollback_worker.py
+
+---
+
+## 3) ACTION REGISTRY (AR) — THE PRODUCT CONSTITUTION
+### 3.1 File: `panel/api/core/actions/registry.yaml`
+Use the AR content you already have (the “constitution” you committed). Requirements:
+- `version: 1`
+- `targets` includes allowlists (services, profiles, mount points)
+- actions include:
+  - observability (read-only)
+  - services (systemd allowlisted)
+  - network (rollback required)
+  - power (confirm + cooldown)
+  - docker (safe ops)
+  - storage (guided only)
+  - auth (owner-only sensitive)
+  - updates (either safe or disabled)
+  - emergency (safe mode, rollback last network change)
+
+### 3.2 Strict registry invariants
+- Startup must fail if:
+  - duplicate `id`
+  - missing handler mapping
+  - invalid schema (unknown keys or wrong types)
+- A handler in registry must have a corresponding function in `handlers.py`
+  - If temporarily unimplemented, handler must exist but return a safe “disabled/TODO” response.
+
+---
+
+## 4) EXACT IMPLEMENTATION TASKS (NO GENERALITIES)
+All tasks must be done in order. Each task ends with:
+- `pytest` green
+- UI build green
+- grep checks green
+- commit with a single purpose
+
+### GLOBAL VERIFICATION COMMANDS (run after every task)
+- `pytest -q panel/api/tests`
+- `npm -C panel/ui install && npm -C panel/ui run build`
+- `grep -R "shell=True" -n panel/api panel/ui agent || true`
+- `grep -R "pty\." -n panel/api panel/ui agent || true`
+- `grep -R "os.system" -n panel/api panel/ui agent || true`
+
+All grep outputs must be empty.
+
+---
+
+# TASK 01 — REMOVE TERMINAL + RAW EXEC (PRODUCT SURFACE)
+### Delete
+- any terminal router (e.g., `panel/api/routers/terminal.py`)
+- any host exec module (e.g., `panel/api/services/host_exec.py`)
+- UI Terminal page (e.g., `panel/ui/src/pages/Terminal.jsx`)
+
+### Modify
+- remove includes/imports/routes pointing to terminal/host_exec
+- ensure app starts without those modules
+
+### Acceptance
+- no Terminal in UI
+- no raw exec path
+- tests + build pass
+
+---
+
+# TASK 02 — CREATE CORE/ADAPTER/API SKELETON
+Create directory tree + `__init__.py` exactly as in Section 2.
+No logic yet besides importability.
+
+---
+
+# TASK 03 — REGISTRY LOADER (FAIL FAST)
+### Create `panel/api/core/actions/loader.py`
+Implement:
+- `load_registry(path) -> dict`
+- `get_registry() -> dict` (cached)
+
+Validations (exact):
+- registry `version == 1`
+- `roles` exists and includes `viewer/operator/admin/owner`
+- each action has:
+  - unique `id`
+  - non-empty `roles_allowed`
+  - non-empty `handler`
+  - `params_schema` exists (can be `{}`)
+- `targets` referenced by `allowlist_ref` must exist
+
+### Modify `panel/api/main.py`
+- load registry at startup
+- crash app if invalid
+
+---
+
+# TASK 04 — RBAC MATRIX (DENY BY DEFAULT)
+### Create `panel/api/core/auth/rbac.py`
+Implement:
+- `is_role_allowed(registry, role, action_id) -> bool`
+- `assert_role_allowed(...)` raises HTTP 403
+
+### Tests
+`test_rbac_matrix.py` must cover:
+- viewer cannot run service start/stop
+- operator can run safe ops (restart)
+- admin cannot run owner-only disable or emergency
+- owner can run all
+
+---
+
+# TASK 05 — PARAM VALIDATION (STRICT)
+### Create `panel/api/core/actions/validate.py`
+Implement `validate_params(registry, action_id, params) -> dict`
+
+Rules:
+- If schema is `{}` then params must be `{}` (normalize `None -> {}`)
+- Supported:
+  - type: string/integer/number/boolean/array
+  - enum
+  - default
+  - min/max for numeric
+  - minLength/maxLength for strings
+  - allowlist_ref resolves into registry.targets
+  - unknown input params -> 400
+
+### Tests
+`test_action_validation.py` must include allowlist violations and defaults.
+
+---
+
+# TASK 06 — GUARDS (CONFIRMATION + COOLDOWN)
+### Create `panel/api/core/actions/guards.py`
+Implement:
+- `requires_confirmation(registry, action_id) -> bool`
+- `check_confirmation(registry, action_id, confirm: bool)`
+- `check_cooldown(db, user_id, action_id, cooldown_seconds)`
+
+Cooldown reads audit table for latest same action by same user.
+If within cooldown -> 429.
+
+### Tests
+`test_guards_confirmation_cooldown.py`
+
+---
+
+# TASK 07 — AUDIT (MODELS + WRITER + MASKING)
+### Create `panel/api/core/auth/masking.py`
+Rules:
+- mask auth secrets (temporary_password => "***")
+- mask any token-like field if present
+
+### Create `panel/api/core/audit/models.py`
+Define an `AuditEvent` model (pydantic or dataclass)
+
+### Create `panel/api/core/audit/writer.py`
+`write_audit(db, event)` inserts into existing audit table (or creates if missing).
+
+### Acceptance
+- Engine writes audit on success and failure
+- Masking applied
+
+---
+
+# TASK 08 — ADAPTERS (PANEL DOES NOT EXECUTE)
+### Create `panel/api/adapters/agent_rpc.py`
+- reuse existing agent client protocol as-is (no breaking changes)
+- expose safe methods for handlers
+
+Create thin wrappers:
+- `systemd.py`, `network.py`, `power.py`, `logs.py`, `docker.py`, `storage.py`, `updates.py`
+
+Rules:
+- adapters accept only validated params
+- adapters must never call subprocess directly
+
+---
+
+# TASK 09 — HANDLERS (EXACT MATCH TO AR)
+### Create `panel/api/core/actions/handlers.py`
+Implement handler functions named exactly as registry expects.
+Each handler:
+- calls adapter functions
+- returns dict response:
+  - `{ "success": true, "data": ... }` or `{ "success": false, "message": ... }`
+- if unimplemented: return `{ "success": false, "message": "Disabled in Phase-1" }` (no risky guesses)
+
+---
+
+# TASK 10 — ACTION ENGINE (THE ONLY MUTATION PIPELINE)
+### Create `panel/api/core/actions/engine.py`
+Implement:
+`execute_action(db, user, action_id, params, confirm=False) -> dict`
+
+Exact order:
+1) registry load
+2) RBAC assert
+3) validation
+4) guards (confirm + cooldown)
+5) handler dispatch (static map)
+6) duration measure
+7) audit write (success/fail)
+8) rollback scheduling if action requires (Section 5)
+9) return result
+
+Prohibit:
+- dynamic imports
+- eval
+
+---
+
+# TASK 11 — ACTIONS API (NEW SURFACE)
+### Create `panel/api/api/routers/actions.py`
+Endpoints:
+- `GET /api/actions`
+  - returns actions filtered by role
+  - include fields:
+    - id, title, category, risk, requires_confirmation, cooldown_seconds, params_schema
+- `POST /api/actions/execute`
+  - request: `{ action_id, params?, confirm? }`
+  - calls engine
+
+### Create `panel/api/api/deps.py`
+- unify auth dependency to obtain `user` dict (id, username, role)
+
+### Modify `panel/api/main.py`
+- mount `/api` routers
+
+### Tests
+`test_actions_api.py`
+
+---
+
+# TASK 12 — COMPAT CLEANUP (OLD MUTATION ENDPOINTS)
+Goal: old endpoints must either:
+- become read-only, or
+- become wrappers calling the engine, or
+- be removed if they bypass policy
+
+No endpoint may mutate state without engine.
+
+Acceptance: grep for old mutation code paths yields only wrapper calls.
+
+---
+
+# TASK 13 — DB MIGRATIONS: OWNER + SETTINGS + ROLLBACK
+### Modify `panel/api/db/migrations.py`
+Create migration(s) to ensure:
+1) users roles include `owner`
+   - if SQLite check constraint, do the users_new swap method
+2) settings table:
+   - `first_run_complete` default false
+   - `jwt_secret_version`
+3) rollback_jobs table (see Section 5)
+4) remove default admin creation (no default creds)
+
+Acceptance:
+- fresh install: no default admin printed/created
+- first-run required
+
+---
+
+# TASK 14 — FIRST-RUN OWNER CREATION (NO DEFAULT CREDS)
+### Create `panel/api/core/auth/first_run.py`
+Functions:
+- `is_first_run(db) -> bool`
+- `mark_first_run_complete(db)`
+
+### Create router `panel/api/api/routers/auth.py`
+Endpoints:
+- `POST /api/auth/first-run/create-owner`
+  - if already completed -> 409
+  - create owner user + set first_run_complete true
+- ensure all other user creation flows are owner-only (and/or via AR action `auth.create_user`)
+
+Acceptance:
+- cannot use app without creating owner first
+
+---
+
+# TASK 15 — UPDATES (PHASE-1 SAFE OR DISABLED)
+Policy:
+- If you cannot implement signed update chain, disable apply in Phase-1.
+
+Required:
+- `update.check` returns:
+  - current version
+  - available boolean (can be always false initially)
+- `update.apply` returns:
+  - `{success:false, message:"Disabled in Phase-1"}` OR secure implementation
+
+No half-update.
+
+---
+
+# TASK 16 — JWT SECRET ROTATION (PHASE-1)
+Implement `auth.rotate_jwt_secret`:
+- generate new secret
+- store in settings
+- increment version
+- invalidate existing tokens (acceptable)
+- never log the secret
+- audit action
+
+Acceptance: rotation works; next API call requires re-login.
+
+---
+
+# TASK 17 — UI: ACTION-FIRST MUTATIONS
+Remove any remaining direct mutation calls.
+All mutations go through:
+- `POST /api/actions/execute`
+
+UI must:
+- fetch `GET /api/actions` and render categories
+- show confirmation UI for `requires_confirmation`
+- show warning for network rollback actions:
+  - “If not confirmed within X seconds, it will rollback automatically.”
+
+No UI-based permissions.
+
+Acceptance:
+- build passes
+- core pages function via actions
+
+---
+
+# TASK 18 — REMOVE/DEPRECATE OLD MUTATION SURFACE (FINALIZE)
+After UI migration:
+- delete old mutation endpoints or leave strict wrappers with deprecation header
+- no bypass routes remain
+
+Acceptance:
+- only mutation endpoints: `/api/actions/execute` and `/api/actions/confirm`
+
+---
+
+# TASK 19 — RELEASE GATE (MUST PASS)
+- all tests green
+- UI build green
+- grep checks empty
+- rollback tested (Section 5)
+- README + AI_RULES present and correct
+
+Only then: PR from `AR` to `main`.
+
+---
+
+# 5) NETWORK ROLLBACK (CEREMONY-LEVEL DETAIL, PHASE-1)
+This section is the most important safety feature. It is mandatory.
+
+## 5.1 Database schema: rollback_jobs
+Add SQLite table:
+
+```sql
+CREATE TABLE IF NOT EXISTS rollback_jobs (
+  id TEXT PRIMARY KEY,
+  action_id TEXT NOT NULL,
+  rollback_action_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_by_user_id TEXT NOT NULL,
+  due_at INTEGER NOT NULL,
+  confirmed_at INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('pending','confirmed','rolled_back','expired')),
+  created_at INTEGER NOT NULL
+);
+````
+
+* `due_at` is UNIX seconds
+* `payload_json` contains rollback params
+* `status` meanings:
+
+  * pending: will rollback unless confirmed
+  * confirmed: rollback canceled
+  * rolled_back: rollback executed successfully
+  * expired: rollback attempted but failed (must be audited)
+
+## 5.2 Engine integration: scheduling rollback jobs
+
+In Action Engine, after handler success:
+
+* read action rollback config from registry:
+
+  * supported/auto/timeout_seconds
+* if enabled:
+
+  * create rollback job row
+
+### 5.2.1 Rollback payload computation (exact)
+
+#### For `net.toggle_wifi`
+
+You must compute rollback payload based on *actual state*.
+
+* Step A: read current wifi state (from agent or network adapter)
+* Step B: if current is enabled -> rollback payload `{"enabled": false}`
+* else -> `{"enabled": true}`
+* rollback_action_id = `net.toggle_wifi`
+
+#### For `net.reset_safe`
+
+* rollback_action_id = `emergency.rollback_last_network_change`
+* payload_json = `{}` (or includes a stored snapshot key if you implement snapshots)
+* due_at = now + registry timeout
+
+## 5.3 Confirm endpoint: cancel rollback
+
+Create endpoint:
+
+* `POST /api/actions/confirm`
+  Request:
+
+```json
+{ "rollback_job_id": "uuid" }
+```
+
+Behavior:
+
+1. load job by id
+2. if not found -> 404
+3. if status != pending -> 409
+4. set confirmed_at = now
+5. status = confirmed
+6. write audit event:
+
+   * action_id = `rollback.confirm`
+   * params include rollback_job_id masked if needed
+
+## 5.4 Background worker: execute rollback when due
+
+Create async worker started on FastAPI startup.
+
+### 5.4.1 Loop details (exact)
+
+* interval: 5 seconds
+* each tick:
+
+  1. select jobs:
+
+     * status = pending
+     * due_at <= now
+  2. for each job:
+
+     * call Action Engine to execute rollback_action_id
+
+       * special system user context:
+
+         * username = `__rollback_worker__`
+         * role = `owner`
+         * user_id = `__system__`
+     * if success:
+
+       * update job status = rolled_back
+     * else:
+
+       * update job status = expired
+     * audit is written by engine automatically
+
+### 5.4.2 RBAC rule for rollback worker
+
+Rollback worker must not be blocked by normal RBAC for safety reasons.
+Implementation approach:
+
+* execute with a reserved system user that has role `owner`.
+* do not add a “bypass flag”.
+
+## 5.5 Snapshot support (optional Phase-1.1)
+
+If you can: store last network config snapshot for recovery action:
+
+* `emergency.rollback_last_network_change` uses that snapshot.
+  If not implemented:
+* `emergency.rollback_last_network_change` should return:
+
+  * `{success:false, message:"Disabled until snapshot support implemented"}`
+    But then `net.reset_safe` must not be exposed in Phase-1 (remove from AR or keep owner-only + disabled).
+
+## 5.6 Tests (mandatory)
+
+### 5.6.1 `test_rollback_jobs.py`
+
+* execute `net.toggle_wifi` with confirm=true
+* assert rollback job created
+* assert due_at correct
+
+### 5.6.2 `test_rollback_worker.py`
+
+* insert pending rollback job with due_at in past
+* run one worker tick function (extract tick logic into callable)
+* assert status becomes rolled_back OR expired and audit exists
+
+### 5.6.3 Confirm flow test
+
+* create job
+* confirm it
+* run worker tick
+* assert it did not rollback and status remains confirmed
+
+## 5.7 UI requirement (minimal)
+
+For actions with rollback.auto=true:
+
+* show message: “If not confirmed within X seconds, this change will be reverted.”
+* provide confirm button calling `/api/actions/confirm` with job id (returned from execute response)
+
+### Backend response requirement
+
+When action schedules rollback, `POST /api/actions/execute` must include:
+
+```json
+{
+  "success": true,
+  "data": {...},
+  "rollback": {
+    "job_id": "uuid",
+    "due_in_seconds": 30
+  }
+}
+```
+
+---
+
+# 6) COMMIT DISCIPLINE (REQUIRED)
+
+* One task = one commit
+* Commit messages must be precise:
+
+  * `feat(ar): ...`
+  * `fix(ar): ...`
+  * `test(ar): ...`
+* No “mega commits”
+
+---
+
+# 7) PULL REQUEST RULE (WHEN ALLOWED)
+
+You may open PR (`Compare & pull request`) only when:
+
+* rollback system complete + tested
+* no-shell tests pass
+* UI migrated to actions
+* release gate passes
+
+Before that: DO NOT PR.
+
+---
+
+END OF MASTER_PLAN.md
+
+```
+::contentReference[oaicite:0]{index=0}
+```
+

@@ -1,0 +1,78 @@
+[Unit]
+Description=Pi Control Panel API Server
+Documentation=https://github.com/yourusername/rasp_pi_webui
+After=network-online.target
+Wants=network-online.target
+# Optional: start after agent is running
+After=pi-agent.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/opt/pi-panel/api
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Security: Dynamic user (no persistent home)
+DynamicUser=yes
+StateDirectory=pi-panel
+ConfigurationDirectory=pi-panel
+LogsDirectory=pi-panel
+
+# Security: No new privileges
+NoNewPrivileges=yes
+
+# Security: Filesystem protection
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/pi-panel
+
+# Security: Restrict address families
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Security: No capabilities needed
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Security: Namespace isolation
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# Security: System call filtering
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+# Security: Restrict realtime
+RestrictRealtime=yes
+
+# Security: Lock personality
+LockPersonality=yes
+
+# Security: Memory protection
+MemoryDenyWriteExecute=yes
+
+# Security: Remove IPC
+RemoveIPC=yes
+
+# Security: Restrict namespaces
+RestrictNamespaces=yes
+
+# Security: Restrict SUID
+RestrictSUIDSGID=yes
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="DATABASE_PATH=/var/lib/pi-panel/control.db"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-panel-api
+
+[Install]
+WantedBy=multi-user.target

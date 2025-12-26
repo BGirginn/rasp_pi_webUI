@@ -4,8 +4,12 @@ Maps registry handler strings to adapter function calls.
 Contains all 25 handler functions referenced in registry.yaml.
 """
 
+import bcrypt
+
 from adapters import systemd, network, power, logs, docker, storage
 from adapters.agent_rpc import agent_rpc
+from core.auth.jwt import rotate_jwt_secret
+from db import get_control_db
 
 
 # -------------------------
@@ -164,14 +168,32 @@ async def handler_storage_unmount_external(mount_point: str) -> dict:
 
 async def handler_auth_create_user(username: str, role: str, temporary_password: str) -> dict:
     """Create a new user account."""
-    # TODO: TASK 14 - Implement user creation in auth router
-    return {"success": False, "message": "TODO: not implemented yet"}
+    if role not in ("viewer", "operator", "admin"):
+        return {"success": False, "message": "Invalid role"}
+
+    db = await get_control_db()
+    cursor = await db.execute("SELECT id FROM users WHERE username = ?", (username,))
+    if await cursor.fetchone():
+        return {"success": False, "message": "Username already exists"}
+
+    password_hash = bcrypt.hashpw(temporary_password.encode(), bcrypt.gensalt()).decode()
+    await db.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        (username, password_hash, role)
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "data": {"username": username, "role": role}
+    }
 
 
 async def handler_auth_rotate_jwt_secret() -> dict:
     """Rotate JWT secret for enhanced security."""
-    # TODO: TASK 15 - Implement JWT rotation
-    return {"success": False, "message": "TODO: not implemented yet"}
+    db = await get_control_db()
+    new_version = await rotate_jwt_secret(db)
+    return {"success": True, "data": {"jwt_secret_version": new_version}}
 
 
 # -------------------------
@@ -180,14 +202,18 @@ async def handler_auth_rotate_jwt_secret() -> dict:
 
 async def handler_update_check() -> dict:
     """Check for available updates."""
-    # TODO: Implement update checking logic
-    return {"success": False, "message": "TODO: not implemented yet"}
+    return {
+        "success": True,
+        "data": {
+            "current_version": "1.0.0",
+            "available": False
+        }
+    }
 
 
 async def handler_update_apply(channel: str, backup_before: bool) -> dict:
     """Apply available updates."""
-    # TODO: Implement update application logic
-    return {"success": False, "message": "TODO: not implemented yet"}
+    return {"success": False, "message": "Disabled in Phase-1"}
 
 
 # -------------------------
@@ -196,14 +222,12 @@ async def handler_update_apply(channel: str, backup_before: bool) -> dict:
 
 async def handler_emergency_rollback_last_network_change() -> dict:
     """Rollback last network change (emergency use)."""
-    # TODO: TASK 16 - Implement network rollback
-    return {"success": False, "message": "TODO: not implemented yet"}
+    return {"success": False, "message": "Disabled until snapshot support implemented"}
 
 
 async def handler_emergency_safe_mode_enable() -> dict:
     """Enable safe mode (minimal services)."""
-    # TODO: Implement safe mode logic
-    return {"success": False, "message": "TODO: not implemented yet"}
+    return {"success": False, "message": "Disabled in Phase-1"}
 
 
 # -------------------------

@@ -3,9 +3,7 @@ import { api } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 
 // Interface card component
-function InterfaceCard({ iface, onAction }) {
-    const { isAdmin } = useAuth()
-
+function InterfaceCard({ iface }) {
     const stateColors = {
         up: 'text-green-400 bg-green-500/20',
         down: 'text-red-400 bg-red-500/20',
@@ -78,38 +76,13 @@ function InterfaceCard({ iface, onAction }) {
                 </div>
             </div>
 
-            {/* Actions */}
-            {isAdmin && iface.type !== 'loopback' && (
-                <div className="flex gap-2">
-                    {iface.state === 'up' ? (
-                        <button
-                            onClick={() => onAction(iface.name, 'disable')}
-                            className="btn btn-danger text-sm py-1 px-3 flex-1"
-                        >
-                            Disable
-                        </button>
-                    ) : (
-                        <button
-                            onClick={() => onAction(iface.name, 'enable')}
-                            className="btn btn-primary text-sm py-1 px-3 flex-1"
-                        >
-                            Enable
-                        </button>
-                    )}
-                    <button
-                        onClick={() => onAction(iface.name, 'restart')}
-                        className="btn btn-secondary text-sm py-1 px-3"
-                    >
-                        🔄
-                    </button>
-                </div>
-            )}
+            {/* Actions removed in Action Registry mode */}
         </div>
     )
 }
 
 // WiFi network card
-function WiFiNetworkCard({ network, onConnect }) {
+function WiFiNetworkCard({ network }) {
     const signalBars = Math.min(4, Math.max(1, Math.ceil(network.signal_quality / 25)))
 
     return (
@@ -135,61 +108,11 @@ function WiFiNetworkCard({ network, onConnect }) {
                 {network.connected ? (
                     <span className="text-xs text-green-400 font-medium">Connected</span>
                 ) : (
-                    <button
-                        onClick={() => onConnect(network)}
-                        className="btn btn-ghost text-xs py-1 px-2"
-                    >
-                        Connect
-                    </button>
+                    <span className="text-xs text-gray-500">Available</span>
                 )}
             </div>
             <div className="text-xs text-gray-500">
                 {network.signal_strength} dBm • Channel {network.channel}
-            </div>
-        </div>
-    )
-}
-
-// WiFi connect modal
-function WiFiConnectModal({ network, onClose, onSubmit }) {
-    const [password, setPassword] = useState('')
-
-    const handleSubmit = (e) => {
-        e.preventDefault()
-        onSubmit({ ssid: network.ssid, password, hidden: false })
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="glass-card rounded-2xl p-6 w-full max-w-sm animate-slide-in">
-                <h2 className="text-xl font-semibold text-gray-100 mb-4">
-                    Connect to {network.ssid}
-                </h2>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">
-                            Password
-                        </label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="input"
-                            placeholder="Enter WiFi password"
-                            autoFocus
-                        />
-                    </div>
-
-                    <div className="flex gap-3">
-                        <button type="submit" className="btn btn-primary flex-1">
-                            Connect
-                        </button>
-                        <button type="button" onClick={onClose} className="btn btn-secondary">
-                            Cancel
-                        </button>
-                    </div>
-                </form>
             </div>
         </div>
     )
@@ -203,7 +126,7 @@ export default function Network() {
     const [connectivity, setConnectivity] = useState(null)
     const [loading, setLoading] = useState(true)
     const [scanning, setScanning] = useState(false)
-    const [connectModal, setConnectModal] = useState(null)
+    const [rollbackInfo, setRollbackInfo] = useState(null)
     const [tab, setTab] = useState('interfaces')
 
     useEffect(() => {
@@ -241,46 +164,39 @@ export default function Network() {
         }
     }
 
-    async function handleInterfaceAction(name, action) {
-        const rollback = action === 'disable' ? 120 : 0
-
-        if (action === 'disable' && !confirm(
-            `Disable ${name}? This will auto-restore after ${rollback} seconds if you lose connectivity.`
-        )) {
+    async function toggleWifi(enabled) {
+        if (!confirm('Confirm WiFi toggle? This change will auto-rollback if not confirmed.')) {
             return
         }
 
         try {
-            await api.post(`/network/interfaces/${name}/action`, {
-                action,
-                rollback_seconds: rollback,
+            const response = await api.post('/actions/execute', {
+                action_id: 'net.toggle_wifi',
+                params: { enabled },
+                confirm: true,
             })
-            await loadData()
+            if (response.data.rollback) {
+                setRollbackInfo(response.data.rollback)
+            }
+            await scanWifi()
         } catch (err) {
-            console.error(`Failed to ${action} interface:`, err)
+            console.error('Failed to toggle WiFi:', err)
             alert(`Failed: ${err.message}`)
         }
     }
 
-    async function handleWifiConnect(config) {
+    async function confirmRollback() {
+        if (!rollbackInfo?.job_id) return
         try {
-            await api.post('/network/wifi/connect', config)
-            setConnectModal(null)
-            await scanWifi()
+            await api.post('/actions/confirm', { rollback_job_id: rollbackInfo.job_id })
+            setRollbackInfo(null)
         } catch (err) {
-            console.error('Failed to connect WiFi:', err)
-            alert(`Failed to connect: ${err.message}`)
+            alert(err.message)
         }
     }
 
-    async function handleWifiDisconnect() {
-        try {
-            await api.post('/network/wifi/disconnect')
-            await scanWifi()
-        } catch (err) {
-            console.error('Failed to disconnect WiFi:', err)
-        }
-    }
+    const wifiInterface = interfaces.find((iface) => iface.type === 'wifi' || iface.name?.startsWith('wlan'))
+    const wifiEnabled = wifiInterface?.state === 'up'
 
     if (loading) {
         return (
@@ -297,6 +213,17 @@ export default function Network() {
                 <h2 className="text-2xl font-bold text-gray-100">Network</h2>
                 <button onClick={loadData} className="btn btn-secondary">🔄 Refresh</button>
             </div>
+
+            {rollbackInfo && (
+                <div className="glass-card rounded-xl p-4 border border-yellow-500/30 bg-yellow-500/10">
+                    <p className="text-sm text-yellow-200">
+                        If not confirmed within {rollbackInfo.due_in_seconds}s, this change will rollback.
+                    </p>
+                    <button onClick={confirmRollback} className="btn btn-secondary mt-3">
+                        Confirm Change
+                    </button>
+                </div>
+            )}
 
             {/* Connectivity Status */}
             {connectivity && (
@@ -353,7 +280,6 @@ export default function Network() {
                         <InterfaceCard
                             key={iface.name}
                             iface={iface}
-                            onAction={handleInterfaceAction}
                         />
                     ))}
                 </div>
@@ -370,14 +296,25 @@ export default function Network() {
                                         {wifiStatus.ip_address} • {wifiStatus.frequency} • {wifiStatus.signal_quality}%
                                     </p>
                                 </div>
-                                {isAdmin && (
-                                    <button
-                                        onClick={handleWifiDisconnect}
-                                        className="btn btn-danger text-sm"
-                                    >
-                                        Disconnect
-                                    </button>
-                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {isAdmin && (
+                        <div className="glass-card rounded-xl p-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-gray-500">WiFi</p>
+                                    <p className="text-sm text-gray-300">
+                                        {wifiEnabled ? 'Enabled' : 'Disabled'}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => toggleWifi(!wifiEnabled)}
+                                    className={wifiEnabled ? 'btn btn-danger' : 'btn btn-primary'}
+                                >
+                                    {wifiEnabled ? 'Disable' : 'Enable'}
+                                </button>
                             </div>
                         </div>
                     )}
@@ -399,7 +336,6 @@ export default function Network() {
                             <WiFiNetworkCard
                                 key={network.bssid}
                                 network={network}
-                                onConnect={() => setConnectModal(network)}
                             />
                         ))}
                     </div>
@@ -414,14 +350,6 @@ export default function Network() {
                 </div>
             )}
 
-            {/* WiFi Connect Modal */}
-            {connectModal && (
-                <WiFiConnectModal
-                    network={connectModal}
-                    onClose={() => setConnectModal(null)}
-                    onSubmit={handleWifiConnect}
-                />
-            )}
         </div>
     )
 }

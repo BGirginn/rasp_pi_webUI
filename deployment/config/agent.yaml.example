@@ -1,0 +1,50 @@
+# Agent Configuration Example
+# Copy to /etc/pi-agent/config.yaml and customize
+
+# RPC Server Settings
+rpc_host: "127.0.0.1"  # Localhost only (panel connects locally)
+rpc_port: 8001
+rpc_workers: 2
+
+# Policy Registry
+registry_path: "/etc/pi-agent/policy/registry.yaml"
+
+# Authentication
+# Panel ↔ Agent auth (HMAC or mTLS)
+auth_mode: "hmac"  # "hmac" or "mtls"
+hmac_secret_file: "/etc/pi-agent/secrets.yaml"
+
+# mTLS (if auth_mode = "mtls")
+mtls_cert_file: "/etc/pi-agent/certs/agent.crt"
+mtls_key_file: "/etc/pi-agent/certs/agent.key"
+mtls_ca_file: "/etc/pi-agent/certs/ca.crt"
+
+# Replay Protection
+replay_window_seconds: 300  # 5 minutes
+replay_cache_size: 10000
+
+# System Control
+systemd_control_enabled: true
+network_control_enabled: true
+docker_control_enabled: true
+
+# Allowed Services (allowlist for systemd control)
+allowed_services:
+  - ssh
+  - docker
+  - tailscaled
+  - mosquitto
+  - pi-agent
+  - caddy
+  - pi-panel-api
+
+# State File
+state_file: "/var/lib/pi-agent/state.json"
+
+# Logging
+log_level: "INFO"
+log_format: "json"
+
+# Health Check
+health_check_enabled: true
+health_check_interval_seconds: 60

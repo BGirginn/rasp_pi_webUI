@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
-import { useAuth } from '../hooks/useAuth'
 
 // Job status badge
 function JobStatusBadge({ state }) {
@@ -28,7 +27,7 @@ function JobStatusBadge({ state }) {
 }
 
 // Job card component
-function JobCard({ job, onAction }) {
+function JobCard({ job }) {
     const [expanded, setExpanded] = useState(false)
 
     const typeIcons = {
@@ -78,24 +77,7 @@ function JobCard({ job, onAction }) {
                 )}
             </div>
 
-            {/* Actions */}
             <div className="flex gap-2">
-                {job.state === 'pending' && (
-                    <button
-                        onClick={() => onAction(job.id, 'run')}
-                        className="btn btn-primary text-sm py-1 px-3"
-                    >
-                        ▶️ Run Now
-                    </button>
-                )}
-                {job.state === 'running' && (
-                    <button
-                        onClick={() => onAction(job.id, 'cancel')}
-                        className="btn btn-danger text-sm py-1 px-3"
-                    >
-                        ⏹️ Cancel
-                    </button>
-                )}
                 <button
                     onClick={() => setExpanded(!expanded)}
                     className="btn btn-ghost text-sm py-1 px-3"
@@ -134,112 +116,13 @@ function JobCard({ job, onAction }) {
     )
 }
 
-// Create job modal
-function CreateJobModal({ types, onClose, onCreate }) {
-    const [name, setName] = useState('')
-    const [type, setType] = useState('')
-    const [config, setConfig] = useState({})
-
-    const handleSubmit = (e) => {
-        e.preventDefault()
-        onCreate({ name, type, config })
-    }
-
-    const selectedType = types[type]
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="glass-card rounded-2xl p-6 w-full max-w-md animate-slide-in">
-                <h2 className="text-xl font-semibold text-gray-100 mb-4">Create Job</h2>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">
-                            Job Name
-                        </label>
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className="input"
-                            placeholder="e.g., Daily Backup"
-                            required
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">
-                            Job Type
-                        </label>
-                        <select
-                            value={type}
-                            onChange={(e) => setType(e.target.value)}
-                            className="input"
-                            required
-                        >
-                            <option value="">Select type...</option>
-                            {Object.entries(types).map(([key, value]) => (
-                                <option key={key} value={key}>
-                                    {value.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {selectedType && (
-                        <div className="p-3 bg-gray-800/50 rounded-lg">
-                            <p className="text-sm text-gray-400 mb-2">{selectedType.description}</p>
-                            {Object.entries(selectedType.config_schema || {}).map(([key, schema]) => (
-                                <div key={key} className="mb-2">
-                                    <label className="flex items-center gap-2 text-sm text-gray-300">
-                                        {schema.type === 'boolean' ? (
-                                            <input
-                                                type="checkbox"
-                                                checked={config[key] ?? schema.default}
-                                                onChange={(e) => setConfig({ ...config, [key]: e.target.checked })}
-                                                className="rounded"
-                                            />
-                                        ) : (
-                                            <input
-                                                type={schema.type === 'integer' ? 'number' : 'text'}
-                                                value={config[key] ?? schema.default ?? ''}
-                                                onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
-                                                className="input w-32"
-                                            />
-                                        )}
-                                        {key.replace(/_/g, ' ')}
-                                    </label>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    <div className="flex gap-3">
-                        <button type="submit" className="btn btn-primary flex-1">
-                            Create Job
-                        </button>
-                        <button type="button" onClick={onClose} className="btn btn-secondary">
-                            Cancel
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    )
-}
-
 export default function Jobs() {
-    const { isOperator } = useAuth()
     const [jobs, setJobs] = useState([])
-    const [jobTypes, setJobTypes] = useState({})
     const [loading, setLoading] = useState(true)
     const [filter, setFilter] = useState('all')
-    const [showCreate, setShowCreate] = useState(false)
 
     useEffect(() => {
         loadJobs()
-        loadJobTypes()
-
         // Refresh running jobs
         const interval = setInterval(loadJobs, 5000)
         return () => clearInterval(interval)
@@ -253,36 +136,6 @@ export default function Jobs() {
             console.error('Failed to load jobs:', err)
         } finally {
             setLoading(false)
-        }
-    }
-
-    async function loadJobTypes() {
-        try {
-            const response = await api.get('/jobs/types')
-            setJobTypes(response.data)
-        } catch (err) {
-            console.error('Failed to load job types:', err)
-        }
-    }
-
-    async function handleAction(jobId, action) {
-        try {
-            await api.post(`/jobs/${jobId}/${action}`)
-            await loadJobs()
-        } catch (err) {
-            console.error(`Failed to ${action} job:`, err)
-            alert(`Failed to ${action} job: ${err.message}`)
-        }
-    }
-
-    async function handleCreate(jobData) {
-        try {
-            await api.post('/jobs', jobData)
-            setShowCreate(false)
-            await loadJobs()
-        } catch (err) {
-            console.error('Failed to create job:', err)
-            alert(`Failed to create job: ${err.message}`)
         }
     }
 
@@ -317,11 +170,6 @@ export default function Jobs() {
                     <button onClick={loadJobs} className="btn btn-secondary">
                         🔄 Refresh
                     </button>
-                    {isOperator && (
-                        <button onClick={() => setShowCreate(true)} className="btn btn-primary">
-                            ➕ Create Job
-                        </button>
-                    )}
                 </div>
             </div>
 
@@ -348,7 +196,7 @@ export default function Jobs() {
             {filteredJobs.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {filteredJobs.map((job) => (
-                        <JobCard key={job.id} job={job} onAction={handleAction} />
+                        <JobCard key={job.id} job={job} />
                     ))}
                 </div>
             ) : (
@@ -363,14 +211,6 @@ export default function Jobs() {
                 </div>
             )}
 
-            {/* Create Job Modal */}
-            {showCreate && (
-                <CreateJobModal
-                    types={jobTypes}
-                    onClose={() => setShowCreate(false)}
-                    onCreate={handleCreate}
-                />
-            )}
         </div>
     )
 }

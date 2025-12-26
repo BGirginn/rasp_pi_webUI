@@ -21,7 +21,7 @@ class SocketServer:
     def __init__(
         self,
         socket_path: str,
-        handler: Callable[[str, Dict], Any],
+        handler: Callable[[str, Dict, Optional[Dict]], Any],
         permissions: str = "0660"
     ):
         self.socket_path = socket_path
@@ -99,7 +99,10 @@ class SocketServer:
                 except json.JSONDecodeError as e:
                     response = self._error_response(None, -32700, f"Parse error: {e}")
                 else:
-                    response = await self._process_request(request)
+                    response = await self._process_request(
+                        request,
+                        client_info={"peer": peer, "transport": "unix", "mtls_authenticated": False},
+                    )
                 
                 # Send response
                 response_bytes = json.dumps(response).encode("utf-8")
@@ -115,7 +118,7 @@ class SocketServer:
             writer.close()
             await writer.wait_closed()
     
-    async def _process_request(self, request: Dict) -> Dict:
+    async def _process_request(self, request: Dict, client_info: Optional[Dict] = None) -> Dict:
         """Process a JSON-RPC request."""
         # Validate request
         if not isinstance(request, dict):
@@ -136,14 +139,23 @@ class SocketServer:
         
         # Call handler
         try:
-            result = await self.handler(method, params or {})
+            result = await self.handler(method, params or {}, client_info)
             
             if isinstance(result, dict) and "error" in result:
-                return self._error_response(
-                    request_id,
-                    -32000,
-                    result["error"]
-                )
+                error = result["error"]
+                if isinstance(error, dict):
+                    data = error.get("data")
+                    error_code = error.get("code")
+                    if error_code:
+                        data = data or {}
+                        data["error_code"] = error_code
+                    return self._error_response(
+                        request_id,
+                        -32000,
+                        error.get("message", "RPC error"),
+                        data=data,
+                    )
+                return self._error_response(request_id, -32000, str(error))
             
             return {
                 "jsonrpc": "2.0",
@@ -155,9 +167,15 @@ class SocketServer:
             logger.exception("Handler error", method=method, error=str(e))
             return self._error_response(request_id, -32603, f"Internal error: {e}")
     
-    def _error_response(self, request_id: Any, code: int, message: str) -> Dict:
+    def _error_response(
+        self,
+        request_id: Any,
+        code: int,
+        message: str,
+        data: Optional[Dict] = None,
+    ) -> Dict:
         """Create JSON-RPC error response."""
-        return {
+        error = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {
@@ -165,6 +183,9 @@ class SocketServer:
                 "message": message
             }
         }
+        if data is not None:
+            error["error"]["data"] = data
+        return error
 
 
 class SocketClient:

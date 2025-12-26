@@ -1,0 +1,46 @@
+# Panel API Configuration Example
+# Copy to /etc/pi-panel/config.yaml and customize
+
+# API Server Settings
+api_host: "127.0.0.1"  # Bind to localhost only (use Tailscale IP if needed)
+api_port: 8000
+api_debug: false       # NEVER true in production
+
+# Database
+database_path: "/var/lib/pi-panel/control.db"
+
+# CORS (if UI served separately)
+cors_origins: "http://localhost:3000,http://127.0.0.1:3000"
+
+# Tailscale Integration
+tailscale_enabled: true
+tailscale_cidr: "100.64.0.0/10"  # Default Tailscale CGNAT range
+
+# Agent Connection
+agent_url: "http://127.0.0.1:8001"
+agent_timeout_seconds: 30
+
+# JWT Settings (reference secrets file)
+jwt_secret_file: "/etc/pi-panel/secrets.yaml"
+jwt_algorithm: "HS256"
+jwt_access_token_expire_minutes: 60
+jwt_refresh_token_expire_days: 30
+
+# Action Registry
+registry_path: "/etc/pi-panel/registry.yaml"
+
+# Rollback Worker
+roll back_poll_interval_seconds: 5
+rollback_max_age_hours: 24
+
+# Rate Limiting
+rate_limit_enabled: true
+rate_limit_requests_per_minute: 60
+
+# Logging
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+log_format: "json"  # json or text
+
+# Security
+hsts_enabled: true
+hsts_max_age_seconds: 31536000

@@ -9,6 +9,7 @@ const icons = {
     devices: '⬢',
     telemetry: '◈',
     network: '◎',
+    actions: '✦',
 
     alerts: '◉',
     settings: '⚡',
@@ -26,6 +27,7 @@ function Sidebar() {
         { path: '/devices', label: 'Devices', icon: icons.devices },
         { path: '/telemetry', label: 'Telemetry', icon: icons.telemetry },
         { path: '/network', label: 'Network', icon: icons.network },
+        { path: '/actions', label: 'Actions', icon: icons.actions },
 
         { path: '/alerts', label: 'Alerts', icon: icons.alerts },
     ]

@@ -4,19 +4,17 @@ Pi Control Panel - Auth Tests
 Pytest tests for authentication functionality.
 """
 
+import bcrypt
 import pytest
-import jwt
+from jose import jwt
+from jose.exceptions import ExpiredSignatureError, JWTError
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
-from passlib.context import CryptContext
 
 # Set up test environment
 import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
 os.environ["DATABASE_PATH"] = ":memory:"
-
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TestPasswordHashing:
@@ -25,17 +23,17 @@ class TestPasswordHashing:
     def test_password_hash(self):
         """Test password hashing works correctly."""
         password = "testpassword123"
-        hashed = pwd_context.hash(password)
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         
-        assert hashed != password
-        assert pwd_context.verify(password, hashed)
+        assert hashed.decode() != password
+        assert bcrypt.checkpw(password.encode(), hashed)
     
     def test_wrong_password_fails(self):
         """Test wrong password verification fails."""
         password = "testpassword123"
-        hashed = pwd_context.hash(password)
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         
-        assert not pwd_context.verify("wrongpassword", hashed)
+        assert not bcrypt.checkpw("wrongpassword".encode(), hashed)
 
 
 class TestJWTTokens:
@@ -64,7 +62,7 @@ class TestJWTTokens:
         
         token = jwt.encode(payload, secret, algorithm="HS256")
         
-        with pytest.raises(jwt.ExpiredSignatureError):
+        with pytest.raises(ExpiredSignatureError):
             jwt.decode(token, secret, algorithms=["HS256"])
     
     def test_invalid_signature_fails(self):
@@ -76,7 +74,7 @@ class TestJWTTokens:
         
         token = jwt.encode(payload, "secret1", algorithm="HS256")
         
-        with pytest.raises(jwt.InvalidSignatureError):
+        with pytest.raises(JWTError):
             jwt.decode(token, "secret2", algorithms=["HS256"])
 
 

@@ -15,6 +15,36 @@ socket:
   permissions: "0660"
 
 # ===========================================
+# RPC Transport (mTLS preferred)
+# ===========================================
+rpc:
+  transport: "unix"  # unix | tls
+  host: "127.0.0.1"
+  port: 9443
+  tailscale_cidr: "100.64.0.0/10"
+
+# ===========================================
+# Security (Panel ↔ Agent)
+# ===========================================
+security:
+  panel_shared_key: ""
+  clock_skew_seconds: 120
+  replay_ttl_seconds: 300
+  params_max_bytes: 16384
+  allow_hmac_fallback: true
+
+# ===========================================
+# mTLS Configuration
+# ===========================================
+mtls:
+  server_cert: "/var/lib/tailscale/certs/agent.crt"
+  server_key: "/var/lib/tailscale/certs/agent.key"
+  client_ca: "/var/lib/tailscale/certs/tailnet-ca.crt"
+  allowed_client_identities:
+    - "panel.ts.net"
+  allowed_client_fingerprints: []
+
+# ===========================================
 # Discovery Settings
 # ===========================================
 discovery:

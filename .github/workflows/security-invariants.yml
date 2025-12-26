@@ -1,0 +1,146 @@
+name: Security Invariants CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, AR]
+
+jobs:
+  # Fast unit tests - run first
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        working-directory: panel/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Run unit tests
+        working-directory: panel/api
+        run: |
+          python -m pytest -m "not invariant" -v --cov=./
+  
+  # Security invariant tests - MUST PASS
+  security-invariants:
+    name: Security Invariants
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        working-directory: panel/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      
+      - name: Run invariant tests
+        working-directory: panel/api
+        run: |
+          python -m pytest -m invariant -v --tb=short
+      
+      - name: Verify no shell=True
+        run: |
+          if grep -r "shell=True" panel/api panel/ui agent/ 2>/dev/null; then
+            echo "ERROR: shell=True found in codebase"
+            exit 1
+          fi
+          echo "✓ No shell=True usage found"
+      
+      - name: Verify no pty usage
+        run: |
+          if grep -r "import pty" panel/api panel/ui agent/ 2>/dev/null; then
+            echo "ERROR: pty import found in codebase"
+            exit 1
+          fi
+          echo "✓ No pty usage found"
+  
+  # Agent-side tests
+  agent-tests:
+    name: Agent Security Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        working-directory: agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pyyaml
+      
+      - name: Run agent tests
+        working-directory: agent
+        run: |
+          python -m pytest tests/ -v
+  
+  # Negative tests - verify CI detects violations
+  negative-tests:
+    name: Negative Regression Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        working-directory: panel/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      
+      - name: Run negative tests
+        working-directory: panel/api
+        run: |
+          python -m pytest tests/test_negative_invariants.py -v
+  
+  # Documentation sync check
+  docs-sync:
+    name: Documentation Sync
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check CI_INVARIANTS.md exists
+        run: |
+          if [ ! -f "docs/CI_INVARIANTS.md" ]; then
+            echo "ERROR: docs/CI_INVARIANTS.md is missing"
+            exit 1
+          fi
+          echo "✓ CI_INVARIANTS.md exists"
+      
+      - name: Check CONTRIBUTING.md mentions invariants
+        run: |
+          if ! grep -q "invariant" CONTRIBUTING.md; then
+            echo "WARNING: CONTRIBUTING.md doesn't mention invariants"
+          fi
+          echo "✓ Documentation check complete"

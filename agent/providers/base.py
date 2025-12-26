@@ -68,6 +68,7 @@ class Resource:
             "type": self.type,
             "provider": self.provider,
             "class": self.resource_class.value,
+            "resource_class": self.resource_class.value,
             "state": self.state.value,
             "image": self.image,
             "ports": self.ports,
@@ -88,6 +89,20 @@ class ActionResult:
     message: str
     data: Optional[Dict] = None
     error: Optional[str] = None
+
+
+def _action_result_success(cls, data: Optional[Dict] = None, message: str = "") -> ActionResult:
+    """Create a success result."""
+    return cls(success=True, message=message, data=data, error=None)
+
+
+def _action_result_failure(cls, error: str, message: Optional[str] = None) -> ActionResult:
+    """Create a failure result."""
+    return cls(success=False, message=message or "Action failed", data=None, error=error)
+
+
+ActionResult.success = classmethod(_action_result_success)
+ActionResult.failure = classmethod(_action_result_failure)
 
 
 class BaseProvider(ABC):

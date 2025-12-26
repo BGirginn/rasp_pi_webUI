@@ -4,6 +4,7 @@ Pi Control Panel - FastAPI Application
 Main entry point for the Panel API server.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -18,11 +19,12 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, system
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, system, sse, audit, manifests
 from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
+from core.rollback.worker import rollback_worker
 
 # ... existing code ...
 
@@ -57,6 +59,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("Starting Pi Control Panel API", version="1.0.0")
+    rollback_stop = asyncio.Event()
+    rollback_task = None
     
     # Load and validate Action Registry (fail fast if invalid)
     try:
@@ -80,11 +84,16 @@ async def lifespan(app: FastAPI):
     
     await alert_manager.start()
     await telemetry_collector.start()
+
+    rollback_task = asyncio.create_task(rollback_worker(rollback_stop))
     
     yield
     
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    rollback_stop.set()
+    if rollback_task:
+        await rollback_task
     await telemetry_collector.stop()
     await alert_manager.stop()
     await agent_client.disconnect()
@@ -150,7 +159,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # Include routers
-from api.routers import actions as actions_router
+from api.routers import actions as actions_router, auth as api_auth_router, audit as api_audit_router, jobs as api_jobs_router
 
 # Existing routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -161,12 +170,19 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(network.router, prefix="/api/network", tags=["Network"])
 app.include_router(devices.router, prefix="/api/devices", tags=["Devices"])
-app.include_router(admin_console.router, prefix="/api/admin", tags=["Admin Console"])
 
 app.include_router(system.router, prefix="/api/system", tags=["System"])
+app.include_router(sse.router, prefix="/api/sse", tags=["SSE"])
+app.include_router(audit.router, prefix="/api/audit", tags=["Audit"])
+app.include_router(manifests.router, prefix="/api/manifests", tags=["Manifests"])
 
 # New AR-driven Actions API
 app.include_router(actions_router.router, prefix="/api/actions", tags=["Actions"])
+app.include_router(api_auth_router.router, prefix="/api/auth", tags=["Auth"])
+
+# New operator UX read-only APIs
+app.include_router(api_audit_router.router, prefix="/api/audit", tags=["Audit Logs"])
+app.include_router(api_jobs_router.router, prefix="/api/jobs", tags=["Job Lifecycle"])
 
 
 # Health check endpoint

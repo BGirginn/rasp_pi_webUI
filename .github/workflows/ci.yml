@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r panel/api/requirements.txt
+          python -m pip install -r agent/requirements.txt
+      - name: Panel unit tests
+        run: python -m pytest -q panel/api/tests -m "not invariant"
+      - name: Agent unit tests
+        run: python -m pytest -q agent/tests -m "not invariant"
+
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r panel/api/requirements.txt
+          python -m pip install -r agent/requirements.txt
+      - name: Panel invariant tests
+        run: python -m pytest -q panel/api/tests -m invariant
+      - name: Agent invariant tests
+        run: python -m pytest -q agent/tests -m invariant

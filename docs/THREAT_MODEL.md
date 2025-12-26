@@ -1,180 +1,72 @@
-# Threat Model - Pi Control Panel
+# Threat Model - Pi Control Panel (AR-First)
 
 ## Overview
 
-This document outlines the security threats, attack vectors, and mitigations for the Raspberry Pi Universal Control Panel. The system manages sensitive infrastructure and must be protected against both external and internal threats.
+This system is an Action Registry (AR)-first control plane. All state mutation
+flows through the Action Engine using `action_id + params`. Terminal/raw shell
+execution is not part of the product surface.
 
-## System Architecture
+## System Architecture (High-Level)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Attack Surface                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   ┌───────────┐      ┌───────────┐      ┌───────────┐     │
-│   │  Browser  │      │   Caddy   │      │   Panel   │     │
-│   │   (Web)   │─────▶│  (Proxy)  │─────▶│   (API)   │     │
-│   └───────────┘      └───────────┘      └─────┬─────┘     │
-│                                                │           │
-│                                          Unix Socket       │
-│                                                │           │
-│   ┌───────────┐      ┌───────────┐      ┌─────▼─────┐     │
-│   │  ESP/IoT  │─────▶│ Mosquitto │─────▶│   Agent   │     │
-│   │  Devices  │      │   (MQTT)  │      │   (Pi)    │     │
-│   └───────────┘      └───────────┘      └───────────┘     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+Browser/UI
+   |
+   v
+Panel API (FastAPI)
+   |
+   v
+Action Engine -> Registry -> Handlers -> Adapters -> Agent RPC
+   |
+   v
+SQLite (audit, rollback_jobs, settings)
 ```
 
-## Threat Categories
+## Threat Categories and Mitigations
 
-### 1. Authentication & Authorization
+### 1) Authentication and Authorization
+- Threat: brute force logins.
+  Mitigation: rate limits, short access token TTL, refresh tokens.
+- Threat: privilege escalation.
+  Mitigation: RBAC enforced in Action Engine (deny-by-default).
 
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| Brute force password attacks | HIGH | Rate limiting (5 attempts/minute), account lockout |
-| Session hijacking | HIGH | Secure HttpOnly cookies, short token expiry (15min) |
-| Token replay attacks | MEDIUM | JWT with `iat` claim, token rotation |
-| Privilege escalation | CRITICAL | RBAC enforcement at API level, role checks in middleware |
-| Missing 2FA bypass | MEDIUM | TOTP required for admin actions |
+### 2) Action Registry Integrity
+- Threat: registry tampering to allow unsafe actions.
+  Mitigation: registry is loaded at startup and must validate; static handler map.
+- Threat: handler string mismatch.
+  Mitigation: tests enforce registry-to-handler coverage.
 
-### 2. API Security
+### 3) Parameter Validation and Allowlists
+- Threat: unknown or unsafe params.
+  Mitigation: strict schema validation with allowlist_ref resolution.
+- Threat: hidden mutation parameters.
+  Mitigation: unknown params rejected; handler signatures checked in tests.
 
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| SQL Injection | CRITICAL | Parameterized queries, input validation |
-| XSS via API responses | HIGH | Content-Type headers, response sanitization |
-| CSRF attacks | HIGH | SameSite cookies, CSRF tokens |
-| API abuse/DoS | HIGH | Rate limiting (100 req/min), request size limits |
-| Path traversal | CRITICAL | Input validation, allowlist file paths |
+### 4) Network Lockout
+- Threat: network changes cut off access.
+  Mitigation: rollback job scheduling; confirm endpoint cancels rollback.
 
-### 3. Command Execution
+### 5) Audit and Masking
+- Threat: loss of forensic trace or secret leakage.
+  Mitigation: audit log is mandatory; sensitive fields are masked.
 
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| Command injection | CRITICAL | Allowlist commands, blacklist dangerous patterns |
-| Privilege escalation via commands | CRITICAL | Safe mode by default, risky mode timeout |
-| Resource exhaustion | HIGH | Command timeout, resource limits |
-| Data exfiltration | HIGH | Audit logging, command output limits |
+### 6) Legacy Endpoint Surface
+- Threat: bypassing the Action Engine via older routes.
+  Mitigation: legacy mutation endpoints return 410 and are slated for removal.
 
-### 4. Network Security
+### 7) Panel -> Agent Trust Boundary
+- Threat: if panel is compromised, agent may execute unsafe calls.
+  Mitigation (planned): add agent-side allowlists and request authentication.
 
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| Man-in-the-middle | CRITICAL | TLS everywhere, Tailscale for access |
-| Unauthorized network access | HIGH | LAN-only by default, Tailscale ACLs |
-| DNS spoofing | MEDIUM | DNSSEC, hardcoded IP fallbacks |
-| WiFi credential theft | HIGH | Encrypted storage, memory-only passwords |
+## Incident Response (Operational)
 
-### 5. MQTT/IoT Security
-
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| Unauthorized device access | HIGH | Client certificates, ACL per device |
-| Telemetry spoofing | MEDIUM | Device authentication, message validation |
-| Command injection via MQTT | CRITICAL | Payload validation, command allowlist |
-| DoS via message flooding | MEDIUM | Rate limits per client, message size limits |
-
-### 6. Data Security
-
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| Credential exposure | CRITICAL | Secrets in env vars, never in code |
-| Backup theft | HIGH | Encrypted backups, secure storage |
-| Log data leakage | MEDIUM | PII scrubbing, log rotation |
-| Database tampering | HIGH | SQLite WAL mode, file permissions |
-
-## Attack Vectors
-
-### A1: External Web Attacker
-- **Entry Point**: HTTPS via Caddy
-- **Mitigations**: Tailscale-only access, rate limiting, auth required
-
-### A2: Malicious ESP Device
-- **Entry Point**: MQTT broker
-- **Mitigations**: Per-device ACL, message validation, isolated topics
-
-### A3: Compromised LAN Device
-- **Entry Point**: Network broadcast, HTTP redirect
-- **Mitigations**: HTTPS only, no HTTP on port 80, LAN isolation
-
-### A4: Insider Threat (Operator)
-- **Entry Point**: Authenticated API access
-- **Mitigations**: RBAC, audit logging, CORE resource protection
-
-### A5: Physical Access
-- **Entry Point**: SD card, console access
-- **Mitigations**: Disk encryption (optional), console password
-
-## Security Controls
-
-### Authentication
-- [x] JWT with short expiry (15 minutes)
-- [x] Refresh tokens with rotation
-- [x] TOTP two-factor authentication
-- [x] Password hashing (bcrypt)
-- [x] Account lockout after failed attempts
-
-### Authorization
-- [x] Role-based access control (Admin/Operator/Viewer)
-- [x] Resource class protection (CORE/SYSTEM/APP)
-- [x] Per-endpoint role requirements
-- [x] Action approval for sensitive operations
-
-### Network
-- [x] TLS termination at Caddy
-- [x] Tailscale for secure remote access
-- [x] No external ports exposed (Docker internal network)
-- [x] Unix socket for Agent-Panel communication
-
-### Audit
-- [x] All actions logged with user, IP, timestamp
-- [x] Command execution history
-- [x] Failed authentication logging
-- [x] Retention policies for compliance
-
-### Resource Protection
-- [x] CORE services immutable
-- [x] SYSTEM services limited to restart
-- [x] Dangerous commands blacklisted
-- [x] Safe mode for command execution
-
-## Response Procedures
-
-### Suspected Breach
-1. Disable remote access (Tailscale connection)
-2. Rotate JWT secret
-3. Force logout all sessions
-4. Review audit logs
-5. Reset affected credentials
-
-### Credential Leak
-1. Rotate all secrets immediately
-2. Regenerate JWT secret
-3. Reset user passwords
-4. Rotate MQTT passwords
-5. Update ESP device credentials
-
-### Ransomware/Malware
-1. Disconnect from network
-2. Boot from known-good image
-3. Restore from encrypted backup
-4. Audit all containers for tampering
-
-## Compliance Notes
-
-- **GDPR**: Minimal PII collection, audit logs for accountability
-- **SOC 2**: Audit logging, access controls, encryption
-- **PCI-DSS**: Not applicable (no payment processing)
+If compromise is suspected:
+1) Rotate JWT secret (invalidates sessions).
+2) Review audit logs for suspicious actions.
+3) Disable network mutations until verified.
 
 ## Review Schedule
 
-- [ ] Quarterly security review
-- [ ] Annual penetration testing
-- [ ] Post-incident review within 48 hours
-- [ ] Dependency vulnerability scanning (CI/CD)
+- Quarterly threat model review
+- Post-incident review within 48 hours
 
----
-
-*Last Updated: 2024-01-15*
-*Next Review: 2024-04-15*
+Last Updated: 2025-02-15

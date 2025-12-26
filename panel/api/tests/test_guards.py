@@ -6,7 +6,7 @@ Validates confirmation and cooldown enforcement.
 import pytest
 from datetime import datetime, timedelta
 from core.actions.loader import get_registry
-from core.actions.guards import requires_confirmation, check_cooldown
+from core.actions.guards import requires_confirmation, check_confirmation, check_cooldown
 from fastapi import HTTPException
 import aiosqlite
 
@@ -38,6 +38,19 @@ def test_requires_confirmation_unknown_action():
     registry = get_registry()
     
     assert requires_confirmation(registry, "unknown.action") is True
+
+
+def test_check_confirmation_enforced():
+    """Confirmation check should raise when confirm is missing."""
+    registry = get_registry()
+
+    with pytest.raises(HTTPException) as exc_info:
+        check_confirmation(registry, "svc.stop", confirm=False)
+
+    assert exc_info.value.status_code == 400
+
+    # Should not raise when confirm is true
+    check_confirmation(registry, "svc.stop", confirm=True)
 
 
 @pytest.mark.asyncio

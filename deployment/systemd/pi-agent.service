@@ -1,0 +1,71 @@
+[Unit]
+Description=Pi Agent - System Control Daemon
+Documentation=https://github.com/yourusername/rasp_pi_webui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/pi-agent/main.py
+WorkingDirectory=/opt/pi-agent
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Security: Run as dedicated user (created during install)
+User=pi-agent
+Group=pi-agent
+
+# Security: No new privileges
+NoNewPrivileges=yes
+
+# Security: Filesystem protection
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/pi-agent
+
+# Security: Capabilities (minimal for systemd/network control)
+# CAP_NET_ADMIN: network configuration
+# CAP_SYS_ADMIN: systemd service control
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_DAC_OVERRIDE
+
+# Security: Restrict address families
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# Security: Namespace isolation
+PrivateDevices=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# Security: System call filtering (more permissive than panel due to system control)
+SystemCallFilter=@system-service
+SystemCallFilter=@privileged
+SystemCallErrorNumber=EPERM
+
+# Security: Restrict realtime
+RestrictRealtime=yes
+
+# Security: Lock personality
+LockPersonality=yes
+
+# Security: Remove IPC
+RemoveIPC=yes
+
+# Security: Restrict SUID
+RestrictSUIDSGID=yes
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="CONFIG_PATH=/etc/pi-agent/config.yaml"
+Environment="STATE_PATH=/var/lib/pi-agent/state.json"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-agent
+
+[Install]
+WantedBy=multi-user.target

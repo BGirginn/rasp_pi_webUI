@@ -10,6 +10,7 @@ import Jobs from './pages/Jobs'
 import Settings from './pages/Settings'
 import Alerts from './pages/Alerts'
 import Network from './pages/Network'
+import Actions from './pages/Actions'
 
 
 // Auth context
@@ -55,6 +56,7 @@ function App() {
                     <Route path="jobs" element={<Jobs />} />
                     <Route path="alerts" element={<Alerts />} />
                     <Route path="network" element={<Network />} />
+                    <Route path="actions" element={<Actions />} />
 
                     <Route path="settings" element={<Settings />} />
                 </Route>
@@ -66,4 +68,3 @@ function App() {
 }
 
 export default App
-

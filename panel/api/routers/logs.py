@@ -51,7 +51,7 @@ async def get_logs(
 ):
     """Get logs for a resource."""
     try:
-        raw_logs = await agent_client.get_resource_logs(resource_id, tail)
+        raw_logs = await agent_client.get_resource_logs(resource_id, tail, requested_by=user)
     except Exception as e:
         # Return mock data if agent unavailable
         raw_logs = [
@@ -96,7 +96,7 @@ async def search_logs(
 ):
     """Search logs for a resource."""
     try:
-        raw_logs = await agent_client.get_resource_logs(resource_id, 5000)
+        raw_logs = await agent_client.get_resource_logs(resource_id, 5000, requested_by=user)
     except Exception:
         raw_logs = []
     
@@ -143,7 +143,7 @@ async def stream_logs(
         try:
             # Send initial logs
             try:
-                initial_logs = await agent_client.get_resource_logs(resource_id, 50)
+                initial_logs = await agent_client.get_resource_logs(resource_id, 50, requested_by=user)
                 for log_line in initial_logs[-50:]:
                     parsed = _parse_log_line(log_line)
                     yield f"event: log\ndata: {{\"timestamp\": \"{parsed.timestamp}\", \"level\": \"{parsed.level}\", \"message\": \"{parsed.message}\"}}\n\n"
@@ -167,7 +167,7 @@ async def tail_logs(
 ):
     """Get the latest N log lines."""
     try:
-        raw_logs = await agent_client.get_resource_logs(resource_id, lines)
+        raw_logs = await agent_client.get_resource_logs(resource_id, lines, requested_by=user)
     except Exception:
         raw_logs = []
     
@@ -188,7 +188,7 @@ async def log_stats(
 ):
     """Get log statistics for a resource."""
     try:
-        raw_logs = await agent_client.get_resource_logs(resource_id, 10000)
+        raw_logs = await agent_client.get_resource_logs(resource_id, 10000, requested_by=user)
     except Exception:
         raw_logs = []
     

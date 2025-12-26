@@ -5,9 +5,6 @@ Handles schema migrations and initial data setup.
 """
 
 import asyncio
-import os
-import secrets
-from datetime import datetime
 
 import aiosqlite
 import bcrypt
@@ -62,7 +59,7 @@ async def migrate_001_initial_schema(db):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
+            role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer', 'owner')),
             totp_secret TEXT,
             email TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -228,24 +225,8 @@ async def migrate_001_initial_schema(db):
 
 
 async def migrate_002_default_admin(db):
-    """Create default admin user if none exists."""
-    cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-    count = (await cursor.fetchone())[0]
-    
-    if count == 0:
-        # Generate random password
-        default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
-        password_hash = hash_password(default_password)
-        
-        await db.execute(
-            """INSERT INTO users (username, password_hash, role, email)
-               VALUES (?, ?, ?, ?)""",
-            ("admin", password_hash, "admin", "admin@localhost")
-        )
-        
-        print(f"  Created default admin user: admin")
-        print(f"  Default password: {default_password}")
-        print(f"  ⚠️  CHANGE THIS PASSWORD IMMEDIATELY!")
+    """Default admin creation removed (no default credentials)."""
+    print("  Skipping default admin creation (disabled)")
 
 
 async def migrate_003_ignored_resources(db):
@@ -321,6 +302,38 @@ async def migrate_005_owner_role_and_settings(db):
         )
     
     print("  Settings table initialized with first_run_complete=false")
+
+    # Ensure users.role constraint includes owner (SQLite requires table rebuild)
+    cursor = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    )
+    row = await cursor.fetchone()
+    if row and row[0] and "owner" not in row[0]:
+        await db.execute("ALTER TABLE users RENAME TO users_old")
+        await db.execute(
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer', 'owner')),
+                totp_secret TEXT,
+                email TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO users (id, username, password_hash, role, totp_secret, email, created_at, updated_at, last_login)
+            SELECT id, username, password_hash, role, totp_secret, email, created_at, updated_at, last_login
+            FROM users_old
+            """
+        )
+        await db.execute("DROP TABLE users_old")
+        print("  Users table updated to include owner role")
 
 
 async def migrate_006_rollback_jobs(db):

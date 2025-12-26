@@ -73,7 +73,7 @@ async def _init_control_schema(db):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
+            role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer', 'owner')),
             totp_secret TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -182,6 +182,30 @@ async def _init_control_schema(db):
             FOREIGN KEY (acknowledged_by) REFERENCES users(id)
         )
     """)
+
+    # Settings table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Rollback jobs table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS rollback_jobs (
+            id TEXT PRIMARY KEY,
+            action_id TEXT NOT NULL,
+            rollback_action_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_by_user_id TEXT NOT NULL,
+            due_at INTEGER NOT NULL,
+            confirmed_at INTEGER,
+            status TEXT NOT NULL CHECK (status IN ('pending','confirmed','rolled_back','expired')),
+            created_at INTEGER NOT NULL
+        )
+    """)
     
     # Create indexes
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
@@ -190,6 +214,7 @@ async def _init_control_schema(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_rollback_jobs_status_due ON rollback_jobs(status, due_at)")
     
     await db.commit()
 

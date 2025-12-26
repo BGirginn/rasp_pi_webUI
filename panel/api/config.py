@@ -32,6 +32,17 @@ class Settings(BaseSettings):
     
     # Agent
     agent_socket: str = Field(default="/run/agent.sock", alias="AGENT_SOCKET")
+    panel_agent_shared_key: str = Field(default="change-me-agent-key", alias="PANEL_AGENT_SHARED_KEY")
+    panel_agent_shared_key_file: Optional[str] = Field(default=None, alias="PANEL_AGENT_SHARED_KEY_FILE")
+    agent_rpc_host: Optional[str] = Field(default=None, alias="AGENT_RPC_HOST")
+    agent_rpc_port: int = Field(default=9443, alias="AGENT_RPC_PORT")
+    agent_rpc_use_tls: bool = Field(default=False, alias="AGENT_RPC_USE_TLS")
+    agent_tls_ca_file: Optional[str] = Field(default=None, alias="AGENT_TLS_CA_FILE")
+    agent_tls_client_cert: Optional[str] = Field(default=None, alias="AGENT_TLS_CLIENT_CERT")
+    agent_tls_client_key: Optional[str] = Field(default=None, alias="AGENT_TLS_CLIENT_KEY")
+    agent_tls_expected_identities: str = Field(default="", alias="AGENT_TLS_EXPECTED_IDENTITIES")
+    agent_tls_expected_fingerprints: str = Field(default="", alias="AGENT_TLS_EXPECTED_FINGERPRINTS")
+    agent_tls_server_name: Optional[str] = Field(default=None, alias="AGENT_TLS_SERVER_NAME")
     
     # Security
     panel_allow_lan: bool = Field(default=False, alias="PANEL_ALLOW_LAN")
@@ -61,6 +72,22 @@ class Settings(BaseSettings):
         if secret_file and Path(secret_file).exists():
             return Path(secret_file).read_text().strip()
         return self.jwt_secret
+
+    def get_panel_agent_shared_key(self) -> str:
+        """Get Panel ↔ Agent shared key, optionally from file."""
+        if self.panel_agent_shared_key_file and Path(self.panel_agent_shared_key_file).exists():
+            return Path(self.panel_agent_shared_key_file).read_text().strip()
+        return self.panel_agent_shared_key
+
+    def agent_tls_expected_identities_list(self) -> List[str]:
+        if not self.agent_tls_expected_identities:
+            return []
+        return [value.strip() for value in self.agent_tls_expected_identities.split(",") if value.strip()]
+
+    def agent_tls_expected_fingerprints_list(self) -> List[str]:
+        if not self.agent_tls_expected_fingerprints:
+            return []
+        return [value.strip() for value in self.agent_tls_expected_fingerprints.split(",") if value.strip()]
     
     class Config:
         env_file = ".env"

@@ -66,7 +66,7 @@ class DashboardData(BaseModel):
 async def get_current_metrics(user: dict = Depends(get_current_user)):
     """Get current metrics snapshot from agent or local system."""
     try:
-        telemetry = await agent_client.get_current_telemetry()
+        telemetry = await agent_client.get_current_telemetry(requested_by=user)
         return telemetry
     except Exception:
         # Fallback: Get real metrics from local system
@@ -304,7 +304,7 @@ async def get_dashboard_data(user: dict = Depends(get_current_user)):
     
     # Try to get live telemetry (either from agent or local system)
     try:
-        telemetry = await agent_client.get_current_telemetry()
+        telemetry = await agent_client.get_current_telemetry(requested_by=user)
         metrics = telemetry.get("metrics", {})
     except Exception:
         # Fallback: Get local system metrics
@@ -470,41 +470,4 @@ async def get_resource_history(
         "resource_id": resource_id,
         "hours": hours,
         "metrics": metrics
-    }
-
-
-@router.post("/retention/cleanup")
-async def cleanup_old_data(
-    user: dict = Depends(get_current_user)
-):
-    """Manually trigger data cleanup based on retention policies."""
-    from config import settings
-    
-    db = await get_telemetry_db()
-    
-    now = int(time.time())
-    raw_cutoff = now - (settings.telemetry_raw_retention_hours * 3600)
-    summary_cutoff = now - (settings.telemetry_summary_retention_days * 24 * 3600)
-    
-    # Delete old raw metrics
-    cursor = await db.execute(
-        "DELETE FROM metrics_raw WHERE ts < ?",
-        (raw_cutoff,)
-    )
-    raw_deleted = cursor.rowcount
-    
-    # Delete old summaries
-    cursor = await db.execute(
-        "DELETE FROM metrics_summary WHERE ts < ?",
-        (summary_cutoff,)
-    )
-    summary_deleted = cursor.rowcount
-    
-    await db.commit()
-    
-    return {
-        "raw_deleted": raw_deleted,
-        "summary_deleted": summary_deleted,
-        "raw_cutoff": datetime.fromtimestamp(raw_cutoff).isoformat(),
-        "summary_cutoff": datetime.fromtimestamp(summary_cutoff).isoformat()
     }

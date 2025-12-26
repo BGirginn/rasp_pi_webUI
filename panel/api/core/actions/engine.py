@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from core.actions.loader import get_registry
 from core.auth.rbac import assert_role_allowed
 from core.actions.validate import validate_params
-from core.actions.guards import requires_confirmation, check_cooldown
+from core.actions.guards import check_confirmation, check_cooldown
 from core.actions.handlers import HANDLERS
 from core.auth.masking import mask_params
 from core.audit.models import AuditEvent
@@ -68,15 +68,7 @@ async def execute_action(
         
         # 4. Guard checks
         # 4a. Confirmation check
-        if requires_confirmation(registry, action_id):
-            if not confirm:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "CONFIRMATION_REQUIRED",
-                        "message": f"Action '{action_id}' requires user confirmation. Set 'confirm' to true."
-                    }
-                )
+        check_confirmation(registry, action_id, confirm)
         
         # 4b. Cooldown check - raises 429 if within cooldown
         # Find action's cooldown setting
@@ -122,27 +114,35 @@ async def execute_action(
             audit_status = "success"
             
             # A4.2: Create rollback job if action supports it
-            rollback_config = action_def.get("rollback")
-            if rollback_config and rollback_config.get("supported") and rollback_config.get("auto"):
-                from core.rollback.manager import create_rollback_job, determine_rollback_payload
-                
-                rollback_payload = determine_rollback_payload(action_id, validated_params)
-                if rollback_payload:
-                    timeout_seconds = rollback_config.get("timeout_seconds", 30)
-                    
-                    rollback_job_id = await create_rollback_job(
-                        db=db,
-                        action_id=action_id,
-                        rollback_action_id=action_id,  # Same action with inverse params
-                        payload=rollback_payload,
-                        user_id=user["id"],
-                        timeout_seconds=timeout_seconds
-                    )
-                    
-                    # Add rollback info to result
-                    if isinstance(result, dict):
-                        result["rollback_job_id"] = rollback_job_id
-                        result["rollback_timeout_seconds"] = timeout_seconds
+            rollback_config = action_def.get("rollback") if action_def else None
+            if (
+                rollback_config
+                and rollback_config.get("supported")
+                and rollback_config.get("auto")
+                and user.get("username") != "__rollback_worker__"
+            ):
+                from core.rollback.jobs import create_rollback_job
+                from core.rollback.network import determine_rollback_plan
+
+                timeout_seconds = rollback_config.get("timeout_seconds")
+                if timeout_seconds:
+                    rollback_plan = await determine_rollback_plan(action_id, validated_params)
+                    if rollback_plan:
+                        rollback_action_id, rollback_payload = rollback_plan
+                        rollback_job_id = await create_rollback_job(
+                            db=db,
+                            action_id=action_id,
+                            rollback_action_id=rollback_action_id,
+                            payload=rollback_payload,
+                            user_id=user["id"],
+                            timeout_seconds=timeout_seconds
+                        )
+
+                        if isinstance(result, dict):
+                            result["rollback"] = {
+                                "job_id": rollback_job_id,
+                                "due_in_seconds": timeout_seconds
+                            }
         else:
             audit_status = "fail"
             audit_error = result.get("message") or result.get("error") or "Handler returned failure"

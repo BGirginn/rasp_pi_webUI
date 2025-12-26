@@ -34,9 +34,10 @@ function ProfileSection({ user, onUpdate }) {
                 <div>
                     <label className="text-sm text-gray-500">Role</label>
                     <p className="text-gray-100">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${user?.role === 'admin' ? 'bg-purple-500/20 text-purple-400' :
-                                user?.role === 'operator' ? 'bg-blue-500/20 text-blue-400' :
-                                    'bg-gray-500/20 text-gray-400'
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${user?.role === 'owner' ? 'bg-red-500/20 text-red-400' :
+                                user?.role === 'admin' ? 'bg-purple-500/20 text-purple-400' :
+                                    user?.role === 'operator' ? 'bg-blue-500/20 text-blue-400' :
+                                        'bg-gray-500/20 text-gray-400'
                             }`}>
                             {user?.role}
                         </span>
@@ -404,22 +405,22 @@ function UserManagement() {
     async function createUser(e) {
         e.preventDefault()
         try {
-            await api.post('/auth/users', newUser)
+            const confirmed = confirm('Create this user?')
+            if (!confirmed) return
+            await api.post('/actions/execute', {
+                action_id: 'auth.create_user',
+                params: {
+                    username: newUser.username,
+                    role: newUser.role,
+                    temporary_password: newUser.password,
+                },
+                confirm: true,
+            })
             setShowCreate(false)
             setNewUser({ username: '', password: '', role: 'viewer' })
             await loadUsers()
         } catch (err) {
             alert(`Failed to create user: ${err.message}`)
-        }
-    }
-
-    async function deleteUser(userId) {
-        if (!confirm('Delete this user?')) return
-        try {
-            await api.delete(`/auth/users/${userId}`)
-            await loadUsers()
-        } catch (err) {
-            alert(`Failed to delete: ${err.message}`)
         }
     }
 
@@ -479,12 +480,6 @@ function UserManagement() {
                                 <p className="text-gray-100 font-medium">{user.username}</p>
                                 <p className="text-xs text-gray-500">{user.role} • {user.email || 'No email'}</p>
                             </div>
-                            <button
-                                onClick={() => deleteUser(user.id)}
-                                className="btn btn-ghost text-xs text-red-400"
-                            >
-                                Delete
-                            </button>
                         </div>
                     ))}
                 </div>

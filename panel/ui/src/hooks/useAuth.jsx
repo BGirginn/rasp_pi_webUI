@@ -85,8 +85,9 @@ export function AuthProvider({ children }) {
         login,
         logout,
         refreshToken,
-        isAdmin: user?.role === 'admin',
-        isOperator: user?.role === 'operator' || user?.role === 'admin',
+        isOwner: user?.role === 'owner',
+        isAdmin: user?.role === 'admin' || user?.role === 'owner',
+        isOperator: user?.role === 'operator' || user?.role === 'admin' || user?.role === 'owner',
     }
 
     return (

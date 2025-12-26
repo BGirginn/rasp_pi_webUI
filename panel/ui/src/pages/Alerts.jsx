@@ -359,43 +359,19 @@ export default function Alerts() {
     }
 
     async function handleAlertAction(alertId, action) {
-        try {
-            await api.post(`/alerts/${alertId}/${action}`)
-            await loadAlerts()
-        } catch (err) {
-            console.error(`Failed to ${action} alert:`, err)
-            alert(`Failed to ${action}: ${err.message}`)
-        }
+        alert('Alert actions are disabled in Action Registry mode')
     }
 
     async function handleRuleToggle(ruleId, enabled) {
-        try {
-            await api.post(`/alerts/rules/${ruleId}/toggle?enabled=${enabled}`)
-            await loadRules()
-        } catch (err) {
-            console.error('Failed to toggle rule:', err)
-        }
+        alert('Alert rule changes are disabled in Action Registry mode')
     }
 
     async function handleRuleDelete(ruleId) {
-        if (!confirm('Delete this rule?')) return
-        try {
-            await api.delete(`/alerts/rules/${ruleId}`)
-            await loadRules()
-        } catch (err) {
-            console.error('Failed to delete rule:', err)
-        }
+        alert('Alert rule changes are disabled in Action Registry mode')
     }
 
     async function handleCreateRule(form) {
-        try {
-            await api.post('/alerts/rules', form)
-            setShowCreateRule(false)
-            await loadRules()
-        } catch (err) {
-            console.error('Failed to create rule:', err)
-            alert(`Failed to create rule: ${err.message}`)
-        }
+        alert('Alert rule creation is disabled in Action Registry mode')
     }
 
     // Filter alerts

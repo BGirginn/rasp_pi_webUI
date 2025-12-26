@@ -5,13 +5,11 @@ Handles system-level operations like reboot, shutdown, and updates.
 """
 
 from datetime import datetime
-from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from db import get_control_db
-from .auth import require_role, get_current_user
+from .auth import get_current_user
 
 router = APIRouter()
 
@@ -23,14 +21,6 @@ class SystemInfo(BaseModel):
     model: str
     time: str
     uptime_seconds: int
-
-class UpdateStatus(BaseModel):
-    available: bool
-    current_version: str
-    latest_version: str
-    last_check: str
-
-
 
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(user: dict = Depends(get_current_user)):
@@ -84,43 +74,6 @@ async def get_system_info(user: dict = Depends(get_current_user)):
         uptime_seconds=uptime
     )
 
-@router.post("/reboot")
-async def reboot_system(
-    background_tasks: BackgroundTasks,
-    user: dict = Depends(require_role("admin"))
-):
-    """Reboot the system."""
-    db = await get_control_db()
-    
-    # Audit log
-    await db.execute(
-        "INSERT INTO audit_log (user_id, action, details) VALUES (?, ?, ?)",
-        (user["id"], "system.reboot", "System reboot initiated via API")
-    )
-    await db.commit()
-    
-    # Schedule reboot
-    background_tasks.add_task(execute_power_command, "reboot")
-    
-    return {"message": "System is rebooting..."}
-
-@router.post("/shutdown")
-async def shutdown_system(
-    background_tasks: BackgroundTasks,
-    user: dict = Depends(require_role("admin"))
-):
-    """Shutdown the system."""
-    db = await get_control_db()
-    
-    # Audit log
-    await db.run(
-        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (:uid, 'power.shutdown', 'System shutdown initiated', '127.0.0.1')",
-        {"uid": user["id"]}
-    )
-    
-    background_tasks.add_task(execute_power_command, "shutdown now")
-    return {"message": "System is shutting down..."}
-
 @router.get("/processes")
 async def get_processes(user: dict = Depends(get_current_user)):
     """Get top running processes."""
@@ -152,22 +105,3 @@ async def get_processes(user: dict = Depends(get_current_user)):
     procs.sort(key=lambda x: x['memory'], reverse=True)
     
     return procs[:10] # Return top 10
-
-@router.post("/update")
-async def update_system(
-    background_tasks: BackgroundTasks,
-    user: dict = Depends(require_role("admin"))
-):
-    """Trigger system update (git pull)."""
-    # This assumes we are running in the repo and have permissions
-    # Ideally this should trigger a properly defined job
-    
-    db = await get_control_db()
-    
-    await db.execute(
-        "INSERT INTO audit_log (user_id, action, details) VALUES (?, ?, ?)",
-        (user["id"], "system.update", "Update triggered via API")
-    )
-    await db.commit()
-    
-    return {"message": "Update check initiated (feature pending)"}

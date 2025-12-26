@@ -5,25 +5,15 @@ Handles job scheduling, execution, and history.
 """
 
 import json
-import uuid
-from datetime import datetime
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 
 from db import get_control_db
-from services.agent_client import agent_client
-from services.sse import sse_manager, Channels
-from .auth import get_current_user, require_role
+from .auth import get_current_user
 
 router = APIRouter()
-
-
-class JobCreate(BaseModel):
-    name: str
-    type: str  # backup, restore, update, cleanup
-    config: Optional[Dict] = None
 
 
 class JobResponse(BaseModel):
@@ -185,167 +175,6 @@ async def get_job(job_id: str, user: dict = Depends(get_current_user)):
     )
 
 
-@router.post("", response_model=JobResponse)
-async def create_job(
-    job: JobCreate,
-    user: dict = Depends(require_role("admin", "operator"))
-):
-    """Create and queue a new job."""
-    if job.type not in JOB_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unknown job type: {job.type}")
-    
-    db = await get_control_db()
-    
-    job_id = str(uuid.uuid4())[:8]
-    config_json = json.dumps(job.config) if job.config else None
-    now = datetime.utcnow().isoformat()
-    
-    await db.execute(
-        """INSERT INTO jobs (id, name, type, state, config_json, started_by, created_at)
-           VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
-        (job_id, job.name, job.type, config_json, user["id"], now)
-    )
-    
-    # Audit log
-    await db.execute(
-        """INSERT INTO audit_log (user_id, action, details)
-           VALUES (?, ?, ?)""",
-        (user["id"], "job.create", f"job_id: {job_id}, type: {job.type}")
-    )
-    
-    await db.commit()
-    
-    # Try to start job on agent
-    try:
-        await agent_client.run_job(job.type, job.name, job.config)
-        
-        # Update state to running
-        await db.execute(
-            "UPDATE jobs SET state = 'running', started_at = datetime('now') WHERE id = ?",
-            (job_id,)
-        )
-        await db.commit()
-    except Exception as e:
-        pass  # Job will remain pending
-    
-    # Broadcast job creation
-    await sse_manager.broadcast(Channels.JOBS, "job_created", {
-        "job_id": job_id,
-        "type": job.type,
-        "name": job.name
-    })
-    
-    return JobResponse(
-        id=job_id,
-        name=job.name,
-        type=job.type,
-        state="pending",
-        progress=0,
-        config=job.config,
-        result=None,
-        error=None,
-        started_by=user["id"],
-        started_at=None,
-        completed_at=None,
-        created_at=now
-    )
-
-
-@router.post("/{job_id}/run")
-async def run_job(
-    job_id: str,
-    user: dict = Depends(require_role("admin", "operator"))
-):
-    """Start a pending job."""
-    db = await get_control_db()
-    
-    cursor = await db.execute(
-        "SELECT state, type, name, config_json FROM jobs WHERE id = ?",
-        (job_id,)
-    )
-    row = await cursor.fetchone()
-    
-    if not row:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    if row[0] != "pending":
-        raise HTTPException(status_code=400, detail=f"Job is not pending (current: {row[0]})")
-    
-    # Start job on agent
-    config = json.loads(row[3]) if row[3] else {}
-    try:
-        await agent_client.run_job(row[1], row[2], config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start job: {str(e)}")
-    
-    # Update state
-    await db.execute(
-        "UPDATE jobs SET state = 'running', started_at = datetime('now') WHERE id = ?",
-        (job_id,)
-    )
-    
-    # Audit log
-    await db.execute(
-        """INSERT INTO audit_log (user_id, action, details)
-           VALUES (?, ?, ?)""",
-        (user["id"], "job.run", f"job_id: {job_id}")
-    )
-    
-    await db.commit()
-    
-    # Broadcast
-    await sse_manager.broadcast(Channels.JOBS, "job_started", {"job_id": job_id})
-    
-    return {"message": f"Job {job_id} started"}
-
-
-@router.post("/{job_id}/cancel")
-async def cancel_job(
-    job_id: str,
-    user: dict = Depends(require_role("admin"))
-):
-    """Cancel a running job."""
-    db = await get_control_db()
-    
-    cursor = await db.execute(
-        "SELECT state FROM jobs WHERE id = ?",
-        (job_id,)
-    )
-    row = await cursor.fetchone()
-    
-    if not row:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    if row[0] not in ("pending", "running"):
-        raise HTTPException(status_code=400, detail=f"Cannot cancel job in state: {row[0]}")
-    
-    # Cancel on agent
-    try:
-        await agent_client.cancel_job(job_id)
-    except Exception:
-        pass  # Agent may not be available
-    
-    # Update state
-    await db.execute(
-        "UPDATE jobs SET state = 'cancelled', completed_at = datetime('now') WHERE id = ?",
-        (job_id,)
-    )
-    
-    # Audit log
-    await db.execute(
-        """INSERT INTO audit_log (user_id, action, details)
-           VALUES (?, ?, ?)""",
-        (user["id"], "job.cancel", f"job_id: {job_id}")
-    )
-    
-    await db.commit()
-    
-    # Broadcast
-    await sse_manager.broadcast(Channels.JOBS, "job_cancelled", {"job_id": job_id})
-    
-    return {"message": f"Job {job_id} cancelled"}
-
-
 @router.get("/{job_id}/logs", response_model=List[JobLogEntry])
 async def get_job_logs(
     job_id: str,
@@ -365,39 +194,3 @@ async def get_job_logs(
         JobLogEntry(level=row[0], message=row[1], created_at=row[2])
         for row in rows
     ]
-
-
-@router.delete("/{job_id}")
-async def delete_job(
-    job_id: str,
-    user: dict = Depends(require_role("admin"))
-):
-    """Delete a completed/cancelled job."""
-    db = await get_control_db()
-    
-    cursor = await db.execute(
-        "SELECT state FROM jobs WHERE id = ?",
-        (job_id,)
-    )
-    row = await cursor.fetchone()
-    
-    if not row:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    if row[0] in ("pending", "running"):
-        raise HTTPException(status_code=400, detail="Cannot delete active job")
-    
-    # Delete job logs first
-    await db.execute("DELETE FROM job_logs WHERE job_id = ?", (job_id,))
-    await db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-    
-    # Audit log
-    await db.execute(
-        """INSERT INTO audit_log (user_id, action, details)
-           VALUES (?, ?, ?)""",
-        (user["id"], "job.delete", f"job_id: {job_id}")
-    )
-    
-    await db.commit()
-    
-    return {"message": f"Job {job_id} deleted"}

@@ -33,8 +33,9 @@ function ServiceCard({ resource, onAction }) {
     // CORE = view only, SYSTEM = restart only, APP = full control
     const isCore = resource.resource_class === 'CORE'
     const isSystem = resource.resource_class === 'SYSTEM'
+    const isDocker = resource.provider === 'docker'
     const canRestart = isOperator && !isCore
-    const canStart = isOperator && !isCore
+    const canStart = isOperator && !isCore && !isDocker
     const canStop = isOperator && resource.resource_class === 'APP'
 
     return (
@@ -129,9 +130,11 @@ export default function Services() {
     const [error, setError] = useState(null)
     const [filter, setFilter] = useState('all')
     const [search, setSearch] = useState('')
+    const [actionsMap, setActionsMap] = useState({})
 
     useEffect(() => {
         loadResources()
+        loadActions()
     }, [])
 
     async function loadResources() {
@@ -149,13 +152,72 @@ export default function Services() {
 
     async function handleAction(resourceId, action) {
         try {
-            await api.post(`/resources/${resourceId}/action`, { action })
+            const resource = resources.find((item) => item.id === resourceId)
+            if (!resource) throw new Error('Resource not found')
+
+            const actionId = mapResourceAction(resource, action)
+            if (!actionId) {
+                alert('Action not available in Action Registry')
+                return
+            }
+
+            const actionMeta = actionsMap[actionId]
+            const needsConfirm = actionMeta?.requires_confirmation
+            const confirmed = needsConfirm ? window.confirm('Confirm this action?') : false
+
+            const params = buildActionParams(resource, actionId)
+            await api.post('/actions/execute', {
+                action_id: actionId,
+                params,
+                confirm: confirmed,
+            })
             // Reload after action
             await loadResources()
         } catch (err) {
             console.error('Action failed:', err)
             alert(`Action failed: ${err.message}`)
         }
+    }
+
+    async function loadActions() {
+        try {
+            const response = await api.get('/actions')
+            const map = {}
+            response.data.forEach((action) => {
+                map[action.id] = action
+            })
+            setActionsMap(map)
+        } catch (err) {
+            console.error('Failed to load actions:', err)
+        }
+    }
+
+    function normalizeServiceName(resource) {
+        if (resource.id?.endsWith('.service')) return resource.id.replace('.service', '')
+        if (resource.id?.startsWith('systemd-')) return resource.id.replace('systemd-', '')
+        return resource.name
+    }
+
+    function mapResourceAction(resource, action) {
+        if (resource.provider === 'systemd') {
+            return `svc.${action}`
+        }
+        if (resource.provider === 'docker') {
+            if (action === 'restart') return 'docker.restart_container'
+            if (action === 'stop') return 'docker.stop_container'
+            if (action === 'list') return 'docker.list'
+        }
+        return null
+    }
+
+    function buildActionParams(resource, actionId) {
+        if (actionId.startsWith('svc.')) {
+            return { service: normalizeServiceName(resource) }
+        }
+        if (actionId.startsWith('docker.')) {
+            return { container_id: resource.id }
+        }
+        return {}
     }
 
     // Filter resources

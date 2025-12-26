@@ -1,0 +1,357 @@
+version: 1
+targets:
+  resource_actions:
+  - start
+  - stop
+  - restart
+  - enable
+  - disable
+  - update
+  - backup
+  - restore
+  - command
+  - mute
+  - update_firmware
+  - logs
+  - stats
+  services_allowlist:
+  - ssh
+  - tailscaled
+  - docker
+  - mosquitto
+  - pi-agent
+  - caddy
+  - panel-api
+  network_profiles:
+  - primary
+  storage_mount_points:
+  - /mnt/external
+actions:
+- id: discovery.snapshot
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: discovery.refresh
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: resource.action
+  risk: med
+  confirm_required: false
+  params_schema:
+    resource_id:
+      type: string
+      minLength: 1
+    action:
+      type: string
+      allowlist_ref: resource_actions
+    params:
+      type: object
+      optional: true
+- id: resource.logs
+  risk: low
+  confirm_required: false
+  params_schema:
+    resource_id:
+      type: string
+      minLength: 1
+    tail:
+      type: integer
+      optional: true
+      minimum: 1
+      maximum: 10000
+      default: 100
+- id: resource.stats
+  risk: low
+  confirm_required: false
+  params_schema:
+    resource_id:
+      type: string
+      minLength: 1
+- id: telemetry.current
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: telemetry.query
+  risk: low
+  confirm_required: false
+  params_schema:
+    metric:
+      type: string
+      minLength: 1
+    start:
+      type: integer
+      minimum: 0
+    end:
+      type: integer
+      minimum: 0
+- id: job.run
+  risk: med
+  confirm_required: false
+  params_schema:
+    job_type:
+      type: string
+      minLength: 1
+    name:
+      type: string
+      minLength: 1
+    config:
+      type: object
+      optional: true
+- id: job.status
+  risk: low
+  confirm_required: false
+  params_schema:
+    job_id:
+      type: string
+      minLength: 1
+- id: job.cancel
+  risk: med
+  confirm_required: false
+  params_schema:
+    job_id:
+      type: string
+      minLength: 1
+- id: system.info
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: system.health
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: network.interfaces
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: network.wifi.toggle
+  risk: med
+  confirm_required: false
+  params_schema:
+    enable:
+      type: boolean
+- id: network.wifi.scan
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: devices.list
+  risk: low
+  confirm_required: false
+  params_schema: {}
+- id: devices.command
+  risk: med
+  confirm_required: false
+  params_schema:
+    device_id:
+      type: string
+      minLength: 1
+    command:
+      type: string
+      minLength: 1
+    payload:
+      type: object
+      optional: true
+- id: obs.get_system_status
+  confirm_required: false
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: obs.get_metrics_snapshot
+  confirm_required: false
+  params_schema:
+    include:
+      type: array
+      items:
+        type: string
+      default:
+      - cpu
+      - mem
+      - disk
+      - net
+      - temp
+  disabled: true
+  source: panel-registry
+- id: obs.get_logs
+  confirm_required: false
+  params_schema:
+    source:
+      type: string
+      enum:
+      - system
+      - service
+      - panel
+      - agent
+    service:
+      type: string
+      nullable: true
+    limit:
+      type: integer
+      minimum: 50
+      maximum: 2000
+      default: 400
+  disabled: true
+  source: panel-registry
+- id: power.reboot_safe
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: power.shutdown_safe
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: svc.restart
+  confirm_required: false
+  params_schema:
+    service:
+      type: string
+      allowlist_ref: services_allowlist
+  disabled: true
+  source: panel-registry
+- id: svc.start
+  confirm_required: false
+  params_schema:
+    service:
+      type: string
+      allowlist_ref: services_allowlist
+  disabled: true
+  source: panel-registry
+- id: svc.stop
+  confirm_required: true
+  params_schema:
+    service:
+      type: string
+      allowlist_ref: services_allowlist
+  disabled: true
+  source: panel-registry
+- id: svc.enable
+  confirm_required: true
+  params_schema:
+    service:
+      type: string
+      allowlist_ref: services_allowlist
+  disabled: true
+  source: panel-registry
+- id: svc.disable
+  confirm_required: true
+  params_schema:
+    service:
+      type: string
+      allowlist_ref: services_allowlist
+  disabled: true
+  source: panel-registry
+- id: net.toggle_wifi
+  confirm_required: true
+  params_schema:
+    enabled:
+      type: boolean
+  disabled: true
+  source: panel-registry
+- id: net.reset_safe
+  confirm_required: true
+  params_schema:
+    profile:
+      type: string
+      enum:
+      - primary
+  disabled: true
+  source: panel-registry
+- id: net.tailscale.enable
+  confirm_required: false
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: net.tailscale.disable
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: docker.list
+  confirm_required: false
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: docker.restart_container
+  confirm_required: false
+  params_schema:
+    container_id:
+      type: string
+  disabled: true
+  source: panel-registry
+- id: docker.stop_container
+  confirm_required: true
+  params_schema:
+    container_id:
+      type: string
+  disabled: true
+  source: panel-registry
+- id: storage.mount_external
+  confirm_required: true
+  params_schema:
+    mount_point:
+      type: string
+      allowlist_ref: storage_mount_points
+    device_hint:
+      type: string
+  disabled: true
+  source: panel-registry
+- id: storage.unmount_external
+  confirm_required: true
+  params_schema:
+    mount_point:
+      type: string
+      allowlist_ref: storage_mount_points
+  disabled: true
+  source: panel-registry
+- id: auth.create_user
+  confirm_required: true
+  params_schema:
+    username:
+      type: string
+      minLength: 3
+      maxLength: 32
+    role:
+      type: string
+      enum:
+      - viewer
+      - operator
+      - admin
+    temporary_password:
+      type: string
+      minLength: 12
+      maxLength: 128
+  disabled: true
+  source: panel-registry
+- id: auth.rotate_jwt_secret
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: update.check
+  confirm_required: false
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: update.apply
+  confirm_required: true
+  params_schema:
+    channel:
+      type: string
+      enum:
+      - stable
+    backup_before:
+      type: boolean
+      default: true
+  disabled: true
+  source: panel-registry
+- id: emergency.rollback_last_network_change
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry
+- id: emergency.safe_mode_enable
+  confirm_required: true
+  params_schema: {}
+  disabled: true
+  source: panel-registry

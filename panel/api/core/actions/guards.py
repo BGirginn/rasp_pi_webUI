@@ -34,6 +34,21 @@ def requires_confirmation(registry: dict, action_id: str) -> bool:
     return True
 
 
+def check_confirmation(registry: dict, action_id: str, confirm: bool) -> None:
+    """
+    Enforce confirmation requirement for an action.
+    Raises 400 if confirmation is required but not provided.
+    """
+    if requires_confirmation(registry, action_id) and not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "CONFIRMATION_REQUIRED",
+                "message": f"Action '{action_id}' requires user confirmation. Set 'confirm' to true."
+            }
+        )
+
+
 async def check_cooldown(db, user_id: int, action_id: str, cooldown_seconds: int) -> None:
     """
     Check if action is within cooldown period based on recent audit log.
