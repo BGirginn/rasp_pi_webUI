@@ -30,21 +30,24 @@ Phase‑1 is **Tailscale‑first** and **not internet‑facing**.
 
 Take a look at the modern, beautiful interface:
 
-````carousel
-![Dashboard Overview - Real-time system monitoring with CPU, memory, and temperature metrics](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.47.58.png)
-<!-- slide -->
-![Service Management - Control systemd services with one click](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.30.png)
-<!-- slide -->
-![Device Discovery - View USB, serial, and IoT devices](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.41.png)
-<!-- slide -->
-![Network Monitoring - Manage network interfaces and connections](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.52.png)
-<!-- slide -->
-![Alert Configuration - Set up custom alert rules and notifications](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.05.png)
-<!-- slide -->
-![Telemetry Analytics - Historical charts and system insights](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.14.png)
-<!-- slide -->
-![Terminal Access - Full browser-based shell interface](./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.24.png)
-````
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.47.58.png" alt="Dashboard Overview" width="45%">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.30.png" alt="Service Management" width="45%">
+</p>
+
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.41.png" alt="Device Discovery" width="45%">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.48.52.png" alt="Network Monitoring" width="45%">
+</p>
+
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.05.png" alt="Alert Configuration" width="45%">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.14.png" alt="Telemetry Analytics" width="45%">
+</p>
+
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202025-12-26%20at%2010.49.24.png" alt="Terminal Access" width="45%">
+</p>
 
 ---
 
