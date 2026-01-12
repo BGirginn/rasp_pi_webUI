@@ -18,6 +18,7 @@ export default function Terminal() {
         // Initialize xterm.js
         const term = new XTerm({
             cursorBlink: true,
+            cursorStyle: 'bar',
             fontSize: 14,
             fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
             theme: {
