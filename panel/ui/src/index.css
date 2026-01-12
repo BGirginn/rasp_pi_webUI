@@ -114,3 +114,17 @@
 .animate-spin-slow {
   animation: spin-slow 8s linear infinite;
 }
+
+/* Hide xterm.js scrollbar */
+.xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+.xterm-viewport {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* Terminal cursor style */
+.xterm-cursor-layer {
+  cursor: text !important;
+}

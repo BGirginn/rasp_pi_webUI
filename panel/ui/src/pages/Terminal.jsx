@@ -18,8 +18,10 @@ export default function Terminal() {
         // Initialize xterm.js
         const term = new XTerm({
             cursorBlink: true,
+            cursorStyle: 'bar',
             fontSize: 14,
             fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
+            scrollback: 1000,
             theme: {
                 background: '#0d1117',
                 foreground: '#c9d1d9',
@@ -200,8 +202,8 @@ export default function Terminal() {
                 <div className="flex items-center gap-3">
                     <h2 className="text-2xl font-bold text-gray-100">Terminal</h2>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${connected
-                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                            : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                        : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
                         }`}>
                         {connected ? '● Connected' : '○ Disconnected'}
                     </span>
@@ -212,16 +214,31 @@ export default function Terminal() {
                         <button
                             onClick={connect}
                             disabled={connecting}
-                            className="btn btn-primary"
+                            className="px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/50 text-green-400 hover:bg-green-500/30 transition-all flex items-center gap-2 disabled:opacity-50"
                         >
-                            {connecting ? '⏳ Connecting...' : '🔌 Connect'}
+                            {connecting ? (
+                                <>
+                                    <span className="w-4 h-4 border-2 border-green-400/30 border-t-green-400 rounded-full animate-spin"></span>
+                                    Connecting...
+                                </>
+                            ) : (
+                                <>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                    Connect
+                                </>
+                            )}
                         </button>
                     ) : (
                         <button
                             onClick={disconnect}
-                            className="btn btn-danger"
+                            className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-all flex items-center gap-2"
                         >
-                            ✕ Disconnect
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Disconnect
                         </button>
                     )}
                 </div>
@@ -235,11 +252,11 @@ export default function Terminal() {
             )}
 
             {/* Terminal container */}
-            <div className="flex-1 glass-card rounded-xl overflow-hidden">
+            <div className="flex-1 rounded-xl overflow-hidden bg-[#0d1117] border border-white/10">
                 <div
                     ref={terminalRef}
-                    className="h-full p-2"
-                    style={{ minHeight: '400px' }}
+                    className="h-full p-3 cursor-text"
+                    style={{ minHeight: '500px' }}
                 />
             </div>
 
