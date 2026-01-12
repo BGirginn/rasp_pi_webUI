@@ -1,0 +1,57 @@
+[Unit]
+Description=Pi Control Panel API
+Documentation=https://github.com/BGirginn/rasp_pi_webUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# User and group are set dynamically by install.sh
+# Placeholders are replaced during installation
+User=fou4
+Group=fou4
+WorkingDirectory=/opt/pi-control/panel/api
+
+# Environment Variables
+Environment=PYTHONPATH=/opt/pi-control/panel/api
+Environment=DATABASE_PATH=/var/lib/pi-control/control.db
+Environment=TELEMETRY_DB_PATH=/var/lib/pi-control/telemetry.db
+Environment=AGENT_SOCKET=/run/pi-control/agent.sock
+Environment=JWT_SECRET_FILE=/etc/pi-control/jwt_secret
+Environment=API_DEBUG=false
+Environment=PYTHONUNBUFFERED=1
+
+# Start command
+ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+
+# Restart policy - always restart on failure
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=15
+
+# Exit code handling
+SuccessExitStatus=143
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-control
+
+# Security hardening
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/pi-control /opt/pi-control /run/pi-control
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Resource limits (prevent runaway processes)
+MemoryMax=512M
+CPUQuota=80%
+
+# Runtime directory for sockets
+RuntimeDirectory=pi-control
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
