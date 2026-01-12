@@ -7,7 +7,13 @@
         reverse_proxy 127.0.0.1:8080
     }
     
-    # Server-Sent Events for live updates
+    # Server-Sent Events for live updates (including SSE endpoints)
+    handle /api/sse/* {
+        reverse_proxy 127.0.0.1:8080 {
+            flush_interval -1
+        }
+    }
+    
     handle /api/*/stream {
         reverse_proxy 127.0.0.1:8080 {
             flush_interval -1
