@@ -23,10 +23,24 @@ export function initLuxuryNetwork(opts) {
     let particles = [];
     let animationId = null;
     let isRunning = false;
+    let mouse = { x: null, y: null, radius: 250 };
 
     function resize() {
         canvas.width = canvas.offsetWidth;
         canvas.height = canvas.offsetHeight;
+    }
+
+    function handleMouseMove(e) {
+        if (!opts.motion?.pointer) return;
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = e.clientX - rect.left;
+        mouse.y = e.clientY - rect.top;
+    }
+
+    function handleMouseLeave() {
+        if (!opts.motion?.pointer) return;
+        mouse.x = null;
+        mouse.y = null;
     }
 
     function init() {
@@ -47,7 +61,7 @@ export function initLuxuryNetwork(opts) {
         if (match && match.length >= 3) {
             return { r: parseInt(match[0]), g: parseInt(match[1]), b: parseInt(match[2]) };
         }
-        return { r: 250, g: 204, b: 21 };
+        return { r: 250, g: 204, b: 21 }; // Default Gold
     }
 
     function animate() {
@@ -56,6 +70,7 @@ export function initLuxuryNetwork(opts) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const color = parseColor(particleColor);
+        const rgb = `${color.r}, ${color.g}, ${color.b}`;
 
         // Update and draw particles (simple style)
         particles.forEach(particle => {
@@ -69,24 +84,38 @@ export function initLuxuryNetwork(opts) {
             // Draw simple particle
             ctx.beginPath();
             ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.8)`;
+            ctx.fillStyle = `rgba(${rgb}, 0.8)`;
             ctx.fill();
         });
 
         // Draw connections with thick lines
-        for (let i = 0; i < particles.length; i++) {
-            for (let j = i + 1; j < particles.length; j++) {
-                const dx = particles[i].x - particles[j].x;
-                const dy = particles[i].y - particles[j].y;
+        // Also connect to mouse
+        const allParticles = [...particles];
+        if (mouse.x != null) {
+            allParticles.push({ x: mouse.x, y: mouse.y, radius: 0, isMouse: true });
+        }
+
+        for (let i = 0; i < allParticles.length; i++) {
+            // Optimization: Only check connections for actual particles against others
+            // For mouse (last item), we check against all previous
+            const p1 = allParticles[i];
+
+            for (let j = i + 1; j < allParticles.length; j++) {
+                const p2 = allParticles[j];
+                const dx = p1.x - p2.x;
+                const dy = p1.y - p2.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
-                if (distance < connectionDistance) {
-                    const opacity = (1 - distance / connectionDistance) * 0.6;
+                // Mouse interaction distance or regular connection distance
+                const maxDist = (p1.isMouse || p2.isMouse) ? mouse.radius : connectionDistance;
+
+                if (distance < maxDist) {
+                    const opacity = (1 - distance / maxDist) * 0.6;
                     ctx.beginPath();
-                    ctx.moveTo(particles[i].x, particles[i].y);
-                    ctx.lineTo(particles[j].x, particles[j].y);
-                    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
-                    ctx.lineWidth = 2;
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.strokeStyle = `rgba(${rgb}, ${opacity})`;
+                    ctx.lineWidth = 2; // Keep thick lines
                     ctx.stroke();
                 }
             }
@@ -98,6 +127,13 @@ export function initLuxuryNetwork(opts) {
     function start() {
         if (isRunning) return;
         isRunning = true;
+
+        window.addEventListener('resize', debouncedResize);
+        if (opts.motion?.pointer) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseleave', handleMouseLeave);
+        }
+
         resize();
         init();
         animate();
@@ -109,6 +145,9 @@ export function initLuxuryNetwork(opts) {
             cancelAnimationFrame(animationId);
             animationId = null;
         }
+        window.removeEventListener('resize', debouncedResize);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseleave', handleMouseLeave);
     }
 
     const debouncedResize = debounce(() => {
@@ -116,11 +155,7 @@ export function initLuxuryNetwork(opts) {
         init();
     }, 200);
 
-    window.addEventListener('resize', debouncedResize);
-
-    resize();
-    init();
-
+    // Initial setup handled by start() to ensure listeners are clean
     return { start, stop, resize: debouncedResize };
 }
 
