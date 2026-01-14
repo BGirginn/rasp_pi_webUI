@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, Cpu, Thermometer, HardDrive, Clock, Layers } from 'lucide-react';
+import { Activity, Thermometer, HardDrive, Layers } from 'lucide-react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { useTheme, getThemeColors } from '../../contexts/ThemeContext';
 import { useDashboard } from '../../contexts/DashboardContext';
@@ -143,15 +143,15 @@ export function PerformanceWidget({ variant, width, height }) {
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <span className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>CPU Load</span>
-            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats.cpu}%</span>
+            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats?.cpu || 0}%</span>
           </div>
           <div className="flex justify-between items-center">
             <span className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Memory</span>
-            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats.memory}%</span>
+            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats?.memory || 0}%</span>
           </div>
           <div className="flex justify-between items-center">
             <span className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Temp</span>
-            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats.temp}°C</span>
+            <span className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{stats?.temp || 0}°C</span>
           </div>
         </div>
       </div>
@@ -300,9 +300,9 @@ export function PerformanceWidget({ variant, width, height }) {
         <div>
           <p className="text-xs text-gray-500">Current Status</p>
           <div className="flex gap-4">
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>CPU: {stats.cpu}%</span>
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>RAM: {stats.memory}%</span>
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>Temp: {stats.temp}°C</span>
+            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>CPU: {stats?.cpu || 0}%</span>
+            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>RAM: {stats?.memory || 0}%</span>
+            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>Temp: {stats?.temp || 0}°C</span>
           </div>
         </div>
       </div>
