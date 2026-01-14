@@ -3,12 +3,14 @@ import { LayoutDashboard, Settings, Server, Wifi, Terminal, Bell, Activity, Moni
 import { useState } from 'react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
 
 export function Sidebar() {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const { theme, isDarkMode } = useTheme();
   const { currentPage, setCurrentPage } = useNavigation();
+  const { user, isAdmin } = useAuth();
   const themeColors = getThemeColors(theme);
 
   const menuItems = [
@@ -17,7 +19,7 @@ export function Sidebar() {
     { icon: Monitor, label: 'Devices', active: currentPage === 'devices', page: 'devices' },
     { icon: Activity, label: 'Telemetry', active: currentPage === 'telemetry', page: 'telemetry' },
     { icon: Wifi, label: 'Network', active: currentPage === 'network', page: 'network' },
-    { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal' },
+    { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal', restricted: true },
     { icon: Bell, label: 'Alerts', active: currentPage === 'alerts', page: 'alerts' },
   ];
   const adminItems = [
@@ -50,7 +52,7 @@ export function Sidebar() {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-600'} mb-4`}>
           MAIN
         </motion.div>
-        {menuItems.map((item, index) => (<motion.button key={item.label} initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.4 + index * 0.05 }} onClick={() => setCurrentPage(item.page)} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${item.active
+        {menuItems.filter(item => !item.restricted || isAdmin).map((item, index) => (<motion.button key={item.label} initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.4 + index * 0.05 }} onClick={() => setCurrentPage(item.page)} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${item.active
           ? isDarkMode ? 'bg-white/10' : 'bg-purple-50'
           : isDarkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'}`}>
           {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border border-${themeColors.accent}/50`} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
@@ -122,7 +124,7 @@ export function Sidebar() {
           <span className="relative z-10 text-white">A</span>
         </div>
         <div className="flex-1">
-          <div className={`text-sm ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>admin</div>
+          <div className={`text-sm ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{user?.username || 'admin'}</div>
           <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'group-hover:text-red-500 text-gray-600 transition-colors'}`}>
             <span className="group-hover:hidden">online</span>
             <span className="hidden group-hover:inline">Log Out</span>

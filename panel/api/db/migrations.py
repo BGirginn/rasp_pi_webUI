@@ -40,6 +40,7 @@ async def run_migrations(db_path: str):
             ("002_default_admin", migrate_002_default_admin),
             ("003_ignored_resources", migrate_003_ignored_resources),
             ("004_alert_history", migrate_004_alert_history),
+            ("005_standard_user", migrate_005_standard_user),
         ]
         
         # Apply pending migrations
@@ -279,6 +280,26 @@ async def migrate_004_alert_history(db):
     
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_created ON alert_history(created_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_rule ON alert_history(rule_id)")
+
+
+async def migrate_005_standard_user(db):
+    """Create default standard user if none exists."""
+    cursor = await db.execute("SELECT COUNT(*) FROM users WHERE username = 'user'")
+    count = (await cursor.fetchone())[0]
+    
+    if count == 0:
+        # Default standard user
+        default_password = "user123"
+        password_hash = hash_password(default_password)
+        
+        await db.execute(
+            """INSERT INTO users (username, password_hash, role)
+               VALUES (?, ?, ?)""",
+            ("user", password_hash, "viewer")
+        )
+        
+        print(f"  Created default standard user: user")
+        print(f"  Role: viewer")
 
 
 if __name__ == "__main__":

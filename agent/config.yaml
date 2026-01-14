@@ -36,7 +36,7 @@ telemetry:
   interval: 2
   
   # Database path
-  db_path: "/data/telemetry.db"
+  db_path: "/var/lib/pi-control/telemetry.db"
   
   # Batch size for writes
   batch_size: 500
@@ -79,7 +79,7 @@ jobs:
   default_timeout: 600
   
   # State persistence
-  db_path: "/data/control.db"
+  db_path: "/var/lib/pi-control/control.db"
 
 # ===========================================
 # MQTT Bridge

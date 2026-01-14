@@ -323,88 +323,90 @@ export function DevicesPage() {
       )}
 
       {/* GPIO Pins Section */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className={`mt-12 group overflow-hidden relative ${isDarkMode ? 'bg-gradient-to-br from-purple-900/40 to-black/40' : 'bg-gradient-to-br from-purple-50 to-white'} backdrop-blur-xl rounded-3xl p-8 border ${isDarkMode ? 'border-white/10' : 'border-purple-100 shadow-xl'}`}
-      >
-        <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 blur-[100px] rounded-full -mr-32 -mt-32 " />
-        <div className="relative z-10">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4 text-purple-500">
-              <div className="p-3 bg-purple-500/10 rounded-2xl">
-                <Zap size={32} />
+      {isOperator && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className={`mt-12 group overflow-hidden relative ${isDarkMode ? 'bg-gradient-to-br from-purple-900/40 to-black/40' : 'bg-gradient-to-br from-purple-50 to-white'} backdrop-blur-xl rounded-3xl p-8 border ${isDarkMode ? 'border-white/10' : 'border-purple-100 shadow-xl'}`}
+        >
+          <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 blur-[100px] rounded-full -mr-32 -mt-32 " />
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4 text-purple-500">
+                <div className="p-3 bg-purple-500/10 rounded-2xl">
+                  <Zap size={32} />
+                </div>
+                <h3 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                  GPIO Pin Management
+                </h3>
               </div>
-              <h3 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                GPIO Pin Management
-              </h3>
+              {showGpio && (
+                <button onClick={loadGpio} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                  <RefreshCw size={20} className={gpioLoading ? 'animate-spin' : ''} />
+                </button>
+              )}
             </div>
-            {showGpio && (
-              <button onClick={loadGpio} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                <RefreshCw size={20} className={gpioLoading ? 'animate-spin' : ''} />
-              </button>
+
+            {!showGpio ? (
+              <>
+                <p className={`max-w-2xl mb-8 text-lg ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Directly control and monitor the physical General Purpose Input/Output pins on your Raspberry Pi.
+                  Configure modes, read states, and toggle outputs in real-time.
+                </p>
+                <div className="flex flex-wrap gap-4">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setShowGpio(true)}
+                    className="px-8 py-3 bg-purple-600 text-white rounded-xl font-bold shadow-lg shadow-purple-500/20 transition-all"
+                  >
+                    Open GPIO Manager
+                  </motion.button>
+                </div>
+              </>
+            ) : (
+              <div className="animate-fade-in">
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+                  {gpioPins.length > 0 ? (
+                    gpioPins.map((pin) => (
+                      <motion.div
+                        key={pin.pin}
+                        whileHover={{ scale: 1.02 }}
+                        className={`p-3 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'} flex flex-col items-center gap-2`}
+                      >
+                        <span className="text-[10px] font-bold text-gray-500 uppercase">GPIO {pin.pin}</span>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${pin.value === 1 ? 'bg-green-500 text-black' : 'bg-gray-700 text-white'}`}>
+                          {pin.value}
+                        </div>
+                        <div className="text-[10px] text-gray-400 capitalize">{pin.mode}</div>
+                        {pin.mode === 'output' && (
+                          <button
+                            onClick={() => toggleGpio(pin.pin, pin.value)}
+                            className={`mt-1 p-1 px-3 rounded-md text-[10px] font-bold uppercase transition-all ${pin.value === 1 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}
+                          >
+                            {pin.value === 1 ? 'OFF' : 'ON'}
+                          </button>
+                        )}
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="col-span-full py-8 text-center text-gray-500 italic">
+                      No GPIO pins available or tool missing on host.
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowGpio(false)}
+                  className="mt-8 text-sm text-purple-400 hover:underline flex items-center gap-1"
+                >
+                  ← Close Manager
+                </button>
+              </div>
             )}
           </div>
-
-          {!showGpio ? (
-            <>
-              <p className={`max-w-2xl mb-8 text-lg ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Directly control and monitor the physical General Purpose Input/Output pins on your Raspberry Pi.
-                Configure modes, read states, and toggle outputs in real-time.
-              </p>
-              <div className="flex flex-wrap gap-4">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowGpio(true)}
-                  className="px-8 py-3 bg-purple-600 text-white rounded-xl font-bold shadow-lg shadow-purple-500/20 transition-all"
-                >
-                  Open GPIO Manager
-                </motion.button>
-              </div>
-            </>
-          ) : (
-            <div className="animate-fade-in">
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
-                {gpioPins.length > 0 ? (
-                  gpioPins.map((pin) => (
-                    <motion.div
-                      key={pin.pin}
-                      whileHover={{ scale: 1.02 }}
-                      className={`p-3 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'} flex flex-col items-center gap-2`}
-                    >
-                      <span className="text-[10px] font-bold text-gray-500 uppercase">GPIO {pin.pin}</span>
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${pin.value === 1 ? 'bg-green-500 text-black' : 'bg-gray-700 text-white'}`}>
-                        {pin.value}
-                      </div>
-                      <div className="text-[10px] text-gray-400 capitalize">{pin.mode}</div>
-                      {pin.mode === 'output' && (
-                        <button
-                          onClick={() => toggleGpio(pin.pin, pin.value)}
-                          className={`mt-1 p-1 px-3 rounded-md text-[10px] font-bold uppercase transition-all ${pin.value === 1 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}
-                        >
-                          {pin.value === 1 ? 'OFF' : 'ON'}
-                        </button>
-                      )}
-                    </motion.div>
-                  ))
-                ) : (
-                  <div className="col-span-full py-8 text-center text-gray-500 italic">
-                    No GPIO pins available or tool missing on host.
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => setShowGpio(false)}
-                className="mt-8 text-sm text-purple-400 hover:underline flex items-center gap-1"
-              >
-                ← Close Manager
-              </button>
-            </div>
-          )}
-        </div>
-      </motion.div>
+        </motion.div>
+      )}
     </div>
   );
 }

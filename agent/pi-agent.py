@@ -87,7 +87,7 @@ class PiAgent:
             "agent": {"name": "pi-agent", "version": "1.0.0"},
             "socket": {"path": "/run/pi-agent/agent.sock", "permissions": "0660"},
             "discovery": {"interval": 30, "providers": ["docker", "systemd"]},
-            "telemetry": {"interval": 2, "db_path": "/data/telemetry.db"},
+            "telemetry": {"interval": 2, "db_path": "/var/lib/pi-control/telemetry.db"},
             "health": {"interval": 10},
             "jobs": {"max_concurrent": 2, "default_timeout": 600},
             "mqtt": {"enabled": False},

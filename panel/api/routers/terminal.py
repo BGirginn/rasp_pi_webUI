@@ -17,8 +17,10 @@ import time
 from typing import Optional, List, Dict
 from collections import deque
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel
+
+from .auth import _validate_token, require_role
 
 router = APIRouter()
 
@@ -239,6 +241,18 @@ async def terminal_websocket(websocket: WebSocket):
             await websocket.send_json({"error": "No token provided"})
             await websocket.close()
             return
+        
+        # Verify token and role
+        try:
+            user_info = await _validate_token(token)
+            if user_info["role"] != "admin":
+                await websocket.send_json({"error": "Unauthorized: Admin role required"})
+                await websocket.close()
+                return
+        except Exception as e:
+            await websocket.send_json({"error": str(e)})
+            await websocket.close()
+            return
             
         # Get terminal size
         cols = auth_data.get("cols", 80)
@@ -329,7 +343,10 @@ class CommandResponse(BaseModel):
 
 
 @router.post("/exec", response_model=CommandResponse)
-async def execute_command(request: CommandRequest):
+async def execute_command(
+    request: CommandRequest,
+    user: dict = Depends(require_role("admin"))
+):
     """Execute a simple command and return output (for mobile app)."""
     import subprocess
     
