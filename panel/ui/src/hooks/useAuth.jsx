@@ -42,15 +42,25 @@ export function AuthProvider({ children }) {
 
     async function login(username, password, totpCode = null) {
         setError(null)
+        // Note: We do NOT set global loading here to keep Login component mounted
+
         try {
             const payload = { username, password }
             if (totpCode) {
                 payload.totp_code = totpCode
             }
 
+            // 1. Authenticate immediately
             const response = await api.post('/auth/login', payload)
 
+            // 2. Set token immediately (so subsequent requests work)
             localStorage.setItem('access_token', response.data.access_token)
+
+            // 3. Wait for animation (0.5s) BEFORE updating user state
+            // This prevents PublicRoute from redirecting before animation finishes
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 4. Update user state (Triggers redirect)
             setUser(response.data.user)
 
             return response.data
@@ -62,6 +72,10 @@ export function AuthProvider({ children }) {
     }
 
     async function logout() {
+        setLoading(true)
+        // Ensure loader is visible for at least 0.5 seconds
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         try {
             await api.post('/auth/logout')
         } catch (err) {
@@ -69,6 +83,7 @@ export function AuthProvider({ children }) {
         } finally {
             localStorage.removeItem('access_token')
             setUser(null)
+            setLoading(false)
         }
     }
 

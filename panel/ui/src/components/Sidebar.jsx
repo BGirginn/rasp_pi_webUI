@@ -10,7 +10,7 @@ export function Sidebar() {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const { theme, isDarkMode } = useTheme();
   const { currentPage, setCurrentPage } = useNavigation();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
   const themeColors = getThemeColors(theme);
 
   const menuItems = [
@@ -95,12 +95,7 @@ export function Sidebar() {
         </motion.button>))}
 
         {/* Logout Button */}
-        <motion.button initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.7 + adminItems.length * 0.05 }} onClick={() => {
-          fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
-            localStorage.removeItem('access_token');
-            window.location.href = '/login';
-          });
-        }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${isDarkMode ? 'hover:bg-red-500/10' : 'hover:bg-red-50'}`}>
+        <motion.button initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.7 + adminItems.length * 0.05 }} onClick={logout} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${isDarkMode ? 'hover:bg-red-500/10' : 'hover:bg-red-50'}`}>
           <motion.div whileHover={{ scale: 1.1 }} transition={{ duration: 0.2 }} className={`relative z-10 ${isDarkMode ? 'text-gray-400 group-hover:text-red-400' : 'text-gray-600 group-hover:text-red-600'}`}>
             <LogOut size={20} />
           </motion.div>
@@ -113,12 +108,7 @@ export function Sidebar() {
 
     {/* Admin Profile (Static relative positioning) */}
     <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8 }} className="mt-auto pt-4 border-t border-gray-200/10">
-      <div onClick={() => {
-        fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
-          localStorage.removeItem('access_token');
-          window.location.href = '/login';
-        });
-      }} className={`flex items-center gap-3 p-3 rounded-lg ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-100 border-gray-300'} border hover:border-red-500/50 transition-all cursor-pointer group`}>
+      <div onClick={logout} className={`flex items-center gap-3 p-3 rounded-lg ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-100 border-gray-300'} border hover:border-red-500/50 transition-all cursor-pointer group`}>
         <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${isDarkMode ? themeColors.secondary : themeColors.lightSecondary} flex items-center justify-center relative overflow-hidden`}>
           <div className={`absolute inset-0 bg-gradient-to-br ${isDarkMode ? themeColors.secondary : themeColors.lightSecondary} animate-pulse`} />
           <span className="relative z-10 text-white">A</span>

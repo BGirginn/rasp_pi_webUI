@@ -6,16 +6,14 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import { Dashboard } from './components/Dashboard';
 import Login from './pages/Login';
 
+import Loader from './components/common/Loader';
+
 // Protected Route wrapper
 function ProtectedRoute({ children }) {
     const { user, loading } = useAuth();
 
     if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-black">
-                <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
-            </div>
-        );
+        return <Loader />;
     }
 
     if (!user) {
@@ -30,11 +28,7 @@ function PublicRoute({ children }) {
     const { user, loading } = useAuth();
 
     if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-black">
-                <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
-            </div>
-        );
+        return <Loader />;
     }
 
     if (user) {

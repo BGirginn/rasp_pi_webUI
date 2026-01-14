@@ -91,11 +91,13 @@ export function PerformanceWidget({ variant, width, height }) {
 
           // Merge data
           // Base it on the longest array (usually they should be same length if aligned)
-          // Simplified: just map CPU and find matching timestamps
+          // Use step as tolerance, defaulting to 2s if step is small or undefined
+          const tolerance = (params.step && params.step > 5) ? params.step / 2 : 2;
+
           const merged = responses.cpu.map(p => {
             const ts = p.ts;
-            const memP = responses.mem.find(x => Math.abs(x.ts - ts) < 2); // 2s tolerance
-            const tempP = responses.temp.find(x => Math.abs(x.ts - ts) < 2);
+            const memP = responses.mem.find(x => Math.abs(x.ts - ts) <= tolerance);
+            const tempP = responses.temp.find(x => Math.abs(x.ts - ts) <= tolerance);
             return {
               time: ts * 1000,
               cpu: Math.round(p.value * 10) / 10,
@@ -168,7 +170,7 @@ export function PerformanceWidget({ variant, width, height }) {
   // Define colors
   const colorCpu = `rgb(${themeColors.accentRgb})`;
   const colorMem = '#10b981'; // emerald-500
-  const colorTemp = '#f59e0b'; // amber-500
+  const colorTemp = '#f43f5e'; // rose-500
 
   return (
     <div className={`h-full ${isDarkMode ? 'bg-black/40' : 'bg-white'} backdrop-blur-xl rounded-2xl p-6 border ${isDarkMode ? 'border-white/10' : 'border-gray-300'} flex flex-col`} style={{ boxShadow: isDarkMode ? `inset 0 0 40px -20px ${themeColors.glow}` : `0 4px 20px -5px ${themeColors.lightGlow}` }}>
@@ -313,14 +315,38 @@ export function PerformanceWidget({ variant, width, height }) {
               axisLine={false}
               minTickGap={30}
             />
-            <YAxis
-              stroke="#666"
-              fontSize={12}
-              tickLine={false}
-              axisLine={false}
-              domain={[0, metric === 'temp' ? 'auto' : 100]}
-              unit={metric === 'temp' ? '°' : '%'}
-            />
+            {metric === 'all' ? (
+              <>
+                <YAxis
+                  yAxisId="left"
+                  stroke="#666"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={[0, 100]}
+                  unit="%"
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#666"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={['auto', 'auto']}
+                  unit="°"
+                />
+              </>
+            ) : (
+              <YAxis
+                stroke="#666"
+                fontSize={12}
+                tickLine={false}
+                axisLine={false}
+                domain={[0, metric === 'temp' ? 'auto' : 100]}
+                unit={metric === 'temp' ? '°' : '%'}
+              />
+            )}
             <Tooltip
               contentStyle={{
                 backgroundColor: isDarkMode ? '#000' : '#fff',
@@ -330,8 +356,9 @@ export function PerformanceWidget({ variant, width, height }) {
               labelFormatter={(ts) => new Date(ts).toLocaleString()}
               formatter={(val, name) => {
                 if (metric !== 'all') return [`${val}${metric === 'temp' ? '°C' : '%'}`, metric.toUpperCase()];
-                const unit = name === 'temp' ? '°C' : '%';
-                return [`${val}${unit}`, name.toUpperCase()];
+                const isTemp = name.toLowerCase() === 'temp';
+                const unit = isTemp ? '°C' : '%';
+                return [`${val}${unit}`, name];
               }}
             />
             {metric !== 'all' ? (
@@ -346,9 +373,9 @@ export function PerformanceWidget({ variant, width, height }) {
               />
             ) : (
               <>
-                <Line type="monotone" dataKey="cpu" stroke={colorCpu} strokeWidth={2} dot={false} name="CPU" />
-                <Line type="monotone" dataKey="mem" stroke={colorMem} strokeWidth={2} dot={false} name="RAM" />
-                <Line type="monotone" dataKey="temp" stroke={colorTemp} strokeWidth={2} dot={false} name="Temp" />
+                <Line yAxisId="left" type="monotone" dataKey="cpu" stroke={colorCpu} strokeWidth={2} dot={false} name="CPU" />
+                <Line yAxisId="left" type="monotone" dataKey="mem" stroke={colorMem} strokeWidth={2} dot={false} name="RAM" />
+                <Line yAxisId="right" type="monotone" dataKey="temp" stroke={colorTemp} strokeWidth={2} dot={false} name="Temp" />
                 <Legend />
               </>
             )}

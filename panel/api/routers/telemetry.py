@@ -368,12 +368,25 @@ async def query_metrics(
     results = []
     
     for metric_name in metric_names:
-        cursor = await db.execute(
-            """SELECT ts, value FROM metrics_raw 
-               WHERE metric = ? AND ts BETWEEN ? AND ?
-               ORDER BY ts""",
-            (metric_name, start, end)
-        )
+        if step > 1:
+            # Downsample using SQLite integer division for grouping
+            cursor = await db.execute(
+                """SELECT (ts / ?) * ? as bucket_ts, AVG(value) 
+                   FROM metrics_raw 
+                   WHERE metric = ? AND ts BETWEEN ? AND ?
+                   GROUP BY bucket_ts
+                   ORDER BY bucket_ts""",
+                (step, step, metric_name, start, end)
+            )
+        else:
+            # Raw query for step=1
+            cursor = await db.execute(
+                """SELECT ts, value FROM metrics_raw 
+                   WHERE metric = ? AND ts BETWEEN ? AND ?
+                   ORDER BY ts""",
+                (metric_name, start, end)
+            )
+            
         rows = await cursor.fetchall()
         
         points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]

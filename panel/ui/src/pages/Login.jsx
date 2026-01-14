@@ -2,11 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { initLuxuryNetwork } from '../utils/network'
+import Loader from '../components/common/Loader'
 import './login.css'
+import { Eye, EyeOff } from 'lucide-react'
 
 export default function Login() {
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
+    const [showPassword, setShowPassword] = useState(false)
     const [totpCode, setTotpCode] = useState('')
     const [needsTotp, setNeedsTotp] = useState(false)
     const [loading, setLoading] = useState(false)
@@ -49,13 +52,14 @@ export default function Login() {
     const handleSubmit = async (e) => {
         e.preventDefault()
         setError('')
+        // Local loading state only used for button, global loading handled by useAuth
         setLoading(true)
 
         try {
             await login(username, password, needsTotp ? totpCode : null)
             navigate('/')
         } catch (err) {
-            if (err.message.includes('TOTP')) {
+            if (err.message?.includes('TOTP')) {
                 setNeedsTotp(true)
             } else {
                 setError(err.message)
@@ -67,6 +71,7 @@ export default function Login() {
 
     return (
         <div className="login-page min-h-screen overflow-hidden" style={{ background: 'var(--bg-0)' }}>
+            {loading && <Loader text="Signing In..." />}
             {/* Animated gold network background */}
             <canvas ref={canvasRef} className="login-canvas" aria-hidden="true" />
 
