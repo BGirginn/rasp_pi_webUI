@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, Thermometer, HardDrive, Layers } from 'lucide-react';
+import { Activity, Thermometer, HardDrive, Layers, Check } from 'lucide-react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { useTheme, getThemeColors } from '../../contexts/ThemeContext';
 import { useDashboard } from '../../contexts/DashboardContext';
@@ -11,21 +11,28 @@ export function PerformanceWidget({ variant, width, height }) {
   const themeColors = getThemeColors(theme);
 
   const [metric, setMetric] = useState('all'); // cpu, mem, temp, all
-  const [range, setRange] = useState('1h');   // 1m, 30m, 1h, 24h, 7d, 30d
+  const [range, setRange] = useState('1h');   // 1m, 1h, 24h, 7d, 15d
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Initialize from localStorage or default to 15
+  const [refreshInterval, setRefreshInterval] = useState(() => {
+    const saved = localStorage.getItem('performance_refresh_interval');
+    return saved ? parseInt(saved, 10) : 15;
+  });
+  const [inputVal, setInputVal] = useState(refreshInterval);
+  const [inputUnit, setInputUnit] = useState('s'); // s, m
 
   // Map ranges to API params
   const getRangeParams = (r) => {
     const now = Math.floor(Date.now() / 1000);
     switch (r) {
-      case '1m': return { start: now - 300, step: 15, type: 'raw' }; // Show 5 mins for "1M" (Live)
-      case '30m': return { start: now - 1800, step: 30, type: 'raw' };
+      case '1m': return { start: now - 300, step: 1, type: 'raw' }; // Show 5 mins for "1M" (Live)
       case '1h': return { start: now - 3600, step: 60, type: 'raw' };
       case '24h': return { start: now - 86400, step: 300, type: 'raw' };
       case '7d': return { start: now - 604800, type: 'summary' };
-      case '30d': return { start: now - 2592000, type: 'summary' };
+      case '15d': return { start: now - 1296000, type: 'summary' };
       default: return { start: now - 3600, type: 'raw' };
     }
   };
@@ -127,9 +134,9 @@ export function PerformanceWidget({ variant, width, height }) {
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 15000);
+    const interval = setInterval(fetchData, refreshInterval * 1000);
     return () => clearInterval(interval);
-  }, [metric, range]);
+  }, [metric, range, refreshInterval]);
 
   if (variant === 'list') {
     return (
@@ -214,20 +221,74 @@ export function PerformanceWidget({ variant, width, height }) {
           </div>
         </div>
 
-        {/* Time range selector */}
-        <div className={`flex items-center p-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-gray-100'} border ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
-          {['1m', '30m', '1h', '24h', '7d', '30d'].map(r => (
+        {/* Refresh Rate Control */}
+        <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-1 p-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-gray-100'} border ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
+            <div className="flex items-center">
+              <input
+                type="number"
+                min="1"
+                max="999"
+                value={inputVal}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setInputVal('');
+                  } else {
+                    setInputVal(parseInt(val));
+                  }
+                }}
+                onBlur={() => {
+                  if (inputVal === '' || inputVal < 1) {
+                    setInputVal(1);
+                  }
+                }}
+                className={`w-10 px-1 py-0.5 text-xs text-center bg-transparent outline-none appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
+              />
+              <select
+                value={inputUnit}
+                onChange={(e) => setInputUnit(e.target.value)}
+                className={`text-[10px] mr-1 bg-transparent outline-none border-none cursor-pointer ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}
+              >
+                <option value="s" className={isDarkMode ? 'bg-gray-800' : 'bg-white'}>s</option>
+                <option value="m" className={isDarkMode ? 'bg-gray-800' : 'bg-white'}>m</option>
+              </select>
+            </div>
             <button
-              key={r}
-              onClick={() => setRange(r)}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all whitespace-nowrap ${range === r
-                ? `${isDarkMode ? 'bg-white/10 text-white' : 'bg-white text-gray-900 shadow-sm'}`
-                : `${isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`
+              onClick={() => {
+                if (inputVal >= 1) {
+                  const multiplier = inputUnit === 'm' ? 60 : 1;
+                  const totalSeconds = inputVal * multiplier;
+                  setRefreshInterval(totalSeconds);
+                  localStorage.setItem('performance_refresh_interval', totalSeconds.toString());
+                }
+              }}
+              className={`p-1 rounded-md transition-colors ${refreshInterval === (inputVal * (inputUnit === 'm' ? 60 : 1))
+                ? (isDarkMode ? 'text-gray-600 cursor-default' : 'text-gray-300 cursor-default')
+                : (isDarkMode ? `hover:bg-${themeColors.accent}/20 text-${themeColors.accent}` : `hover:bg-${themeColors.accent}/10 text-${themeColors.accent}-600`)
                 }`}
+              title="Apply Refresh Rate"
+              disabled={refreshInterval === (inputVal * (inputUnit === 'm' ? 60 : 1))}
             >
-              {r.toUpperCase()}
+              <Check size={12} />
             </button>
-          ))}
+          </div>
+
+          {/* Time range selector */}
+          <div className={`flex items-center p-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-gray-100'} border ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
+            {['1m', '1h', '24h', '7d', '15d'].map(r => (
+              <button
+                key={r}
+                onClick={() => setRange(r)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all whitespace-nowrap ${range === r
+                  ? `${isDarkMode ? 'bg-white/10 text-white' : 'bg-white text-gray-900 shadow-sm'}`
+                  : `${isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`
+                  }`}
+              >
+                {r.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -242,7 +303,7 @@ export function PerformanceWidget({ variant, width, height }) {
               domain={['auto', 'auto']}
               tickFormatter={(ts) => {
                 const date = new Date(ts);
-                if (range === '1m' || range === '30m') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                if (range === '1m') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                 if (range === '1h' || range === '24h') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
               }}

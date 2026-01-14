@@ -32,7 +32,7 @@ class TelemetryCollector:
     - Summary data: 30 days (configurable)
     """
     
-    COLLECTION_INTERVAL = 30  # seconds
+    COLLECTION_INTERVAL = 1  # seconds (maximum frequency for true real-time)
     AGGREGATION_INTERVAL = 300  # 5 minutes
     CLEANUP_INTERVAL = 3600  # 1 hour
     
