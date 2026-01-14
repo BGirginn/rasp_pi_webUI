@@ -188,8 +188,9 @@ export function DashboardProvider({ children }) {
             const systemInfo = telemetryRes.data?.system || systemInfoRes.data || {};
 
             // Network Speed Calculation
-            const currentTx = metrics['net.all.bytes_sent'] || (metrics['net.wlan0.tx_bytes'] || 0) + (metrics['net.eth0.tx_bytes'] || 0);
-            const currentRx = metrics['net.all.bytes_recv'] || (metrics['net.wlan0.rx_bytes'] || 0) + (metrics['net.eth0.rx_bytes'] || 0);
+            // Network Speed Calculation
+            const currentTx = metrics['host.net.tx_bytes'] || 0;
+            const currentRx = metrics['host.net.rx_bytes'] || 0;
             const now = Date.now();
             const timeDiff = (now - lastNetStats.current.time) / 1000; // seconds
 
@@ -197,8 +198,14 @@ export function DashboardProvider({ children }) {
             let rxSpeed = 0;
 
             if (timeDiff > 0 && lastNetStats.current.tx > 0) {
-                txSpeed = Math.max(0, (currentTx - lastNetStats.current.tx) / timeDiff);
-                rxSpeed = Math.max(0, (currentRx - lastNetStats.current.rx) / timeDiff);
+                // Calculate rate only if we have a previous value and time difference
+                // Handle wrap-around or reset cases by ensuring positive diff
+                const diffTx = currentTx - lastNetStats.current.tx;
+                const diffRx = currentRx - lastNetStats.current.rx;
+                if (diffTx >= 0 && diffRx >= 0) {
+                    txSpeed = diffTx / timeDiff;
+                    rxSpeed = diffRx / timeDiff;
+                }
             }
 
             lastNetStats.current = { tx: currentTx, rx: currentRx, time: now };

@@ -28,8 +28,8 @@ class TelemetryCollector:
     4. Cleans up old data based on retention policy
     
     Retention Policy (optimized for Raspberry Pi storage):
-    - Raw data: 24 hours (configurable)
-    - Summary data: 7 days (configurable)
+    - Raw data: 15 days (configurable)
+    - Summary data: 30 days (configurable)
     """
     
     COLLECTION_INTERVAL = 30  # seconds
@@ -56,7 +56,7 @@ class TelemetryCollector:
         logger.info(
             "Telemetry collector started",
             collection_interval=self.COLLECTION_INTERVAL,
-            raw_retention_hours=settings.telemetry_raw_retention_hours,
+            raw_retention_days=settings.telemetry_raw_retention_days,
             summary_retention_days=settings.telemetry_summary_retention_days
         )
     
@@ -217,7 +217,7 @@ class TelemetryCollector:
         now = int(time.time())
         
         # Calculate cutoffs
-        raw_cutoff = now - (settings.telemetry_raw_retention_hours * 3600)
+        raw_cutoff = now - (settings.telemetry_raw_retention_days * 24 * 3600)
         summary_cutoff = now - (settings.telemetry_summary_retention_days * 24 * 3600)
         
         # Delete old raw metrics

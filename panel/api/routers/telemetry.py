@@ -382,6 +382,28 @@ async def query_metrics(
     return results
 
 
+class MetricsQueryBody(BaseModel):
+    metrics: str
+    start: Optional[int] = None
+    end: Optional[int] = None
+    step: int = 60
+
+
+@router.post("/metrics/query", response_model=List[MetricsResponse])
+async def query_metrics_post(
+    query: MetricsQueryBody,
+    user: dict = Depends(get_current_user)
+):
+    """Query historical metrics (POST version to avoid URL length/security issues)."""
+    return await query_metrics(
+        metrics=query.metrics,
+        start=query.start,
+        end=query.end,
+        step=query.step,
+        user=user
+    )
+
+
 @router.get("/metrics/{metric_name}/summary", response_model=MetricsSummary)
 async def get_metric_summary(
     metric_name: str,
@@ -410,6 +432,53 @@ async def get_metric_summary(
         min=row[1] or 0,
         max=row[2] or 0,
         count=row[3]
+    )
+
+@router.get("/metrics/series", response_model=List[MetricsResponse])
+async def get_metric_series(
+    metrics: str = Query(..., description="Comma-separated metric names"),
+    start: Optional[int] = Query(None, description="Start timestamp (epoch)"),
+    end: Optional[int] = Query(None, description="End timestamp (epoch)"),
+    user: dict = Depends(get_current_user)
+):
+    """Get summarized historical time-series data."""
+    db = await get_telemetry_db()
+    
+    now = int(time.time())
+    start = start or (now - 86400 * 7)  # Default 7 days
+    end = end or now
+    
+    metric_names = [m.strip() for m in metrics.split(",")]
+    results = []
+    
+    for metric_name in metric_names:
+        cursor = await db.execute(
+            """SELECT ts, avg FROM metrics_summary 
+               WHERE metric = ? AND ts BETWEEN ? AND ?
+               ORDER BY ts""",
+            (metric_name, start, end)
+        )
+        rows = await cursor.fetchall()
+        
+        points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]
+        results.append(MetricsResponse(metric=metric_name, points=points))
+    
+    return results
+
+    return results
+
+
+@router.post("/metrics/series/query", response_model=List[MetricsResponse])
+async def get_metric_series_post(
+    query: MetricsQueryBody,
+    user: dict = Depends(get_current_user)
+):
+    """Get summarized historical time-series data (POST version)."""
+    return await get_metric_series(
+        metrics=query.metrics,
+        start=query.start,
+        end=query.end,
+        user=user
     )
 
 
@@ -483,7 +552,7 @@ async def cleanup_old_data(
     db = await get_telemetry_db()
     
     now = int(time.time())
-    raw_cutoff = now - (settings.telemetry_raw_retention_hours * 3600)
+    raw_cutoff = now - (settings.telemetry_raw_retention_days * 24 * 3600)
     summary_cutoff = now - (settings.telemetry_summary_retention_days * 24 * 3600)
     
     # Delete old raw metrics

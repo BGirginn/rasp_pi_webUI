@@ -56,7 +56,7 @@ export function Sidebar() {
           {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border border-${themeColors.accent}/50`} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
 
           <motion.div whileHover={{ scale: 1.1 }} transition={{ duration: 0.2 }} className={`relative z-10 ${item.active
-            ? `text-${themeColors.accent}`
+            ? 'text-white'
             : isDarkMode ? 'text-gray-400 group-hover:text-white' : 'text-gray-600 group-hover:text-gray-900'}`}>
             <item.icon size={20} />
           </motion.div>
@@ -80,7 +80,7 @@ export function Sidebar() {
           {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border border-${themeColors.accent}/50`} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
 
           <motion.div whileHover={{ scale: 1.1 }} transition={{ duration: 0.2 }} className={`relative z-10 ${item.active
-            ? `text-${themeColors.accent}`
+            ? 'text-white'
             : isDarkMode ? 'text-gray-400 group-hover:text-white' : 'text-gray-600 group-hover:text-gray-900'}`}>
             <item.icon size={20} />
           </motion.div>

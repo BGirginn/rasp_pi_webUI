@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     rate_limit_admin_console: int = Field(default=10, alias="RATE_LIMIT_ADMIN_CONSOLE")
     
     # Telemetry Retention
-    telemetry_raw_retention_hours: int = Field(default=24, alias="TELEMETRY_RAW_RETENTION_HOURS")
-    telemetry_summary_retention_days: int = Field(default=7, alias="TELEMETRY_SUMMARY_RETENTION_DAYS")
+    telemetry_raw_retention_days: int = Field(default=30, alias="TELEMETRY_RAW_RETENTION_DAYS")
+    telemetry_summary_retention_days: int = Field(default=90, alias="TELEMETRY_SUMMARY_RETENTION_DAYS")
     telemetry_collection_interval: int = Field(default=30, alias="TELEMETRY_COLLECTION_INTERVAL")
     audit_log_retention_days: int = Field(default=90, alias="AUDIT_LOG_RETENTION_DAYS")
     
