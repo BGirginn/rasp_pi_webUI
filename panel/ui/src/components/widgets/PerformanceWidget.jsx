@@ -297,7 +297,7 @@ export function PerformanceWidget({ variant, width, height }) {
       {/* Main Chart */}
       <div className="flex-1 min-h-0 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data}>
+          <LineChart data={data} margin={{ top: 5, right: 5, bottom: 20, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? '#333' : '#eee'} vertical={false} />
             <XAxis
               dataKey="time"
@@ -314,6 +314,7 @@ export function PerformanceWidget({ variant, width, height }) {
               tickLine={false}
               axisLine={false}
               minTickGap={30}
+              dy={10}
             />
             {metric === 'all' ? (
               <>
@@ -333,7 +334,9 @@ export function PerformanceWidget({ variant, width, height }) {
                   fontSize={12}
                   tickLine={false}
                   axisLine={false}
-                  domain={['auto', 'auto']}
+                  domain={[35, 85]}
+                  ticks={[35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85]}
+                  tickFormatter={(val) => val}
                   unit="°"
                 />
               </>
@@ -343,7 +346,9 @@ export function PerformanceWidget({ variant, width, height }) {
                 fontSize={12}
                 tickLine={false}
                 axisLine={false}
-                domain={[0, metric === 'temp' ? 'auto' : 100]}
+                domain={metric === 'temp' ? [35, 85] : [0, 100]}
+                ticks={metric === 'temp' ? [35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85] : undefined}
+                tickFormatter={metric === 'temp' ? ((val) => val) : undefined}
                 unit={metric === 'temp' ? '°' : '%'}
               />
             )}
@@ -376,23 +381,11 @@ export function PerformanceWidget({ variant, width, height }) {
                 <Line yAxisId="left" type="monotone" dataKey="cpu" stroke={colorCpu} strokeWidth={2} dot={false} name="CPU" />
                 <Line yAxisId="left" type="monotone" dataKey="mem" stroke={colorMem} strokeWidth={2} dot={false} name="RAM" />
                 <Line yAxisId="right" type="monotone" dataKey="temp" stroke={colorTemp} strokeWidth={2} dot={false} name="Temp" />
-                <Legend />
+                <Legend wrapperStyle={{ paddingTop: '20px' }} />
               </>
             )}
           </LineChart>
         </ResponsiveContainer>
-      </div>
-
-      {/* Stat footer */}
-      <div className="flex justify-between mt-4 px-2">
-        <div>
-          <p className="text-xs text-gray-500">Current Status</p>
-          <div className="flex gap-4">
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>CPU: {stats?.cpu || 0}%</span>
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>RAM: {stats?.memory || 0}%</span>
-            <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>Temp: {stats?.temp || 0}°C</span>
-          </div>
-        </div>
       </div>
     </div>
   );

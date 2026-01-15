@@ -20,6 +20,10 @@ class ApiService {
             ...options.headers,
         }
 
+        if (data instanceof FormData) {
+            delete headers['Content-Type'];
+        }
+
         if (token) {
             headers['Authorization'] = `Bearer ${token}`
         }
@@ -31,7 +35,7 @@ class ApiService {
         }
 
         if (data && method !== 'GET') {
-            config.body = JSON.stringify(data)
+            config.body = data instanceof FormData ? data : JSON.stringify(data)
         }
 
         const response = await fetch(url, config)

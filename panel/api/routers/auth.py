@@ -14,6 +14,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
 import pyotp
+import subprocess
+import shlex
 
 from config import settings
 from db import get_control_db
@@ -444,3 +446,58 @@ async def change_password(request: ChangePasswordRequest, user: dict = Depends(g
     )
     await db.commit()
     return {"message": "Password updated successfully"}
+
+
+class PasswordVerifyRequest(BaseModel):
+    password: str
+
+@router.post("/verify-password")
+async def verify_password_endpoint(request: PasswordVerifyRequest, user: dict = Depends(get_current_user)):
+    """Verify the current user's password."""
+    db = await get_control_db()
+    cursor = await db.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],))
+    row = await cursor.fetchone()
+    
+    if not row or not await verify_password_async(request.password, row[0]):
+        raise HTTPException(status_code=401, detail="Invalid password")
+        
+    return {"valid": True}
+
+
+@router.post("/verify-system-password")
+async def verify_system_password_endpoint(request: PasswordVerifyRequest, user: dict = Depends(get_current_user)):
+    """Verify the system (sudo) password for the current host."""
+    
+    # We essentially try to run a harmless sudo command with the provided password
+    # using 'sudo -S' which reads password from stdin.
+    
+    cmd = ["sudo", "-S", "-v", "-k"] # -v updates cached credentials, -k invalidates them first just in case
+    
+    try:
+        # Use subprocess to run command
+        # Write password to stdin
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        stdout, stderr = proc.communicate(input=f"{request.password}\n")
+        
+        if proc.returncode == 0:
+            return {"valid": True}
+        else:
+            # Check if it was actually a password failure or something else
+            if "incorrect password" in stderr.lower() or "try again" in stderr.lower():
+                 raise HTTPException(status_code=401, detail="Invalid system password")
+            else:
+                 # Some other sudo error? Log it potentially, but fail safe
+                 print(f"Sudo verification failed: {stderr}")
+                 raise HTTPException(status_code=401, detail="Invalid system password")
+                 
+    except Exception as e:
+        print(f"System password verification error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during verification")
+

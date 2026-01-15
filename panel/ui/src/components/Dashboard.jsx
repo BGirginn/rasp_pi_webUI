@@ -9,6 +9,7 @@ import { NetworkPage } from '../pages/NetworkPage';
 import { TerminalPage } from '../pages/TerminalPage';
 import { AlertsPage } from '../pages/AlertsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useAuth } from '../hooks/useAuth';
@@ -46,6 +47,13 @@ export function Dashboard() {
         );
       case 'alerts':
         return <AlertsPage />;
+      case 'files':
+        return isAdmin ? <FilesPage /> : (
+          <div className={`p-8 rounded-2xl border ${isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
+            <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
+            <p>You do not have permission to access the file manager.</p>
+          </div>
+        );
       case 'settings':
         return <SettingsPage />;
       default:

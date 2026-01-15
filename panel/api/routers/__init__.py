@@ -2,7 +2,7 @@
 Pi Control Panel - API Routers Package
 """
 
-from . import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system
+from . import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files
 from . import sse, audit, manifests
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "admin_console",
     "terminal",
     "system",
+    "files",
     "sse",
     "audit",
     "manifests",

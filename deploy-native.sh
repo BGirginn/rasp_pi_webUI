@@ -56,32 +56,10 @@ rsync -avz --progress \
 echo "✅ Files synced"
 echo ""
 
-# Build UI on Pi
-echo "🔨 Building UI..."
-ssh "$PI_HOST" "cd $PROJECT_DIR/panel/ui && npm install && npm run build"
-echo "✅ UI built"
-echo ""
-
-# Setup Python virtual environment
-echo "🐍 Setting up Python environment..."
-ssh "$PI_HOST" "cd $PROJECT_DIR && python3 -m venv venv && source venv/bin/activate && pip install -r panel/api/requirements.txt"
-echo "✅ Python environment ready"
-echo ""
-
-# Generate JWT secret if not exists
-echo "🔐 Setting up secrets..."
-ssh "$PI_HOST" "if [ ! -f $CONFIG_DIR/jwt_secret ]; then openssl rand -hex 32 | sudo tee $CONFIG_DIR/jwt_secret > /dev/null && sudo chmod 600 $CONFIG_DIR/jwt_secret; echo 'JWT secret generated'; fi"
-
-# Install and configure Caddy
-echo "🌐 Configuring Caddy..."
-ssh "$PI_HOST" "sudo cp $PROJECT_DIR/caddy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy || sudo systemctl start caddy"
-echo "✅ Caddy configured"
-echo ""
-
-# Install and start systemd service
-echo "🚀 Installing systemd service..."
-ssh "$PI_HOST" "sudo cp $PROJECT_DIR/pi-control.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable pi-control && sudo systemctl restart pi-control"
-echo "✅ Service installed"
+# Run installer on remote to build and configure
+echo "🚀 Running installer on remote..."
+ssh -t "$PI_HOST" "cd $PROJECT_DIR && chmod +x install.sh && sudo ./install.sh --skip-preflight --no-tailscale"
+echo "✅ Installation completed"
 echo ""
 
 # Wait for startup

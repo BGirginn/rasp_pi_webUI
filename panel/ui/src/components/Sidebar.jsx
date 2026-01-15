@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { LayoutDashboard, Settings, Server, Wifi, Terminal, Bell, Activity, Monitor, LogOut } from 'lucide-react';
+import { LayoutDashboard, Settings, Server, Wifi, Terminal, Bell, Activity, Monitor, LogOut, Folder } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -20,6 +20,7 @@ export function Sidebar() {
     { icon: Activity, label: 'Telemetry', active: currentPage === 'telemetry', page: 'telemetry' },
     { icon: Wifi, label: 'Network', active: currentPage === 'network', page: 'network' },
     { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal', restricted: true },
+    { icon: Folder, label: 'Files', active: currentPage === 'files', page: 'files', restricted: true },
     { icon: Bell, label: 'Alerts', active: currentPage === 'alerts', page: 'alerts' },
   ];
   const adminItems = [
