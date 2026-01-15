@@ -32,10 +32,11 @@ class UpdateStatus(BaseModel):
     latest_version: str
     last_check: str
 
-async def execute_power_command(command: str):
+async def execute_power_command(command_args: list):
     """Execute power command with a small delay to allow response to return."""
     await asyncio.sleep(2)
-    subprocess.run(["sudo", command], check=False)
+    # We use systemctl as it is whitelisted in sudoers
+    subprocess.run(["sudo"] + command_args, check=False)
 
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(user: dict = Depends(get_current_user)):
@@ -105,7 +106,7 @@ async def reboot_system(
     await db.commit()
     
     # Schedule reboot
-    background_tasks.add_task(execute_power_command, "reboot")
+    background_tasks.add_task(execute_power_command, ["systemctl", "reboot"])
     
     return {"message": "System is rebooting..."}
 
@@ -123,7 +124,7 @@ async def shutdown_system(
         {"uid": user["id"]}
     )
     
-    background_tasks.add_task(execute_power_command, "shutdown now")
+    background_tasks.add_task(execute_power_command, ["systemctl", "poweroff"])
     return {"message": "System is shutting down..."}
 
 @router.get("/processes")

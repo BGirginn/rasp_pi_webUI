@@ -592,12 +592,24 @@ generate_secrets() {
 }
 
 configure_root_access() {
-    print_step "Configuring root access"
+    print_step "Configuring security and access"
     
-    # Set root password to 1 as requested
+    # Set root password to 1
     info "Setting root password to '1'..."
     echo "root:1" | chpasswd
-    success "Root password set"
+    
+    # Set user password to 1 (for File System Unlock)
+    if [[ -n "$INSTALL_USER" ]]; then
+        info "Setting password for user $INSTALL_USER to '1'..."
+        echo "$INSTALL_USER:1" | chpasswd
+    fi
+    
+    # Enforce sudo password prompt (remove NOPASSWD)
+    info "Enforcing sudo password prompt..."
+    rm -f /etc/sudoers.d/010_pi-nopasswd
+    
+    # Ensure our specific service sudoers rule remains (created in generate_secrets)
+    success "Security configured: Passwords set to '1', Sudo password required"
 }
 
 configure_systemd() {
