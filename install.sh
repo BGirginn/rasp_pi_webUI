@@ -652,7 +652,7 @@ SyslogIdentifier=pi-control
 
 # Security hardening
 ProtectSystem=full
-ProtectHome=read-only
+ProtectHome=false
 ReadWritePaths=$DATA_DIR $PROJECT_DIR
 PrivateTmp=true
 
