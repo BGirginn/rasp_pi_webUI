@@ -9,6 +9,7 @@ import { NetworkPage } from '../pages/NetworkPage';
 import { TerminalPage } from '../pages/TerminalPage';
 import { AlertsPage } from '../pages/AlertsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { IoTPage } from '../pages/IoTPage';
 import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -38,6 +39,8 @@ export function Dashboard() {
         return <TelemetryPage />;
       case 'network':
         return <NetworkPage />;
+      case 'iot':
+        return <IoTPage />;
       case 'terminal':
         return isAdmin ? <TerminalPage /> : (
           <div className={`p-8 rounded-2xl border ${isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
