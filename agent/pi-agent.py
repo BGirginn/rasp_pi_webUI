@@ -63,9 +63,13 @@ class PiAgent:
         self.telemetry_collector = TelemetryCollector(self.config)
         self.job_runner = JobRunner(self.config)
         self.mqtt_bridge = MQTTBridge(self.config) if self.config.get("mqtt", {}).get("enabled") else None
+        # Initialize components
+        socket_config = self.config.get("socket", {})
         self.socket_server = SocketServer(
-            socket_path=self.config["socket"]["path"],
-            handler=self._handle_rpc
+            socket_path=socket_config.get("path"),
+            handler=self._handle_rpc,
+            permissions=socket_config.get("permissions", "0660"),
+            group=socket_config.get("group")
         )
     
     def _load_config(self, config_path: str) -> dict:

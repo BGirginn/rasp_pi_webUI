@@ -22,11 +22,13 @@ class SocketServer:
         self,
         socket_path: str,
         handler: Callable[[str, Dict], Any],
-        permissions: str = "0660"
+        permissions: str = "0660",
+        group: Optional[str] = None
     ):
         self.socket_path = socket_path
         self.handler = handler
         self.permissions = int(permissions, 8)
+        self.group = group
         
         self._server: Optional[asyncio.Server] = None
         self._is_running = False
@@ -51,6 +53,16 @@ class SocketServer:
             path=self.socket_path
         )
         
+        # Set ownership if group is specified
+        if self.group:
+            try:
+                import grp
+                gid = grp.getgrnam(self.group).gr_gid
+                os.chown(self.socket_path, -1, gid)
+                logger.debug("Socket group set", group=self.group, gid=gid)
+            except Exception as e:
+                logger.warning("Failed to set socket group", group=self.group, error=str(e))
+
         # Set permissions
         os.chmod(self.socket_path, self.permissions)
         

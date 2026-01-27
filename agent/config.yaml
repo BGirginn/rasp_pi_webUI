@@ -13,6 +13,7 @@ agent:
 socket:
   path: "/run/pi-agent/agent.sock"
   permissions: "0660"
+  group: "fou4"
 
 # ===========================================
 # Discovery Settings
