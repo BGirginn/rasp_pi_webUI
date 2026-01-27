@@ -266,5 +266,4 @@ http://<tailscale-ip>/api/docs
 ## 📜 License
 
 © Bora Girgin (BGirginn)
-This project is not open source.
-Download and use are permitted. All other rights are reserved.
+
