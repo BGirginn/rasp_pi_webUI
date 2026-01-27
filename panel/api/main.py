@@ -18,11 +18,12 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup
 from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
+from services.discovery import discovery_service
 
 # ... existing code ...
 
@@ -71,11 +72,13 @@ async def lifespan(app: FastAPI):
     
     await alert_manager.start()
     await telemetry_collector.start()
+    await discovery_service.start()
     
     yield
     
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    await discovery_service.stop()
     await telemetry_collector.stop()
     await alert_manager.stop()
     await agent_client.disconnect()
@@ -153,6 +156,9 @@ app.include_router(admin_console.router, prefix="/api/admin", tags=["Admin Conso
 app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
 app.include_router(files.router, prefix="/api/files", tags=["Files"])
+app.include_router(iot.router, prefix="/api/iot", tags=["IoT"])
+app.include_router(archive.router, prefix="/api/archive", tags=["Archive"])
+app.include_router(backup.router, prefix="/api/backup", tags=["Backup"])
 
 
 # Health check endpoint

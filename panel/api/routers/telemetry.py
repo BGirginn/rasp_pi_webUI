@@ -90,7 +90,7 @@ async def _get_local_system_metrics() -> Dict:
         import psutil
         # This blocks for 0.5s to calculate accurate delta
         metrics["host.cpu.pct_total"] = psutil.cpu_percent(interval=0.5)
-    except:
+    except (OSError, ImportError, ValueError):
         try:
             # Manual fallback: Read /proc/stat twice
             def read_stat():
@@ -137,14 +137,14 @@ async def _get_local_system_metrics() -> Dict:
             metrics["host.mem.used_mb"] = round(used / 1024, 1)
             metrics["host.mem.available_mb"] = round(available / 1024, 1)
             metrics["host.mem.pct"] = round(100 * used / total, 1) if total > 0 else 0
-    except:
+    except (OSError, IOError, ValueError):
         try:
             import psutil
             mem = psutil.virtual_memory()
             metrics["host.mem.pct"] = mem.percent
             metrics["host.mem.used_mb"] = mem.used / (1024 * 1024)
             metrics["host.mem.total_mb"] = mem.total / (1024 * 1024)
-        except:
+        except (ImportError, ValueError, AttributeError):
             pass
     
     # ============ Disk ============
@@ -166,7 +166,7 @@ async def _get_local_system_metrics() -> Dict:
                     metrics["disk._root.used_gb"] = round(used / (1024**3), 1)
                     metrics["disk._root.pct"] = pct # Legacy key
                     metrics["disk._root.used_pct"] = pct
-    except:
+    except (OSError, ValueError, subprocess.SubprocessError):
         try:
             import psutil
             disk = psutil.disk_usage("/")
@@ -174,7 +174,7 @@ async def _get_local_system_metrics() -> Dict:
             metrics["disk._root.used_pct"] = disk.percent
             metrics["disk._root.used_gb"] = disk.used / (1024**3)
             metrics["disk._root.total_gb"] = disk.total / (1024**3)
-        except:
+        except (ImportError, ValueError, AttributeError):
             pass
     
     # ============ Load Average ============
@@ -184,7 +184,7 @@ async def _get_local_system_metrics() -> Dict:
             metrics["host.load.1m"] = float(parts[0])
             metrics["host.load.5m"] = float(parts[1])
             metrics["host.load.15m"] = float(parts[2])
-    except:
+    except (OSError, ValueError, IndexError):
         pass
     
     # ============ Temperature (Raspberry Pi specific) ============
@@ -195,7 +195,7 @@ async def _get_local_system_metrics() -> Dict:
             with open(temp_path, "r") as f:
                 temp_millic = int(f.read().strip())
                 metrics["host.temp.cpu_c"] = round(temp_millic / 1000, 1)
-    except:
+    except (OSError, ValueError):
         pass
     
     # ============ Network ============
@@ -212,7 +212,7 @@ async def _get_local_system_metrics() -> Dict:
                             tx_total += int(values[8])
             metrics["host.net.rx_bytes"] = rx_total
             metrics["host.net.tx_bytes"] = tx_total
-    except:
+    except (OSError, ValueError):
         pass
     
     # ============ Uptime ============
@@ -220,7 +220,7 @@ async def _get_local_system_metrics() -> Dict:
         with open(f"{host_root}/proc/uptime", "r") as f:
             uptime_seconds = int(float(f.read().split()[0]))
             metrics["host.uptime.seconds"] = uptime_seconds
-    except:
+    except (OSError, ValueError, IndexError):
         pass
     
     # ============ System Info (from HOST) ============
@@ -231,7 +231,7 @@ async def _get_local_system_metrics() -> Dict:
     try:
         with open(f"{host_root}/etc/hostname", "r") as f:
             hostname = f.read().strip()
-    except:
+    except (OSError, IOError):
         pass
     
     try:
@@ -241,7 +241,7 @@ async def _get_local_system_metrics() -> Dict:
             parts = version_line.split()
             if len(parts) >= 3:
                 os_info = f"Linux {parts[2]}"
-    except:
+    except (OSError, ValueError, IndexError):
         pass
     
     # Get CPU model and architecture (not Pi model name)
@@ -270,7 +270,7 @@ async def _get_local_system_metrics() -> Dict:
                 elif line.startswith("model name"):
                     cpu_model = line.split(":")[1].strip()
                     break
-    except:
+    except (OSError, IOError, ValueError):
         pass
     
     try:
@@ -279,7 +279,7 @@ async def _get_local_system_metrics() -> Dict:
         result = subprocess.run(["uname", "-m"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             arch = result.stdout.strip()  # e.g., aarch64, x86_64
-    except:
+    except (OSError, subprocess.SubprocessError):
         pass
     
     machine = f"{cpu_model} ({arch})"
@@ -301,15 +301,19 @@ async def _get_local_system_metrics() -> Dict:
 async def get_dashboard_data(user: dict = Depends(get_current_user)):
     """Get aggregated dashboard data."""
     from db import get_control_db
+    from services.telemetry_collector import telemetry_collector
     
-    # Try to get live telemetry (either from agent or local system)
-    try:
-        telemetry = await agent_client.get_current_telemetry()
-        metrics = telemetry.get("metrics", {})
-    except Exception:
-        # Fallback: Get local system metrics
-        local_data = await _get_local_system_metrics()
-        metrics = local_data.get("metrics", {})
+    # Use cached metrics from collector (avoids 0.5s blocking for CPU measurement)
+    metrics = telemetry_collector.get_last_metrics()
+    
+    # If no cached metrics, fall back to fresh fetch
+    if not metrics:
+        try:
+            telemetry = await agent_client.get_current_telemetry()
+            metrics = telemetry.get("metrics", {})
+        except Exception:
+            local_data = await _get_local_system_metrics()
+            metrics = local_data.get("metrics", {})
     
     # Get resource counts from DB
     db = await get_control_db()
@@ -476,8 +480,6 @@ async def get_metric_series(
         points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]
         results.append(MetricsResponse(metric=metric_name, points=points))
     
-    return results
-
     return results
 
 

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { ThemeSelector } from './ThemeSelector';
 import { EditModeToggle } from './EditModeToggle';
@@ -9,17 +10,40 @@ import { NetworkPage } from '../pages/NetworkPage';
 import { TerminalPage } from '../pages/TerminalPage';
 import { AlertsPage } from '../pages/AlertsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { IoTPage } from '../pages/IoTPage';
+import { IoTDeviceDetail } from '../pages/IoTDeviceDetail';
+import { ArchivePage } from '../pages/ArchivePage';
 import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useAuth } from '../hooks/useAuth';
 import { TopBarActions } from './TopBarActions';
+
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
-  const { currentPage } = useNavigation();
+  const { currentPage, setCurrentPage } = useNavigation();
   const { isAdmin } = useAuth();
   const themeColors = getThemeColors(theme);
+
+  // State for IoT device detail view
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+
+  // Handle device click from IoT page
+  const handleDeviceClick = (deviceId) => {
+    setSelectedDeviceId(deviceId);
+  };
+
+  // Handle back from device detail
+  const handleBackFromDevice = () => {
+    setSelectedDeviceId(null);
+  };
+
   const renderPage = () => {
+    // If we're on IoT page and a device is selected, show detail
+    if (currentPage === 'iot' && selectedDeviceId) {
+      return <IoTDeviceDetail deviceId={selectedDeviceId} onBack={handleBackFromDevice} />;
+    }
+
     switch (currentPage) {
       case 'dashboard':
         return (<>
@@ -38,6 +62,8 @@ export function Dashboard() {
         return <TelemetryPage />;
       case 'network':
         return <NetworkPage />;
+      case 'iot':
+        return <IoTPage onDeviceClick={handleDeviceClick} />;
       case 'terminal':
         return isAdmin ? <TerminalPage /> : (
           <div className={`p-8 rounded-2xl border ${isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
@@ -56,10 +82,22 @@ export function Dashboard() {
         );
       case 'settings':
         return <SettingsPage />;
+      case 'archive':
+        return <ArchivePage />;
       default:
         return <DashboardGrid />;
     }
   };
+
+  // Reset selected device when navigating away from IoT
+  const originalSetCurrentPage = setCurrentPage;
+  const wrappedSetCurrentPage = (page) => {
+    if (page !== 'iot') {
+      setSelectedDeviceId(null);
+    }
+    originalSetCurrentPage(page);
+  };
+
   return (<div className={`min-h-screen ${isDarkMode ? 'bg-[#0a0a0f] text-white' : 'bg-gray-50 text-gray-900'} flex overflow-hidden relative`}>
     <Sidebar />
 

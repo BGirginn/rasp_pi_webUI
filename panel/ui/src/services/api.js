@@ -143,6 +143,15 @@ class ApiService {
             }
         })
 
+        eventSource.addEventListener('iot_update', (event) => {
+            try {
+                const data = JSON.parse(event.data)
+                onMessage(data, 'iot_update')
+            } catch (e) {
+                console.error('Failed to parse SSE iot_update data:', e)
+            }
+        })
+
         eventSource.addEventListener('connected', (event) => {
             console.log('SSE connected:', event.data)
         })

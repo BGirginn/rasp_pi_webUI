@@ -167,8 +167,8 @@ export function PerformanceWidget({ variant, width, height }) {
     );
   }
 
-  // Define colors
-  const colorCpu = `rgb(${themeColors.accentRgb})`;
+  // Define fixed colors (not theme-dependent)
+  const colorCpu = '#8b5cf6'; // purple-500 - fixed color
   const colorMem = '#10b981'; // emerald-500
   const colorTemp = '#f43f5e'; // rose-500
 
@@ -334,8 +334,7 @@ export function PerformanceWidget({ variant, width, height }) {
                   fontSize={12}
                   tickLine={false}
                   axisLine={false}
-                  domain={[35, 85]}
-                  ticks={[35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85]}
+                  domain={[0, 85]}
                   tickFormatter={(val) => val}
                   unit="°"
                 />
@@ -346,8 +345,7 @@ export function PerformanceWidget({ variant, width, height }) {
                 fontSize={12}
                 tickLine={false}
                 axisLine={false}
-                domain={metric === 'temp' ? [35, 85] : [0, 100]}
-                ticks={metric === 'temp' ? [35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85] : undefined}
+                domain={metric === 'temp' ? [0, 85] : [0, 100]}
                 tickFormatter={metric === 'temp' ? ((val) => val) : undefined}
                 unit={metric === 'temp' ? '°' : '%'}
               />

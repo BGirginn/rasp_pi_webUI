@@ -4,8 +4,9 @@ Pi Control Panel - Resources Router
 Handles resource discovery, management, and actions.
 """
 
+import time
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -17,6 +18,10 @@ from services.host_exec import run_host_command_simple, run_host_command, is_run
 from .auth import get_current_user, require_role
 
 router = APIRouter()
+
+# Service cache to avoid repeated systemctl calls (OPT-004)
+_services_cache: Tuple[List, float] = ([], 0)
+_CACHE_TTL_SECONDS = 5
 
 
 # Pydantic models
@@ -100,8 +105,12 @@ async def list_resources(
 
 async def _get_live_systemd_services() -> List[ResourceResponse]:
     """Get real systemd services from the HOST system via SSH."""
-    from datetime import datetime
-
+    global _services_cache
+    
+    # Check cache first (OPT-004: avoid repeated systemctl calls)
+    cached_services, cache_time = _services_cache
+    if cached_services and (time.time() - cache_time) < _CACHE_TTL_SECONDS:
+        return cached_services
     
     # Get Usage Data first (single ps command)
     usage_map = {}
@@ -118,8 +127,9 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                              "cpu": float(parts[1]),
                              "mem": float(parts[2])
                          }
-                     except: pass
-    except Exception as e:
+                     except ValueError:
+                         pass
+    except (OSError, TimeoutError) as e:
         print(f"Discovery usage map error: {e}")
 
 
@@ -243,9 +253,12 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                         updated_at=now
                     ))
 
-        return sorted(services, key=lambda s: (s.resource_class != "APP", s.name))
+        # Update cache before returning (OPT-004)
+        result = sorted(services, key=lambda s: (s.resource_class != "APP", s.name))
+        _services_cache = (result, time.time())
+        return result
 
-    except Exception as e:
+    except (OSError, TimeoutError, ValueError) as e:
         print(f"Error fetching services: {e}")
         return []
 

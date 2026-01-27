@@ -183,6 +183,22 @@ async def _init_control_schema(db):
         )
     """)
     
+    # Break-glass terminal sessions table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS breakglass_sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL,
+            issued_at TIMESTAMP NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            closed_at TIMESTAMP,
+            close_reason TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+    
     # Create indexes
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_resources_provider ON resources(provider)")
@@ -190,6 +206,8 @@ async def _init_control_schema(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_breakglass_user ON breakglass_sessions(user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_breakglass_expires ON breakglass_sessions(expires_at)")
     
     await db.commit()
 
@@ -223,8 +241,36 @@ async def _init_telemetry_schema(db):
         )
     """)
     
+    # IoT Devices table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS iot_devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            status TEXT DEFAULT 'online',
+            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # IoT Sensor Readings table (historical data)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS iot_sensor_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            sensor_type TEXT NOT NULL,
+            value REAL NOT NULL,
+            unit TEXT,
+            timestamp INTEGER NOT NULL,
+            FOREIGN KEY (device_id) REFERENCES iot_devices(id)
+        )
+    """)
+    
     # Create indexes
     await db.execute("CREATE INDEX IF NOT EXISTS idx_metrics_raw_lookup ON metrics_raw(metric, ts)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_metrics_summary_lookup ON metrics_summary(metric, ts)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_iot_readings_device ON iot_sensor_readings(device_id, timestamp)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_iot_readings_lookup ON iot_sensor_readings(device_id, sensor_type, timestamp)")
     
     await db.commit()
