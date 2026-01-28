@@ -838,6 +838,18 @@ async def terminal_websocket(websocket: WebSocket):
                     if message.get("type") == "command":
                         command = message.get("command", "")
                         
+                        # Handle help/allowlist command
+                        if command.strip().lower() in ("help", "?", "list", "commands", "allowlist"):
+                            allowed_cmds = "\r\n- ".join(settings.terminal_allowed_commands_list)
+                            output = f"Available commands:\r\n- {allowed_cmds}\r\n\r\nType a command and press Enter."
+                            await websocket.send_json({
+                                "type": "output",
+                                "command": command,
+                                "output": output,
+                                "exit_code": 0
+                            })
+                            continue
+                        
                         # Validate and execute
                         is_valid, error = validate_restricted_command(command)
                         
