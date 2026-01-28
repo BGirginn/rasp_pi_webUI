@@ -31,8 +31,8 @@ export function PerformanceWidget({ variant, width, height }) {
       case '1m': return { start: now - 300, step: 1, type: 'raw' }; // Show 5 mins for "1M" (Live)
       case '1h': return { start: now - 3600, step: 60, type: 'raw' };
       case '24h': return { start: now - 86400, step: 300, type: 'raw' };
-      case '7d': return { start: now - 604800, type: 'summary' };
-      case '15d': return { start: now - 1296000, type: 'summary' };
+      case '7d': return { start: now - 604800, step: 3600, type: 'raw' };
+      case '15d': return { start: now - 1296000, step: 7200, type: 'raw' };
       default: return { start: now - 3600, type: 'raw' };
     }
   };
@@ -186,7 +186,7 @@ export function PerformanceWidget({ variant, width, height }) {
           </div>
           <div>
             <h3 className={`text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-              Performance {error ? `(Error: ${error.message})` : `(${data.length} pts)`}
+              Performance {error ? `(Error: ${error.message})` : ''}
             </h3>
             <div className="flex gap-1 text-xs items-center">
               <button
