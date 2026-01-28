@@ -89,6 +89,15 @@ class ActionResult:
     data: Optional[Dict] = None
     error: Optional[str] = None
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "success": self.success,
+            "message": self.message,
+            "data": self.data,
+            "error": self.error
+        }
+
 
 class BaseProvider(ABC):
     """Base class for all resource providers."""

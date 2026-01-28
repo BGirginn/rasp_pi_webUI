@@ -229,15 +229,43 @@ class ProviderManager:
         resources = await provider.discover()
         return [r.to_dict() for r in resources]
     
-    async def toggle_wifi(self, enable: bool) -> ActionResult:
+    async def toggle_wifi(self, enable: bool) -> Dict:
         """Toggle WiFi interface."""
         provider = self._providers.get("network")
         if not provider:
-            return ActionResult(success=False, message="Network provider not available")
+            return ActionResult(success=False, message="Network provider not available").to_dict()
         
         action = "enable" if enable else "disable"
-        return await provider.execute_action("wlan0", action)
+        result = await provider.execute_action("wlan0", action)
+        return result.to_dict()
     
+    async def wifi_status(self) -> Dict:
+        """Get WiFi status."""
+        provider = self._providers.get("network")
+        if not provider:
+            return {"connected": False, "radio_enabled": False}
+        
+        result = await provider.execute_action("wlan0", "status")
+        return result.data if result.success else {"connected": False, "radio_enabled": False}
+    
+    async def wifi_connect(self, ssid: str, password: str = None, hidden: bool = False) -> Dict:
+        """Connect to WiFi network."""
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        
+        result = await provider.execute_action("wlan0", "connect", {"ssid": ssid, "password": password, "hidden": hidden})
+        return result.to_dict()
+    
+    async def wifi_disconnect(self) -> Dict:
+        """Disconnect from WiFi."""
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        
+        result = await provider.execute_action("wlan0", "disconnect")
+        return result.to_dict()
+
     async def scan_wifi(self) -> List[Dict]:
         """Scan for WiFi networks."""
         provider = self._providers.get("network")

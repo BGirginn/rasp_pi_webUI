@@ -129,6 +129,12 @@ class PiAgent:
             "network.interfaces": self.provider_manager.get_network_interfaces,
             "network.wifi.toggle": self.provider_manager.toggle_wifi,
             "network.wifi.scan": self.provider_manager.scan_wifi,
+            "network.wifi.status": self.provider_manager.wifi_status,
+            "network.wifi.connect": self.provider_manager.wifi_connect,
+            "network.wifi.disconnect": self.provider_manager.wifi_disconnect,
+            "network.interface.enable": lambda interface: self.provider_manager.toggle_wifi(True),
+            "network.interface.disable": lambda interface, rollback_seconds=0: self.provider_manager.toggle_wifi(False),
+            "network.interface.restart": lambda interface: self.provider_manager.toggle_wifi(True),
             
             # Devices
             "devices.list": self.provider_manager.get_devices,

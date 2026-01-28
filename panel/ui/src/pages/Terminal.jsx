@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import BreakGlassModal from '../components/BreakGlassModal'
 
 export default function Terminal() {
     const terminalRef = useRef(null)
@@ -11,8 +12,60 @@ export default function Terminal() {
     const fitAddonRef = useRef(null)
 
     const [connected, setConnected] = useState(false)
+    const [mode, setMode] = useState(null) // 'restricted' or 'full'
     const [error, setError] = useState(null)
-    const [connecting, setConnecting] = useState(false)
+    const [connecting, setConnecting] = useState(false) // Restore
+    const [showBreakGlass, setShowBreakGlass] = useState(false) // Restore
+    const [expiryTime, setExpiryTime] = useState(null)
+    const [timeLeft, setTimeLeft] = useState(null)
+
+    useEffect(() => {
+        if (!expiryTime) {
+            setTimeLeft(null)
+            return
+        }
+
+        const interval = setInterval(() => {
+            const remaining = Math.max(0, Math.ceil((expiryTime - Date.now()) / 1000))
+            setTimeLeft(remaining)
+
+            if (remaining <= 0) {
+                setExpiryTime(null)
+                // Optionally disconnect or show expired state here
+            }
+        }, 1000)
+
+        // Initial set
+        setTimeLeft(Math.max(0, Math.ceil((expiryTime - Date.now()) / 1000)))
+
+        return () => clearInterval(interval)
+    }, [expiryTime])
+
+    const formatTime = (seconds) => {
+        if (seconds === null) return ''
+        const m = Math.floor(seconds / 60)
+        const s = seconds % 60
+        return `${m}:${s.toString().padStart(2, '0')}`
+    }
+
+    // ... (rest of imports/setup)
+
+    const handleFullConnectSuccess = () => {
+        // Set expiry to 10 minutes from now (matching backend default)
+        // Ideally backend should send expires_at in handshake
+        setExpiryTime(Date.now() + 10 * 60 * 1000)
+    }
+
+    // In connectFullWithToken's onmessage:
+    // ...
+    // if (data.status === 'connected') {
+    //    ...
+    //    handleFullConnectSuccess()
+    // }
+
+    // In disconnect:
+    // setExpiryTime(null)
+
 
     useEffect(() => {
         // Initialize xterm.js
@@ -105,6 +158,7 @@ export default function Terminal() {
 
         setConnecting(true)
         setError(null)
+        setMode(null)
 
         const term = xtermRef.current
         const token = localStorage.getItem('access_token')
@@ -125,10 +179,12 @@ export default function Terminal() {
         wsRef.current = ws
 
         ws.onopen = () => {
-            // Send auth token and terminal size
+            // Send auth token and terminal size - request full mode
+            // Try full mode first, if no breakglass token, backend will return error
+            // and we fall back to restricted mode
             ws.send(JSON.stringify({
                 token: token,
-                user: 'admin',
+                mode: 'full',  // Request full PTY mode
                 cols: term.cols,
                 rows: term.rows
             }))
@@ -142,22 +198,31 @@ export default function Terminal() {
                     if (data.status === 'connected') {
                         setConnected(true)
                         setConnecting(false)
+                        setMode(data.mode)
                         term.writeln('\x1b[32mConnected! You now have shell access.\x1b[0m')
                         term.writeln('')
 
                         // Focus terminal
                         term.focus()
+                    } else if (data.code === 'BREAKGLASS_REQUIRED') {
+                        // Switch to restricted mode - break-glass not available
+                        term.writeln('\x1b[33mFull shell requires break-glass elevation.\x1b[0m')
+                        term.writeln('\x1b[33mConnecting in restricted mode...\x1b[0m')
+
+                        // Reconnect in restricted mode
+                        ws.close()
+                        connectRestricted()
                     } else if (data.error) {
                         setError(data.error)
                         setConnecting(false)
                         term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
                     }
                 } catch {
-                    // Regular text output
+                    // Regular text output from full PTY mode
                     term.write(event.data)
                 }
             } else if (event.data instanceof Blob) {
-                // Binary data
+                // Binary data from full PTY mode
                 event.data.arrayBuffer().then(buffer => {
                     const text = new TextDecoder().decode(buffer)
                     term.write(text)
@@ -169,20 +234,190 @@ export default function Terminal() {
             setError('Connection error')
             setConnecting(false)
             setConnected(false)
+            setMode(null)
             term.writeln('\x1b[31mConnection error occurred.\x1b[0m')
         }
 
         ws.onclose = () => {
             setConnected(false)
             setConnecting(false)
+            setMode(null)
             term.writeln('')
             term.writeln('\x1b[33mConnection closed.\x1b[0m')
         }
 
-        // Send terminal input to server
+        // Send terminal input to server (for full PTY mode)
         term.onData((data) => {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.send(data)
+            }
+        })
+    }
+
+    const connectFullWithToken = (breakglassToken) => {
+        if (wsRef.current) {
+            wsRef.current.close()
+        }
+
+        setConnecting(true)
+        setError(null)
+        setMode(null)
+
+        const term = xtermRef.current
+        const token = localStorage.getItem('access_token')
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws`
+
+        term.writeln('\x1b[33mConnecting to Full Shell (Elevated)...\x1b[0m')
+
+        const ws = new WebSocket(wsUrl)
+        wsRef.current = ws
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({
+                token: token,
+                mode: 'full',
+                breakglass_token: breakglassToken,
+                cols: term.cols,
+                rows: term.rows
+            }))
+        }
+
+        // Re-use standard handler logic (simplified for brevity as they are similar)
+        ws.onmessage = (event) => {
+            if (typeof event.data === 'string') {
+                try {
+                    const data = JSON.parse(event.data)
+                    if (data.status === 'connected') {
+                        setConnected(true)
+                        setConnecting(false)
+                        setMode('full')
+                        setExpiryTime(Date.now() + 10 * 60 * 1000) // Start timer (10m)
+                        term.writeln('\x1b[32mConnected to Full Shell! Access granted.\x1b[0m')
+                        term.writeln('')
+                        term.focus()
+                    } else if (data.error) {
+                        setError(data.error)
+                        setConnecting(false)
+                        term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
+                    }
+                } catch {
+                    term.write(event.data)
+                }
+            } else if (event.data instanceof Blob) {
+                event.data.arrayBuffer().then(buffer => {
+                    const text = new TextDecoder().decode(buffer)
+                    term.write(text)
+                })
+            }
+        }
+
+        ws.onerror = () => {
+            setError('Connection error')
+            setConnecting(false)
+            setConnected(false)
+            term.writeln('\x1b[31mConnection error.\x1b[0m')
+        }
+
+        ws.onclose = () => {
+            setConnected(false)
+            setConnecting(false)
+            setMode(null)
+            setExpiryTime(null)
+            term.writeln('\x1b[33mConnection closed.\x1b[0m')
+        }
+
+        term.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(data)
+        })
+    }
+
+    const connectRestricted = () => {
+        const term = xtermRef.current
+        const token = localStorage.getItem('access_token')
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws`
+
+        const ws = new WebSocket(wsUrl)
+        wsRef.current = ws
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({
+                token: token,
+                mode: 'restricted',
+                cols: term.cols,
+                rows: term.rows
+            }))
+        }
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data)
+
+                if (data.status === 'connected') {
+                    setConnected(true)
+                    setConnecting(false)
+                    setMode('restricted')
+                    term.writeln('\x1b[32mConnected in restricted mode.\x1b[0m')
+                    term.writeln('\x1b[33mType commands and press Enter. Only allowlisted commands work.\x1b[0m')
+                    term.writeln('')
+                    term.write('$ ')
+                } else if (data.type === 'output') {
+                    term.writeln(data.output)
+                    term.write('$ ')
+                } else if (data.type === 'error') {
+                    term.writeln(`\x1b[31m${data.error}\x1b[0m`)
+                    term.write('$ ')
+                } else if (data.error) {
+                    term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
+                }
+            } catch {
+                term.write(event.data)
+            }
+        }
+
+        ws.onerror = () => {
+            setError('Connection error')
+            setConnecting(false)
+            setConnected(false)
+            setMode(null)
+        }
+
+        ws.onclose = () => {
+            setConnected(false)
+            setMode(null)
+            term.writeln('\x1b[33mConnection closed.\x1b[0m')
+        }
+
+        // For restricted mode, buffer input and send as command on Enter
+        let inputBuffer = ''
+        term.onData((data) => {
+            if (ws.readyState !== WebSocket.OPEN) return
+
+            if (data === '\r') {
+                // Enter pressed - send command
+                term.writeln('')
+                if (inputBuffer.trim()) {
+                    ws.send(JSON.stringify({
+                        type: 'command',
+                        command: inputBuffer.trim()
+                    }))
+                } else {
+                    term.write('$ ')
+                }
+                inputBuffer = ''
+            } else if (data === '\x7f') {
+                // Backspace
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1)
+                    term.write('\b \b')
+                }
+            } else if (data >= ' ' || data === '\t') {
+                // Printable character
+                inputBuffer += data
+                term.write(data)
             }
         })
     }
@@ -193,10 +428,18 @@ export default function Terminal() {
             wsRef.current = null
         }
         setConnected(false)
+        setMode(null)
+        setExpiryTime(null)
     }
 
     return (
-        <div className="h-full flex flex-col animate-fade-in">
+        <div className="h-[calc(100vh-10rem)] flex flex-col animate-fade-in relative">
+            <BreakGlassModal
+                isOpen={showBreakGlass}
+                onClose={() => setShowBreakGlass(false)}
+                onSuccess={connectFullWithToken}
+            />
+
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -205,12 +448,20 @@ export default function Terminal() {
                         ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                         : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
                         }`}>
-                        {connected ? '● Connected' : '○ Disconnected'}
+                        {connected ? `● Connected (${mode})` : '○ Disconnected'}
                     </span>
+
+                    {/* Timer */}
+                    {mode === 'full' && timeLeft !== null && (
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 flex items-center gap-1 animate-pulse">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            {formatTime(timeLeft)}
+                        </span>
+                    )}
                 </div>
 
                 <div className="flex gap-3">
-                    {!connected ? (
+                    {!connected && (
                         <button
                             onClick={connect}
                             disabled={connecting}
@@ -230,10 +481,25 @@ export default function Terminal() {
                                 </>
                             )}
                         </button>
-                    ) : (
+                    )}
+
+                    {(!connected || mode === 'restricted') && (
+                        <button
+                            onClick={() => setShowBreakGlass(true)}
+                            disabled={connecting}
+                            className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-all flex items-center gap-2 disabled:opacity-50"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                            Full Shell
+                        </button>
+                    )}
+
+                    {connected && (
                         <button
                             onClick={disconnect}
-                            className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-all flex items-center gap-2"
+                            className="px-4 py-2 rounded-lg bg-gray-500/20 border border-gray-500/50 text-gray-400 hover:bg-gray-500/30 transition-all flex items-center gap-2"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -252,11 +518,11 @@ export default function Terminal() {
             )}
 
             {/* Terminal container */}
-            <div className="flex-1 rounded-xl overflow-hidden bg-[#0d1117] border border-white/10">
+            <div className="flex-1 rounded-xl overflow-hidden bg-[#0d1117] border border-white/10" style={{ minHeight: '400px' }}>
                 <div
                     ref={terminalRef}
-                    className="h-full p-3 cursor-text"
-                    style={{ minHeight: '500px' }}
+                    className="w-full h-full"
+                    style={{ padding: '8px' }}
                 />
             </div>
 

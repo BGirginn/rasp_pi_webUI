@@ -58,10 +58,12 @@ async def list_interfaces(user: dict = Depends(get_current_user)):
     """List all network interfaces."""
     try:
         interfaces = await agent_client.get_network_interfaces()
-        return interfaces
+        if interfaces:
+            return interfaces
     except Exception:
-        # Fallback: Get real network interfaces from local system
-        return await _get_local_interfaces()
+        pass
+    # Fallback: Get real network interfaces from local system
+    return await _get_local_interfaces()
 
 
 async def _get_local_interfaces() -> List[InterfaceResponse]:

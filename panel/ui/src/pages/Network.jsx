@@ -16,6 +16,8 @@ function InterfaceCard({ iface, onAction }) {
         ethernet: '🔌',
         wifi: '📶',
         bluetooth: '📱',
+        vpn: '🔒',
+        bridge: '🌉',
         loopback: '🔄',
     }
 
@@ -29,23 +31,23 @@ function InterfaceCard({ iface, onAction }) {
                         <p className="text-sm text-gray-500">{iface.type}</p>
                     </div>
                 </div>
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${stateColors[iface.state]}`}>
-                    {iface.state}
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${stateColors[iface.status] || stateColors.unknown}`}>
+                    {iface.status}
                 </span>
             </div>
 
             {/* IP Info */}
             <div className="space-y-2 mb-4">
-                {iface.ip_address && (
+                {iface.ip && (
                     <div className="flex justify-between text-sm">
                         <span className="text-gray-500">IP Address</span>
-                        <span className="text-gray-100 font-mono">{iface.ip_address}</span>
+                        <span className="text-gray-100 font-mono">{iface.ip}</span>
                     </div>
                 )}
-                {iface.mac_address && (
+                {iface.mac && (
                     <div className="flex justify-between text-sm">
                         <span className="text-gray-500">MAC</span>
-                        <span className="text-gray-100 font-mono text-xs">{iface.mac_address}</span>
+                        <span className="text-gray-100 font-mono text-xs">{iface.mac}</span>
                     </div>
                 )}
                 {iface.gateway && (
@@ -81,7 +83,7 @@ function InterfaceCard({ iface, onAction }) {
             {/* Actions */}
             {isAdmin && iface.type !== 'loopback' && (
                 <div className="flex gap-2">
-                    {iface.state === 'up' ? (
+                    {iface.status === 'up' ? (
                         <button
                             onClick={() => onAction(iface.name, 'disable')}
                             className="btn btn-danger text-sm py-1 px-3 flex-1"
