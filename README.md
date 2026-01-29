@@ -71,7 +71,7 @@ cd rasp_pi_webUI
 ./deploy-native.sh user@<tailscale-ip>
 ```
 
-### Manual Installation on Pi
+### Installation on Pi
 
 ```bash
 # Clone the repository
@@ -80,17 +80,7 @@ cd rasp_pi_webUI
 
 # Run install script
 chmod +x install.sh
-./install.sh
-```
-
-### 🔄 Auto-Start Setup (Recommended)
-
-One command to install and configure everything to auto-start on boot:
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-sudo ./setup-autostart.sh
+sudo ./install.sh
 ```
 
 This script will:
