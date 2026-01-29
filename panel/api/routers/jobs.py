@@ -6,18 +6,89 @@ Handles job scheduling, execution, and history.
 
 import json
 import uuid
+import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from db import get_control_db
 from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
-from .auth import get_current_user, require_role
+from .auth import get_current_user, require_role, get_current_user_sse
 
 router = APIRouter()
+
+
+async def _sync_job_status(db, job_id: str) -> None:
+    """Sync job status from agent if available."""
+    try:
+        status = await agent_client.get_job_status(job_id)
+    except Exception:
+        return
+
+    if not status:
+        return
+
+    state = status.get("state")
+    result = status.get("result")
+    error = status.get("error")
+    completed_at = status.get("completed_at")
+    started_at = status.get("started_at")
+
+    progress = 100 if state in ("completed", "failed", "rolled_back", "cancelled") else 0
+
+    await db.execute(
+        """UPDATE jobs SET state = ?, progress = ?, result_json = ?, error = ?,
+                  started_at = COALESCE(?, started_at),
+                  completed_at = COALESCE(?, completed_at)
+           WHERE id = ?""",
+        (
+            state,
+            progress,
+            json.dumps(result) if result else None,
+            error,
+            started_at,
+            completed_at,
+            job_id,
+        )
+    )
+    await db.commit()
+
+
+async def _sync_job_logs(db, job_id: str) -> None:
+    """Sync job logs from agent if available."""
+    try:
+        logs = await agent_client.get_job_logs(job_id)
+    except Exception:
+        return
+
+    if not logs:
+        return
+
+    cursor = await db.execute(
+        "SELECT created_at FROM job_logs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+        (job_id,)
+    )
+    row = await cursor.fetchone()
+    last_ts = row[0] if row else None
+
+    new_logs = []
+    for entry in logs:
+        created_at = entry.get("created_at")
+        if last_ts and created_at and created_at <= last_ts:
+            continue
+        new_logs.append(entry)
+
+    for entry in new_logs:
+        await db.execute(
+            "INSERT INTO job_logs (job_id, level, message, created_at) VALUES (?, ?, ?, ?)",
+            (job_id, entry.get("level", "info"), entry.get("message", ""), entry.get("created_at"))
+        )
+    if new_logs:
+        await db.commit()
 
 
 class JobCreate(BaseModel):
@@ -71,9 +142,9 @@ JOB_TYPES = {
         "name": "System Update",
         "description": "Update containers and system packages",
         "config_schema": {
-            "update_containers": {"type": "boolean", "default": True},
-            "update_system": {"type": "boolean", "default": False},
-            "auto_restart": {"type": "boolean", "default": True},
+            "backup_only": {"type": "boolean", "default": False},
+            "no_backup": {"type": "boolean", "default": False},
+            "force": {"type": "boolean", "default": False},
         }
     },
     "cleanup": {
@@ -157,6 +228,9 @@ async def list_jobs(
 async def get_job(job_id: str, user: dict = Depends(get_current_user)):
     """Get job details."""
     db = await get_control_db()
+
+    await _sync_job_status(db, job_id)
+    await _sync_job_logs(db, job_id)
     
     cursor = await db.execute(
         """SELECT id, name, type, state, progress, config_json, result_json,
@@ -217,7 +291,9 @@ async def create_job(
     
     # Try to start job on agent
     try:
-        await agent_client.run_job(job.type, job.name, job.config)
+        config = job.config or {}
+        config["job_id"] = job_id
+        await agent_client.run_job(job.type, job.name, config)
         
         # Update state to running
         await db.execute(
@@ -353,6 +429,8 @@ async def get_job_logs(
 ):
     """Get logs for a specific job."""
     db = await get_control_db()
+
+    await _sync_job_logs(db, job_id)
     
     cursor = await db.execute(
         """SELECT level, message, created_at FROM job_logs
@@ -365,6 +443,61 @@ async def get_job_logs(
         JobLogEntry(level=row[0], message=row[1], created_at=row[2])
         for row in rows
     ]
+
+
+@router.get("/{job_id}/stream")
+async def stream_job(
+    job_id: str,
+    user: dict = Depends(get_current_user_sse)
+):
+    """Stream job updates and logs via SSE."""
+    async def event_generator():
+        while True:
+            db = await get_control_db()
+            await _sync_job_status(db, job_id)
+            await _sync_job_logs(db, job_id)
+
+            job_cursor = await db.execute(
+                """SELECT id, name, type, state, progress, config_json, result_json,
+                          error, started_by, started_at, completed_at, created_at
+                   FROM jobs WHERE id = ?""",
+                (job_id,)
+            )
+            job_row = await job_cursor.fetchone()
+            if not job_row:
+                yield "event: job_update\ndata: {}\n\n"
+                await asyncio.sleep(2)
+                continue
+
+            logs_cursor = await db.execute(
+                "SELECT level, message, created_at FROM job_logs WHERE job_id = ? ORDER BY created_at",
+                (job_id,)
+            )
+            logs = [
+                {"level": r[0], "message": r[1], "created_at": r[2]}
+                for r in await logs_cursor.fetchall()
+            ]
+
+            job = {
+                "id": job_row[0],
+                "name": job_row[1],
+                "type": job_row[2],
+                "state": job_row[3],
+                "progress": job_row[4] or 0,
+                "config": json.loads(job_row[5]) if job_row[5] else None,
+                "result": json.loads(job_row[6]) if job_row[6] else None,
+                "error": job_row[7],
+                "started_by": job_row[8],
+                "started_at": job_row[9],
+                "completed_at": job_row[10],
+                "created_at": job_row[11],
+            }
+
+            payload = json.dumps({"job": job, "logs": logs})
+            yield f"event: job_update\ndata: {payload}\n\n"
+            await asyncio.sleep(2)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.delete("/{job_id}")

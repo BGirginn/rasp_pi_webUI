@@ -276,6 +276,17 @@ POST /api/jobs/{job_id}/cancel
 GET /api/jobs/{job_id}/logs
 ```
 
+### Stream Job Updates (SSE)
+
+```http
+GET /api/jobs/{job_id}/stream
+```
+
+**Notes:**
+- Uses Server-Sent Events.
+- For EventSource, pass token as query string: `?token=<access_token>`.
+- Emits `job_update` events with payload `{ job, logs }`.
+
 ---
 
 ## Alerts (`/api/alerts`)

@@ -152,6 +152,18 @@ async def _init_control_schema(db):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Job logs table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS job_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            level TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+        )
+    """)
     
     # Alert rules table
     await db.execute("""
@@ -205,6 +217,7 @@ async def _init_control_schema(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_breakglass_user ON breakglass_sessions(user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_breakglass_expires ON breakglass_sessions(expires_at)")

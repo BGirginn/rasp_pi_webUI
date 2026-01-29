@@ -69,6 +69,7 @@ class JobRunner:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._workers: List[asyncio.Task] = []
         self._running = False
+            self._job_logs: Dict[str, List[Dict]] = {}
     
     @property
     def is_healthy(self) -> bool:
@@ -137,6 +138,7 @@ class JobRunner:
         """Execute a job with full lifecycle."""
         job.state = JobState.RUNNING
         job.started_at = datetime.utcnow()
+        self._append_log(job.id, "info", f"Job started: {job.name} ({job.type})")
         
         try:
             # Get job handler
@@ -151,7 +153,9 @@ class JobRunner:
                 name="precheck"
             )
             if not precheck_result.get("passed", False):
+                    self._append_log(job.id, "error", f"Precheck failed: {precheck_result.get('reason', 'Unknown')}")
                 raise ValueError(f"Precheck failed: {precheck_result.get('reason', 'Unknown')}")
+                self._append_log(job.id, "info", "Precheck passed")
             
             # 2. Snapshot (optional)
             snapshot = None
@@ -168,6 +172,8 @@ class JobRunner:
                 timeout=job.config.get("timeout", self._default_timeout),
                 name="execute"
             )
+            if isinstance(result, dict) and result.get("output"):
+                self._append_log(job.id, "info", result.get("output"))
             
             # 4. Verify
             if hasattr(handler, "verify"):
@@ -187,19 +193,23 @@ class JobRunner:
             # Success
             job.state = JobState.COMPLETED
             job.result = result
+                self._append_log(job.id, "info", "Job completed")
             
         except asyncio.TimeoutError:
             job.state = JobState.FAILED
             job.error = "Job timed out"
+                self._append_log(job.id, "error", job.error)
             logger.error("Job timed out", job_id=job.id)
             
         except Exception as e:
             job.state = JobState.FAILED
             job.error = str(e)
+                self._append_log(job.id, "error", job.error)
             logger.exception("Job failed", job_id=job.id, error=str(e))
             
         finally:
             job.completed_at = datetime.utcnow()
+                self._append_log(job.id, "info", f"Job finished with state: {job.state.value}")
             if job.id in self._running_jobs:
                 del self._running_jobs[job.id]
     
@@ -227,7 +237,10 @@ class JobRunner:
         config: Optional[Dict] = None
     ) -> Dict:
         """Queue a job for execution."""
-        job_id = str(uuid.uuid4())[:8]
+        job_id = None
+        if config and isinstance(config, dict):
+            job_id = config.get("job_id")
+        job_id = job_id or str(uuid.uuid4())[:8]
         
         job = Job(
             id=job_id,
@@ -239,9 +252,20 @@ class JobRunner:
         self._jobs[job_id] = job
         await self._queue.put(job_id)
         
+            self._append_log(job_id, "info", f"Job queued: {name} ({job_type})")
         logger.info("Job queued", job_id=job_id, type=job_type, name=name)
         
         return job.to_dict()
+            """Get logs for a job."""
+            return self._job_logs.get(job_id, [])
+
+        def _append_log(self, job_id: str, level: str, message: str) -> None:
+            """Append log entry for a job."""
+            self._job_logs.setdefault(job_id, []).append({
+                "level": level,
+                "message": message,
+                "created_at": datetime.utcnow().isoformat()
+            })
     
     async def get_status(self, job_id: str) -> Optional[Dict]:
         """Get job status."""

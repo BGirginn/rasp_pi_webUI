@@ -155,6 +155,10 @@ class AgentClient:
     async def get_job_status(self, job_id: str) -> Dict:
         """Get job status."""
         return await self.call("job.status", {"job_id": job_id})
+
+    async def get_job_logs(self, job_id: str) -> list:
+        """Get job logs."""
+        return await self.call("job.logs", {"job_id": job_id})
     
     async def cancel_job(self, job_id: str) -> Dict:
         """Cancel a running job."""

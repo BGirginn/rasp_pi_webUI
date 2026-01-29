@@ -30,6 +30,8 @@ function JobStatusBadge({ state }) {
 // Job card component
 function JobCard({ job, onAction }) {
     const [expanded, setExpanded] = useState(false)
+    const [logs, setLogs] = useState([])
+    const [logsLoading, setLogsLoading] = useState(false)
 
     const typeIcons = {
         backup: '💾',
@@ -38,6 +40,48 @@ function JobCard({ job, onAction }) {
         cleanup: '🧹',
         healthcheck: '🩺',
     }
+
+    useEffect(() => {
+        let eventSource
+
+        async function loadLogs() {
+            setLogsLoading(true)
+            try {
+                const response = await api.get(`/jobs/${job.id}/logs`)
+                setLogs(response.data)
+            } catch (err) {
+                console.error('Failed to load job logs:', err)
+            } finally {
+                setLogsLoading(false)
+            }
+        }
+
+        if (expanded) {
+            loadLogs()
+            const token = localStorage.getItem('access_token')
+            const url = `/api/jobs/${job.id}/stream${token ? `?token=${token}` : ''}`
+            eventSource = new EventSource(url, { withCredentials: true })
+
+            eventSource.addEventListener('job_update', (event) => {
+                try {
+                    const data = JSON.parse(event.data)
+                    if (data.logs) {
+                        setLogs(data.logs)
+                    }
+                } catch (e) {
+                    console.error('Failed to parse job stream data:', e)
+                }
+            })
+
+            eventSource.onerror = () => {
+                if (eventSource) eventSource.close()
+            }
+        }
+
+        return () => {
+            if (eventSource) eventSource.close()
+        }
+    }, [expanded, job.id])
 
     return (
         <div className="glass-card rounded-xl p-5 animate-slide-in">
@@ -128,6 +172,23 @@ function JobCard({ job, onAction }) {
                             {job.error}
                         </div>
                     )}
+                    <div className="mt-3">
+                        <p className="text-xs text-gray-500 mb-1">Logs</p>
+                        {logsLoading ? (
+                            <div className="text-xs text-gray-400">Loading logs...</div>
+                        ) : logs.length > 0 ? (
+                            <div className="max-h-48 overflow-auto text-xs text-gray-300 bg-gray-900/40 rounded p-2">
+                                {logs.map((entry, index) => (
+                                    <div key={`${entry.created_at}-${index}`} className="mb-1">
+                                        <span className="text-gray-500 mr-2">[{entry.level}]</span>
+                                        <span>{entry.message}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-gray-400">No logs yet.</div>
+                        )}
+                    </div>
                 </div>
             )}
         </div>

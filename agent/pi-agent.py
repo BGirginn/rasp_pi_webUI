@@ -17,6 +17,7 @@ import asyncio
 import argparse
 import signal
 import sys
+import shlex
 from pathlib import Path
 
 import structlog
@@ -120,6 +121,7 @@ class PiAgent:
             "job.run": self.job_runner.run_job,
             "job.status": self.job_runner.get_status,
             "job.cancel": self.job_runner.cancel_job,
+            "job.logs": self.job_runner.get_logs,
             
             # System
             "system.info": self._get_system_info,
@@ -132,9 +134,12 @@ class PiAgent:
             "network.wifi.status": self.provider_manager.wifi_status,
             "network.wifi.connect": self.provider_manager.wifi_connect,
             "network.wifi.disconnect": self.provider_manager.wifi_disconnect,
-            "network.interface.enable": lambda interface: self.provider_manager.toggle_wifi(True),
-            "network.interface.disable": lambda interface, rollback_seconds=0: self.provider_manager.toggle_wifi(False),
-            "network.interface.restart": lambda interface: self.provider_manager.toggle_wifi(True),
+            "network.interface.enable": self._interface_enable,
+            "network.interface.disable": self._interface_disable,
+            "network.interface.restart": self._interface_restart,
+            "network.connectivity.check": self._check_connectivity,
+            "network.dns.get": self._get_dns_config,
+            "system.execute": self._execute_command,
             
             # Devices
             "devices.list": self.provider_manager.get_devices,
@@ -186,6 +191,109 @@ class PiAgent:
             return {"error": "MQTT bridge not enabled"}
         
         return await self.mqtt_bridge.send_command(device_id, command, payload)
+
+    async def _execute_command(self, command: str, timeout: int = 30) -> dict:
+        """Execute a command on the host (used by admin console)."""
+        if not command or not command.strip():
+            return {"exit_code": 1, "output": "", "error": "Empty command"}
+
+        args = shlex.split(command)
+        if not args:
+            return {"exit_code": 1, "output": "", "error": "Invalid command"}
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                return {"exit_code": 124, "output": "", "error": "Command timed out"}
+
+            output = stdout.decode("utf-8", errors="replace") if stdout else ""
+            return {"exit_code": proc.returncode or 0, "output": output}
+        except Exception as e:
+            return {"exit_code": 1, "output": "", "error": str(e)}
+
+    async def _interface_enable(self, interface: str) -> dict:
+        """Enable a network interface."""
+        return await self.provider_manager.toggle_interface(interface, True)
+
+    async def _interface_disable(self, interface: str, rollback_seconds: int = 0) -> dict:
+        """Disable a network interface with optional rollback."""
+        return await self.provider_manager.toggle_interface(interface, False, rollback_seconds=rollback_seconds)
+
+    async def _interface_restart(self, interface: str) -> dict:
+        """Restart a network interface."""
+        return await self.provider_manager.restart_interface(interface)
+
+    async def _check_connectivity(self) -> dict:
+        """Check LAN/internet/DNS connectivity."""
+        async def _run(cmd: list) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            stdout, _ = await proc.communicate()
+            return proc.returncode, stdout.decode("utf-8", errors="replace") if stdout else ""
+
+        internet = False
+        dns = False
+        latency_ms = None
+
+        rc, out = await _run(["ping", "-c", "1", "-W", "2", "1.1.1.1"])
+        if rc == 0:
+            internet = True
+            for part in out.split():
+                if part.startswith("time="):
+                    try:
+                        latency_ms = float(part.replace("time=", "").replace("ms", ""))
+                    except ValueError:
+                        pass
+
+        rc, _ = await _run(["getent", "hosts", "example.com"])
+        if rc == 0:
+            dns = True
+
+        rc, _ = await _run(["ip", "link", "show", "tailscale0"])
+        tailscale = rc == 0
+
+        return {
+            "lan": True,
+            "internet": internet,
+            "dns": dns,
+            "tailscale": tailscale,
+            "latency_ms": latency_ms or 0
+        }
+
+    async def _get_dns_config(self) -> dict:
+        """Read DNS configuration from resolv.conf."""
+        servers = []
+        search = []
+        try:
+            with open("/etc/resolv.conf", "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("nameserver"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            servers.append(parts[1])
+                    elif line.startswith("search"):
+                        parts = line.split()
+                        search.extend(parts[1:])
+        except Exception:
+            pass
+
+        return {
+            "primary": servers[0] if servers else None,
+            "secondary": servers[1] if len(servers) > 1 else None,
+            "search_domains": search
+        }
     
     async def _discovery_loop(self):
         """Run discovery at configured interval."""
