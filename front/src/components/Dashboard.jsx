@@ -9,6 +9,7 @@ import { NetworkPage } from '../pages/NetworkPage';
 import { TerminalPage } from '../pages/TerminalPage';
 import { AlertsPage } from '../pages/AlertsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { AppStorePage } from '../pages/AppStorePage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { TopBarActions } from './TopBarActions';
@@ -41,6 +42,8 @@ export function Dashboard() {
                 return <AlertsPage />;
             case 'settings':
                 return <SettingsPage />;
+            case 'appstore':
+                return <AppStorePage />;
             default:
                 return <DashboardGrid />;
         }

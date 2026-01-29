@@ -1,0 +1,385 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-01-29",
+  "categories": [
+    {
+      "id": "media",
+      "name": "Media & Entertainment",
+      "icon": "play-circle"
+    },
+    {
+      "id": "network",
+      "name": "Network & Security",
+      "icon": "shield"
+    },
+    {
+      "id": "home",
+      "name": "Home Automation",
+      "icon": "home"
+    },
+    {
+      "id": "storage",
+      "name": "Storage & Cloud",
+      "icon": "hard-drive"
+    },
+    {
+      "id": "monitoring",
+      "name": "Monitoring & Analytics",
+      "icon": "activity"
+    },
+    {
+      "id": "development",
+      "name": "Development Tools",
+      "icon": "code"
+    }
+  ],
+  "apps": [
+    {
+      "id": "pihole",
+      "name": "Pi-hole",
+      "description": "Network-wide ad blocking via your own Linux hardware",
+      "long_description": "Pi-hole is a DNS sinkhole that protects your devices from unwanted content, without installing any client-side software. Block ads and trackers on your entire network.",
+      "category": "network",
+      "image": "pihole/pihole:latest",
+      "version": "latest",
+      "website": "https://pi-hole.net",
+      "documentation": "https://docs.pi-hole.net",
+      "ports": [
+        {"host": 8053, "container": 80, "protocol": "tcp", "description": "Web Interface"},
+        {"host": 53, "container": 53, "protocol": "tcp", "description": "DNS TCP"},
+        {"host": 53, "container": 53, "protocol": "udp", "description": "DNS UDP"}
+      ],
+      "volumes": [
+        {"host": "/opt/pihole/etc-pihole", "container": "/etc/pihole", "description": "Pi-hole config"},
+        {"host": "/opt/pihole/etc-dnsmasq.d", "container": "/etc/dnsmasq.d", "description": "DNS config"}
+      ],
+      "environment": [
+        {"key": "TZ", "value": "Europe/Istanbul", "description": "Timezone"},
+        {"key": "WEBPASSWORD", "value": "", "description": "Admin password (leave empty to generate)", "required": false}
+      ],
+      "capabilities": ["NET_ADMIN"],
+      "restart_policy": "unless-stopped",
+      "logo": "https://pi-hole.github.io/graphics/Vortex/Vortex_with_text.svg",
+      "screenshots": [],
+      "tags": ["dns", "ad-blocker", "privacy", "network"],
+      "min_memory_mb": 128,
+      "recommended_memory_mb": 256,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "homeassistant",
+      "name": "Home Assistant",
+      "description": "Open source home automation that puts local control and privacy first",
+      "long_description": "Home Assistant is a free and open-source software for home automation designed to be a central control system for smart home devices with a focus on local control and privacy.",
+      "category": "home",
+      "image": "ghcr.io/home-assistant/home-assistant:stable",
+      "version": "stable",
+      "website": "https://www.home-assistant.io",
+      "documentation": "https://www.home-assistant.io/docs",
+      "ports": [
+        {"host": 8123, "container": 8123, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/homeassistant/config", "container": "/config", "description": "Configuration"},
+        {"host": "/etc/localtime", "container": "/etc/localtime", "readonly": true, "description": "Timezone"}
+      ],
+      "environment": [
+        {"key": "TZ", "value": "Europe/Istanbul", "description": "Timezone"}
+      ],
+      "privileged": true,
+      "network_mode": "host",
+      "restart_policy": "unless-stopped",
+      "logo": "https://upload.wikimedia.org/wikipedia/en/4/49/Home_Assistant_logo_%282023%29.svg",
+      "screenshots": [],
+      "tags": ["smart-home", "automation", "iot", "zigbee", "z-wave"],
+      "min_memory_mb": 512,
+      "recommended_memory_mb": 1024,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "portainer",
+      "name": "Portainer",
+      "description": "Lightweight Docker management UI",
+      "long_description": "Portainer is a lightweight management UI which allows you to easily manage your Docker environments. It is designed to be easy to use and offers a simple solution to manage Docker containers, images, networks, and volumes.",
+      "category": "development",
+      "image": "portainer/portainer-ce:latest",
+      "version": "latest",
+      "website": "https://www.portainer.io",
+      "documentation": "https://docs.portainer.io",
+      "ports": [
+        {"host": 9000, "container": 9000, "protocol": "tcp", "description": "Web Interface"},
+        {"host": 9443, "container": 9443, "protocol": "tcp", "description": "HTTPS Interface"}
+      ],
+      "volumes": [
+        {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "description": "Docker socket"},
+        {"host": "/opt/portainer/data", "container": "/data", "description": "Portainer data"}
+      ],
+      "environment": [],
+      "restart_policy": "always",
+      "logo": "https://www.portainer.io/hubfs/portainer-logo-black.svg",
+      "screenshots": [],
+      "tags": ["docker", "management", "containers", "ui"],
+      "min_memory_mb": 64,
+      "recommended_memory_mb": 128,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "plex",
+      "name": "Plex Media Server",
+      "description": "Organize, beautify, stream, and share your media collection",
+      "long_description": "Plex organizes all of your personal media so you can enjoy it no matter where you are. Stream your media to any device, anywhere.",
+      "category": "media",
+      "image": "linuxserver/plex:latest",
+      "version": "latest",
+      "website": "https://www.plex.tv",
+      "documentation": "https://support.plex.tv",
+      "ports": [
+        {"host": 32400, "container": 32400, "protocol": "tcp", "description": "Plex Media Server"}
+      ],
+      "volumes": [
+        {"host": "/opt/plex/config", "container": "/config", "description": "Configuration"},
+        {"host": "/opt/plex/transcode", "container": "/transcode", "description": "Transcode temp"},
+        {"host": "/media", "container": "/data", "description": "Media library"}
+      ],
+      "environment": [
+        {"key": "PUID", "value": "1000", "description": "User ID"},
+        {"key": "PGID", "value": "1000", "description": "Group ID"},
+        {"key": "TZ", "value": "Europe/Istanbul", "description": "Timezone"}
+      ],
+      "restart_policy": "unless-stopped",
+      "logo": "https://www.plex.tv/wp-content/uploads/2022/04/plex-logo.svg",
+      "screenshots": [],
+      "tags": ["media", "streaming", "movies", "tv-shows", "music"],
+      "min_memory_mb": 512,
+      "recommended_memory_mb": 2048,
+      "architecture": ["arm64", "amd64"]
+    },
+    {
+      "id": "nextcloud",
+      "name": "Nextcloud",
+      "description": "Self-hosted productivity platform - Files, Calendar, Contacts & more",
+      "long_description": "Nextcloud is a suite of client-server software for creating and using file hosting services. It offers functionality similar to Dropbox, Office 365 or Google Drive.",
+      "category": "storage",
+      "image": "nextcloud:latest",
+      "version": "latest",
+      "website": "https://nextcloud.com",
+      "documentation": "https://docs.nextcloud.com",
+      "ports": [
+        {"host": 8081, "container": 80, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/nextcloud/html", "container": "/var/www/html", "description": "Nextcloud files"},
+        {"host": "/opt/nextcloud/data", "container": "/var/www/html/data", "description": "User data"}
+      ],
+      "environment": [
+        {"key": "MYSQL_HOST", "value": "", "description": "Database host (optional)", "required": false},
+        {"key": "NEXTCLOUD_ADMIN_USER", "value": "admin", "description": "Admin username"},
+        {"key": "NEXTCLOUD_ADMIN_PASSWORD", "value": "", "description": "Admin password", "required": true}
+      ],
+      "restart_policy": "unless-stopped",
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/6/60/Nextcloud_Logo.svg",
+      "screenshots": [],
+      "tags": ["cloud", "storage", "sync", "files", "calendar"],
+      "min_memory_mb": 256,
+      "recommended_memory_mb": 512,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "grafana",
+      "name": "Grafana",
+      "description": "Open source analytics & monitoring solution",
+      "long_description": "Grafana is a multi-platform open source analytics and interactive visualization web application. It provides charts, graphs, and alerts when connected to supported data sources.",
+      "category": "monitoring",
+      "image": "grafana/grafana:latest",
+      "version": "latest",
+      "website": "https://grafana.com",
+      "documentation": "https://grafana.com/docs/grafana/latest",
+      "ports": [
+        {"host": 3000, "container": 3000, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/grafana/data", "container": "/var/lib/grafana", "description": "Grafana data"}
+      ],
+      "environment": [
+        {"key": "GF_SECURITY_ADMIN_PASSWORD", "value": "admin", "description": "Admin password"}
+      ],
+      "restart_policy": "unless-stopped",
+      "logo": "https://grafana.com/static/img/menu/grafana2.svg",
+      "screenshots": [],
+      "tags": ["monitoring", "dashboards", "visualization", "metrics"],
+      "min_memory_mb": 128,
+      "recommended_memory_mb": 256,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "nginx-proxy-manager",
+      "name": "Nginx Proxy Manager",
+      "description": "Easy-to-use reverse proxy with free SSL certificates",
+      "long_description": "Nginx Proxy Manager provides an easy way to host multiple websites and applications on a single server with free Let's Encrypt SSL certificates and a beautiful web interface.",
+      "category": "network",
+      "image": "jc21/nginx-proxy-manager:latest",
+      "version": "latest",
+      "website": "https://nginxproxymanager.com",
+      "documentation": "https://nginxproxymanager.com/guide",
+      "ports": [
+        {"host": 80, "container": 80, "protocol": "tcp", "description": "HTTP"},
+        {"host": 443, "container": 443, "protocol": "tcp", "description": "HTTPS"},
+        {"host": 81, "container": 81, "protocol": "tcp", "description": "Admin Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/npm/data", "container": "/data", "description": "NPM data"},
+        {"host": "/opt/npm/letsencrypt", "container": "/etc/letsencrypt", "description": "SSL certificates"}
+      ],
+      "environment": [],
+      "restart_policy": "unless-stopped",
+      "logo": "https://nginxproxymanager.com/logo.svg",
+      "screenshots": [],
+      "tags": ["proxy", "ssl", "reverse-proxy", "nginx"],
+      "min_memory_mb": 128,
+      "recommended_memory_mb": 256,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "jellyfin",
+      "name": "Jellyfin",
+      "description": "Free software media system - Plex alternative",
+      "long_description": "Jellyfin is a Free Software Media System that puts you in control of managing and streaming your media. It is an alternative to the proprietary Emby and Plex.",
+      "category": "media",
+      "image": "jellyfin/jellyfin:latest",
+      "version": "latest",
+      "website": "https://jellyfin.org",
+      "documentation": "https://jellyfin.org/docs",
+      "ports": [
+        {"host": 8096, "container": 8096, "protocol": "tcp", "description": "HTTP Web Interface"},
+        {"host": 8920, "container": 8920, "protocol": "tcp", "description": "HTTPS Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/jellyfin/config", "container": "/config", "description": "Configuration"},
+        {"host": "/opt/jellyfin/cache", "container": "/cache", "description": "Cache"},
+        {"host": "/media", "container": "/media", "description": "Media library"}
+      ],
+      "environment": [],
+      "restart_policy": "unless-stopped",
+      "logo": "https://jellyfin.org/images/logo.svg",
+      "screenshots": [],
+      "tags": ["media", "streaming", "free", "open-source"],
+      "min_memory_mb": 256,
+      "recommended_memory_mb": 1024,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "description": "Self-hosted monitoring tool like Uptime Robot",
+      "long_description": "Uptime Kuma is a fancy self-hosted monitoring tool. Monitor HTTP(s), TCP, DNS, and many more. Get notified via Telegram, Discord, Slack, and 90+ notification services.",
+      "category": "monitoring",
+      "image": "louislam/uptime-kuma:latest",
+      "version": "latest",
+      "website": "https://uptime.kuma.pet",
+      "documentation": "https://github.com/louislam/uptime-kuma/wiki",
+      "ports": [
+        {"host": 3001, "container": 3001, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/uptime-kuma/data", "container": "/app/data", "description": "Uptime Kuma data"}
+      ],
+      "environment": [],
+      "restart_policy": "unless-stopped",
+      "logo": "https://uptime.kuma.pet/img/icon.svg",
+      "screenshots": [],
+      "tags": ["monitoring", "uptime", "alerts", "status-page"],
+      "min_memory_mb": 128,
+      "recommended_memory_mb": 256,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "code-server",
+      "name": "code-server",
+      "description": "VS Code in the browser",
+      "long_description": "Run VS Code on any machine anywhere and access it through the browser. Code on your Chromebook, tablet, or laptop with a consistent development environment.",
+      "category": "development",
+      "image": "codercom/code-server:latest",
+      "version": "latest",
+      "website": "https://coder.com",
+      "documentation": "https://coder.com/docs/code-server/latest",
+      "ports": [
+        {"host": 8443, "container": 8443, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/code-server/config", "container": "/home/coder/.config", "description": "Config"},
+        {"host": "/opt/code-server/project", "container": "/home/coder/project", "description": "Project files"}
+      ],
+      "environment": [
+        {"key": "PASSWORD", "value": "", "description": "Access password", "required": true}
+      ],
+      "restart_policy": "unless-stopped",
+      "logo": "https://raw.githubusercontent.com/coder/code-server/main/src/browser/media/pwa-icon-512.png",
+      "screenshots": [],
+      "tags": ["ide", "vscode", "development", "coding"],
+      "min_memory_mb": 256,
+      "recommended_memory_mb": 512,
+      "architecture": ["arm64", "amd64"]
+    },
+    {
+      "id": "wireguard",
+      "name": "WireGuard",
+      "description": "Fast, modern, secure VPN tunnel",
+      "long_description": "WireGuard is an extremely simple yet fast and modern VPN that utilizes state-of-the-art cryptography. It aims to be faster, simpler, leaner, and more useful than IPsec.",
+      "category": "network",
+      "image": "linuxserver/wireguard:latest",
+      "version": "latest",
+      "website": "https://www.wireguard.com",
+      "documentation": "https://www.wireguard.com/quickstart",
+      "ports": [
+        {"host": 51820, "container": 51820, "protocol": "udp", "description": "WireGuard VPN"}
+      ],
+      "volumes": [
+        {"host": "/opt/wireguard/config", "container": "/config", "description": "Configuration"},
+        {"host": "/lib/modules", "container": "/lib/modules", "readonly": true, "description": "Kernel modules"}
+      ],
+      "environment": [
+        {"key": "PUID", "value": "1000", "description": "User ID"},
+        {"key": "PGID", "value": "1000", "description": "Group ID"},
+        {"key": "TZ", "value": "Europe/Istanbul", "description": "Timezone"},
+        {"key": "SERVERURL", "value": "auto", "description": "Server URL"},
+        {"key": "PEERS", "value": "3", "description": "Number of peer configs to generate"}
+      ],
+      "capabilities": ["NET_ADMIN", "SYS_MODULE"],
+      "sysctls": {"net.ipv4.conf.all.src_valid_mark": "1"},
+      "restart_policy": "unless-stopped",
+      "logo": "https://www.wireguard.com/img/wireguard.svg",
+      "screenshots": [],
+      "tags": ["vpn", "security", "network", "tunnel"],
+      "min_memory_mb": 64,
+      "recommended_memory_mb": 128,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    },
+    {
+      "id": "node-red",
+      "name": "Node-RED",
+      "description": "Low-code programming for event-driven applications",
+      "long_description": "Node-RED is a programming tool for wiring together hardware devices, APIs and online services in new and interesting ways. It provides a browser-based editor for wiring flows.",
+      "category": "home",
+      "image": "nodered/node-red:latest",
+      "version": "latest",
+      "website": "https://nodered.org",
+      "documentation": "https://nodered.org/docs",
+      "ports": [
+        {"host": 1880, "container": 1880, "protocol": "tcp", "description": "Web Interface"}
+      ],
+      "volumes": [
+        {"host": "/opt/nodered/data", "container": "/data", "description": "Node-RED data"}
+      ],
+      "environment": [
+        {"key": "TZ", "value": "Europe/Istanbul", "description": "Timezone"}
+      ],
+      "restart_policy": "unless-stopped",
+      "logo": "https://nodered.org/about/resources/media/node-red-icon-2.svg",
+      "screenshots": [],
+      "tags": ["automation", "iot", "flows", "low-code"],
+      "min_memory_mb": 128,
+      "recommended_memory_mb": 256,
+      "architecture": ["arm64", "arm/v7", "amd64"]
+    }
+  ]
+}
