@@ -13,6 +13,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { IoTPage } from '../pages/IoTPage';
 import { IoTDeviceDetail } from '../pages/IoTDeviceDetail';
 import { ArchivePage } from '../pages/ArchivePage';
+import { AppStorePage } from '../pages/AppStorePage';
 import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -84,6 +85,8 @@ export function Dashboard() {
         return <SettingsPage />;
       case 'archive':
         return <ArchivePage />;
+      case 'appstore':
+        return <AppStorePage />;
       default:
         return <DashboardGrid />;
     }
