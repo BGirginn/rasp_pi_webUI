@@ -6,15 +6,16 @@ Handles IoT device listing, details, history, and simulation endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from typing import List, Optional
-from pydantic import BaseModel
-from services.discovery import discovery_service, IoTDevice
-from services.sse import sse_manager, Channels
-from .auth import get_current_user
+from typing import Optional
+from pydantic import BaseModel, Field
+from services.discovery import discovery_service
+from services.agent_client import agent_client
+from .auth import get_current_user, require_role
 import time
 import random
 import asyncio
 import json
+import aiohttp
 
 router = APIRouter()
 
@@ -29,6 +30,95 @@ class SensorReading(BaseModel):
     value: float
     unit: str
     timestamp: int
+
+
+class LedColorRequest(BaseModel):
+    red: int = Field(..., ge=0, le=255)
+    green: int = Field(..., ge=0, le=255)
+    blue: int = Field(..., ge=0, le=255)
+    brightness: int = Field(255, ge=0, le=255)
+    power: bool = True
+    persist: bool = True
+
+
+class LedPowerRequest(BaseModel):
+    on: bool
+    persist: bool = True
+
+
+LED_HTTP_COMMAND_ENDPOINTS = [
+    "/api/led/command",
+    "/led/command",
+    "/command",
+]
+
+
+def _success_result(result) -> bool:
+    return isinstance(result, dict) and bool(result.get("success"))
+
+
+async def _send_led_command_mqtt(device_id: str, command: str, payload: dict) -> dict:
+    """Try sending LED command via agent MQTT bridge."""
+    try:
+        result = await agent_client.send_device_command(device_id, command, payload)
+        if _success_result(result):
+            return {"success": True, "transport": "mqtt", "result": result}
+        if isinstance(result, dict):
+            return {"success": False, "transport": "mqtt", "error": result.get("error") or result.get("message") or "Unknown error"}
+        return {"success": False, "transport": "mqtt", "error": str(result)}
+    except Exception as e:
+        return {"success": False, "transport": "mqtt", "error": str(e)}
+
+
+async def _send_led_command_http(device: Optional[dict], command: str, payload: dict) -> dict:
+    """
+    Fallback for devices exposing a local HTTP command endpoint.
+    Expected payload shape:
+    {"command":"set_color","payload":{"r":255,"g":0,"b":0,...}}
+    """
+    if not device:
+        return {"success": False, "transport": "http", "error": "Device not found for HTTP fallback"}
+
+    ip = device.get("ip")
+    port_raw = device.get("port") or 80
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        port = 80
+    if not ip:
+        return {"success": False, "transport": "http", "error": "Device IP not available"}
+
+    request_body = {"command": command, "payload": payload}
+    errors = []
+
+    timeout = aiohttp.ClientTimeout(total=3.0)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for endpoint in LED_HTTP_COMMAND_ENDPOINTS:
+            url = f"http://{ip}:{port}{endpoint}"
+            try:
+                async with session.post(url, json=request_body) as resp:
+                    raw = await resp.text()
+                    if 200 <= resp.status < 300:
+                        try:
+                            data = json.loads(raw) if raw else {}
+                        except json.JSONDecodeError:
+                            data = {"raw": raw}
+                        return {
+                            "success": True,
+                            "transport": "http",
+                            "endpoint": endpoint,
+                            "status": resp.status,
+                            "result": data,
+                        }
+                    errors.append(f"{endpoint} -> HTTP {resp.status}")
+            except Exception as e:
+                errors.append(f"{endpoint} -> {str(e)}")
+
+    return {
+        "success": False,
+        "transport": "http",
+        "error": "; ".join(errors) if errors else "No HTTP LED endpoint responded",
+    }
 
 # ==================== Device Listing ====================
 
@@ -293,3 +383,75 @@ async def refresh_device_sensors(device_id: str, user: dict = Depends(get_curren
     
     discovery_service._broadcast_update()
     return {"message": f"Sensors refreshed for '{device_id}'", "sensors": new_sensors}
+
+
+# ==================== LED Control ====================
+
+@router.post("/devices/{device_id}/led/color")
+async def set_led_color(
+    device_id: str,
+    request: LedColorRequest,
+    user: dict = Depends(require_role("admin", "operator"))
+):
+    """
+    Set RGB color for an ESP LED strip/device from Pi.
+    Tries MQTT first, then falls back to direct HTTP command endpoint.
+    """
+    payload = {
+        "r": request.red,
+        "g": request.green,
+        "b": request.blue,
+        "brightness": request.brightness,
+        "power": request.power,
+        "persist": request.persist,
+    }
+
+    device = await discovery_service.get_device(device_id)
+
+    mqtt_result = await _send_led_command_mqtt(device_id, "set_color", payload)
+    if mqtt_result.get("success"):
+        return mqtt_result
+
+    http_result = await _send_led_command_http(device, "set_color", payload)
+    if http_result.get("success"):
+        return http_result
+
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": "Failed to send LED color command",
+            "mqtt_error": mqtt_result.get("error"),
+            "http_error": http_result.get("error"),
+        },
+    )
+
+
+@router.post("/devices/{device_id}/led/power")
+async def set_led_power(
+    device_id: str,
+    request: LedPowerRequest,
+    user: dict = Depends(require_role("admin", "operator"))
+):
+    """
+    Turn LED output on/off for the device.
+    Tries MQTT first, then direct HTTP fallback.
+    """
+    payload = {"on": request.on, "persist": request.persist}
+    device = await discovery_service.get_device(device_id)
+
+    mqtt_result = await _send_led_command_mqtt(device_id, "set_power", payload)
+    if mqtt_result.get("success"):
+        return mqtt_result
+
+    http_result = await _send_led_command_http(device, "set_power", payload)
+    if http_result.get("success"):
+        return http_result
+
+    raise HTTPException(
+        status_code=502,
+        detail={
+            "message": "Failed to send LED power command",
+            "mqtt_error": mqtt_result.get("error"),
+            "http_error": http_result.get("error"),
+        },
+    )

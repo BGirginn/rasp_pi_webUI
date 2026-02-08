@@ -18,13 +18,11 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, appstore
-from services.sse import sse_manager, Channels
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
 from services.discovery import discovery_service
-from services.appstore_service import appstore_service
 
 # ... existing code ...
 
@@ -75,12 +73,6 @@ async def lifespan(app: FastAPI):
     await telemetry_collector.start()
     await discovery_service.start()
     
-    # Initialize App Store service
-    try:
-        await appstore_service.initialize()
-    except Exception as e:
-        logger.warning("App Store service initialization failed", error=str(e))
-    
     yield
     
     # Shutdown
@@ -124,6 +116,12 @@ async def log_requests(request: Request, call_next):
     start_time = datetime.utcnow()
     
     response = await call_next(request)
+
+    # Cache strategy for static content when served directly by FastAPI.
+    if request.url.path.startswith("/assets/"):
+        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    elif "text/html" in response.headers.get("content-type", "").lower():
+        response.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
     
     duration_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
     
@@ -166,8 +164,6 @@ app.include_router(files.router, prefix="/api/files", tags=["Files"])
 app.include_router(iot.router, prefix="/api/iot", tags=["IoT"])
 app.include_router(archive.router, prefix="/api/archive", tags=["Archive"])
 app.include_router(backup.router, prefix="/api/backup", tags=["Backup"])
-app.include_router(appstore.router, prefix="/api", tags=["App Store"])
-app.include_router(appstore.router, prefix="/api", tags=["App Store"])
 
 
 # Health check endpoint
@@ -203,7 +199,6 @@ if __name__ == "__main__":
 
 
 # === Static file serving for production ===
-import os
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse

@@ -3,9 +3,10 @@ import { useState, useEffect, useCallback } from 'react';
 import {
     ArrowLeft, RefreshCw, Wifi, WifiOff, Activity,
     Thermometer, Droplets, Sun, Zap, Volume2, Fingerprint,
-    Clock, TrendingUp, TrendingDown, Minus
+    Clock, TrendingUp, TrendingDown, Minus, Power, Palette
 } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
+import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart
@@ -18,7 +19,13 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
     const [error, setError] = useState(null);
     const [timeRange, setTimeRange] = useState(24); // hours
     const [autoRefresh, setAutoRefresh] = useState(true);
+    const [ledColor, setLedColor] = useState('#ff0000');
+    const [ledBrightness, setLedBrightness] = useState(255);
+    const [ledPowerOn, setLedPowerOn] = useState(true);
+    const [ledLoading, setLedLoading] = useState(false);
+    const [ledStatus, setLedStatus] = useState(null);
     const { theme, isDarkMode } = useTheme();
+    const { isOperator } = useAuth();
     const themeColors = getThemeColors(theme);
 
     // Load device details
@@ -121,6 +128,69 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
         return colors[type?.toLowerCase()] || '#6b7280';
     };
 
+    const hexToRgb = (hex) => {
+        const normalized = hex.replace('#', '');
+        return {
+            red: parseInt(normalized.substring(0, 2), 16),
+            green: parseInt(normalized.substring(2, 4), 16),
+            blue: parseInt(normalized.substring(4, 6), 16),
+        };
+    };
+
+    const sendLedColor = async () => {
+        if (!isOperator || ledLoading) return;
+        setLedLoading(true);
+        setLedStatus(null);
+
+        try {
+            const rgb = hexToRgb(ledColor);
+            const response = await api.post(`/iot/devices/${deviceId}/led/color`, {
+                red: rgb.red,
+                green: rgb.green,
+                blue: rgb.blue,
+                brightness: ledBrightness,
+                power: ledPowerOn,
+                persist: true,
+            });
+            setLedStatus({
+                type: 'success',
+                text: `Renk gönderildi (${response.data?.transport || 'unknown'})`
+            });
+        } catch (err) {
+            setLedStatus({
+                type: 'error',
+                text: err.response?.data?.detail?.message || err.response?.data?.detail || 'LED renk komutu gönderilemedi'
+            });
+        } finally {
+            setLedLoading(false);
+        }
+    };
+
+    const sendLedPower = async (nextState) => {
+        if (!isOperator || ledLoading) return;
+        setLedLoading(true);
+        setLedStatus(null);
+
+        try {
+            const response = await api.post(`/iot/devices/${deviceId}/led/power`, {
+                on: nextState,
+                persist: true,
+            });
+            setLedPowerOn(nextState);
+            setLedStatus({
+                type: 'success',
+                text: `LED ${nextState ? 'açıldı' : 'kapatıldı'} (${response.data?.transport || 'unknown'})`
+            });
+        } catch (err) {
+            setLedStatus({
+                type: 'error',
+                text: err.response?.data?.detail?.message || err.response?.data?.detail || 'LED güç komutu gönderilemedi'
+            });
+        } finally {
+            setLedLoading(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="animate-fade-in p-8">
@@ -220,6 +290,105 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
                         {hours === 1 ? '1 Saat' : hours === 6 ? '6 Saat' : hours === 24 ? '24 Saat' : '7 Gün'}
                     </button>
                 ))}
+            </div>
+
+            {/* LED Controls */}
+            <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white/80 border-gray-200'} backdrop-blur-xl border rounded-2xl p-6 mb-8`}>
+                <div className="flex items-center justify-between gap-4 mb-5">
+                    <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${themeColors.secondary} flex items-center justify-center`}>
+                            <Palette className="text-white" size={18} />
+                        </div>
+                        <div>
+                            <h2 className="font-bold text-lg">LED Kontrol</h2>
+                            <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                                Raspberry Pi üzerinden ESP32 LED renk ve güç kontrolü
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => sendLedPower(!ledPowerOn)}
+                        disabled={!isOperator || ledLoading || device.status !== 'online'}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            ledPowerOn
+                                ? (isDarkMode ? 'bg-green-500/15 text-green-400 hover:bg-green-500/25' : 'bg-green-50 text-green-600 hover:bg-green-100')
+                                : (isDarkMode ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'bg-red-50 text-red-600 hover:bg-red-100')
+                        }`}
+                    >
+                        <Power size={15} />
+                        {ledPowerOn ? 'Açık' : 'Kapalı'}
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                        <label className={`block text-xs mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Renk</label>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="color"
+                                value={ledColor}
+                                onChange={(e) => setLedColor(e.target.value)}
+                                disabled={!isOperator || ledLoading || device.status !== 'online'}
+                                className="h-10 w-14 rounded cursor-pointer disabled:cursor-not-allowed"
+                            />
+                            <code className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>{ledColor.toUpperCase()}</code>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className={`block text-xs mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            Parlaklık: {ledBrightness}
+                        </label>
+                        <input
+                            type="range"
+                            min="0"
+                            max="255"
+                            value={ledBrightness}
+                            onChange={(e) => setLedBrightness(Number(e.target.value))}
+                            disabled={!isOperator || ledLoading || device.status !== 'online'}
+                            className="w-full"
+                        />
+                    </div>
+
+                    <div className="flex md:justify-end">
+                        <button
+                            onClick={sendLedColor}
+                            disabled={!isOperator || ledLoading || device.status !== 'online'}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r ${themeColors.secondary} text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                            {ledLoading ? 'Gönderiliyor...' : 'Rengi Gönder'}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mt-4">
+                    {['#FF0000', '#00FF00', '#0000FF', '#FFFFFF', '#FFA500', '#8000FF'].map((quickColor) => (
+                        <button
+                            key={quickColor}
+                            onClick={() => setLedColor(quickColor.toLowerCase())}
+                            disabled={!isOperator || ledLoading || device.status !== 'online'}
+                            className="w-7 h-7 rounded-full border border-white/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={{ backgroundColor: quickColor }}
+                            title={quickColor}
+                        />
+                    ))}
+                </div>
+
+                {!isOperator && (
+                    <p className={`mt-3 text-xs ${isDarkMode ? 'text-yellow-400' : 'text-amber-600'}`}>
+                        LED kontrolü için `admin` veya `operator` rolü gerekli.
+                    </p>
+                )}
+                {device.status !== 'online' && (
+                    <p className={`mt-3 text-xs ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                        Cihaz çevrimdışı görünüyor. Komut gönderimi devre dışı.
+                    </p>
+                )}
+                {ledStatus && (
+                    <p className={`mt-3 text-xs ${ledStatus.type === 'success' ? (isDarkMode ? 'text-green-400' : 'text-green-700') : (isDarkMode ? 'text-red-400' : 'text-red-600')}`}>
+                        {ledStatus.text}
+                    </p>
+                )}
             </div>
 
             {/* Current Sensor Values */}

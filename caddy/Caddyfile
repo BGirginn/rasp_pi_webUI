@@ -2,6 +2,9 @@
 
 # Main site
 :80 {
+    # Compress responses to reduce transfer size.
+    encode zstd gzip
+
     # WebSocket for terminal (must be before other /api/* handlers)
     handle /api/terminal/ws {
         reverse_proxy 127.0.0.1:8080
@@ -25,10 +28,25 @@
         reverse_proxy 127.0.0.1:8080
     }
     
+    # Static hashed assets
+    handle /assets/* {
+        root * /opt/pi-control/panel/ui/dist
+
+        # Cache hashed build assets aggressively.
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }
+
     # Static UI files (built React app)
     handle {
         root * /opt/pi-control/panel/ui/dist
+
+        # Always revalidate HTML and SPA routes.
+        header Cache-Control "no-cache, no-store, must-revalidate"
+
+        # SPA fallback for client-side routes.
         try_files {path} /index.html
+
         file_server
     }
     
@@ -52,4 +70,3 @@
 :8081 {
     respond /health 200
 }
-

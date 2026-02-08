@@ -13,7 +13,6 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { IoTPage } from '../pages/IoTPage';
 import { IoTDeviceDetail } from '../pages/IoTDeviceDetail';
 import { ArchivePage } from '../pages/ArchivePage';
-import { AppStorePage } from '../pages/AppStorePage';
 import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -22,7 +21,7 @@ import { TopBarActions } from './TopBarActions';
 
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
-  const { currentPage, setCurrentPage } = useNavigation();
+  const { currentPage } = useNavigation();
   const { isAdmin } = useAuth();
   const themeColors = getThemeColors(theme);
 
@@ -85,20 +84,9 @@ export function Dashboard() {
         return <SettingsPage />;
       case 'archive':
         return <ArchivePage />;
-      case 'appstore':
-        return <AppStorePage />;
       default:
         return <DashboardGrid />;
     }
-  };
-
-  // Reset selected device when navigating away from IoT
-  const originalSetCurrentPage = setCurrentPage;
-  const wrappedSetCurrentPage = (page) => {
-    if (page !== 'iot') {
-      setSelectedDeviceId(null);
-    }
-    originalSetCurrentPage(page);
   };
 
   return (<div className={`min-h-screen ${isDarkMode ? 'bg-[#0a0a0f] text-white' : 'bg-gray-50 text-gray-900'} flex overflow-hidden relative`}>

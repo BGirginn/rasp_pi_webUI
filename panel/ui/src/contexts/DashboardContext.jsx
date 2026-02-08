@@ -42,7 +42,6 @@ export function DashboardProvider({ children }) {
     const [alerts, setAlerts] = useState([]);
 
     const lastNetStats = useRef({ tx: 0, rx: 0, time: Date.now() });
-    const [sseConnected, setSseConnected] = useState(false);
 
     // Process telemetry data from SSE or polling
     const processTelemetryData = (telemetryData) => {
@@ -108,6 +107,7 @@ export function DashboardProvider({ children }) {
     useEffect(() => {
         // Initial data load
         loadDashboardData();
+        loadOtherData();
 
         // Try SSE for real-time telemetry
         const token = localStorage.getItem('access_token');
@@ -119,8 +119,9 @@ export function DashboardProvider({ children }) {
                 eventSource = new EventSource(`/api/sse/telemetry?token=${token}`);
 
                 eventSource.addEventListener('connected', () => {
-                    console.log('SSE connected for real-time telemetry');
-                    setSseConnected(true);
+                    if (import.meta.env.DEV) {
+                        console.log('SSE connected for real-time telemetry');
+                    }
                 });
 
                 eventSource.addEventListener('telemetry_update', (event) => {
@@ -134,7 +135,6 @@ export function DashboardProvider({ children }) {
 
                 eventSource.onerror = () => {
                     console.warn('SSE error, falling back to polling');
-                    setSseConnected(false);
                     eventSource.close();
                     if (!pollingInterval) {
                         pollingInterval = setInterval(loadDashboardData, 2000);
@@ -177,17 +177,14 @@ export function DashboardProvider({ children }) {
 
     const loadDashboardData = async () => {
         try {
-            const [telemetryRes, resourcesRes, alertsRes, systemInfoRes] = await Promise.all([
+            const [telemetryRes, systemInfoRes] = await Promise.all([
                 api.get('/telemetry/current').catch(() => ({ data: {} })),
-                api.get('/resources').catch(() => ({ data: [] })),
-                api.get('/alerts').catch(() => ({ data: [] })),
                 api.get('/system/info').catch(() => ({ data: {} }))
             ]);
 
             const metrics = telemetryRes.data?.metrics || {};
             const systemInfo = telemetryRes.data?.system || systemInfoRes.data || {};
 
-            // Network Speed Calculation
             // Network Speed Calculation
             const currentTx = metrics['host.net.tx_bytes'] || 0;
             const currentRx = metrics['host.net.rx_bytes'] || 0;
@@ -244,8 +241,6 @@ export function DashboardProvider({ children }) {
             };
 
             setStats(newStats);
-            setResources(Array.isArray(resourcesRes.data) ? resourcesRes.data : []);
-            setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : []);
 
             // Limit history to 20 points (including temp and disk)
             setHistory(prev => ({
@@ -256,11 +251,6 @@ export function DashboardProvider({ children }) {
                 temp: [...prev.temp.slice(1), newStats.temp],
                 disk: [...prev.disk.slice(1), newStats.disk]
             }));
-
-            // Fetch Processes separately to avoid blocking main stats if relying on slow method
-            api.get('/system/processes')
-                .then(res => setProcesses(Array.isArray(res.data) ? res.data : []))
-                .catch(err => console.warn('Failed to fetch processes:', err));
 
         } catch (err) {
             console.error('Failed to load dashboard data:', err);

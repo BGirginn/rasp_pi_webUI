@@ -153,7 +153,9 @@ class ApiService {
         })
 
         eventSource.addEventListener('connected', (event) => {
-            console.log('SSE connected:', event.data)
+            if (import.meta.env.DEV) {
+                console.log('SSE connected:', event.data)
+            }
         })
 
         eventSource.onerror = (error) => {
