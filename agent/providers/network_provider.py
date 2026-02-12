@@ -60,9 +60,17 @@ class NetworkProvider(BaseProvider):
         if action == "scan" and resource_id.startswith("wlan"):
             return await self._scan_wifi(resource_id)
         elif action == "enable":
-            return await self._enable_wifi()
+            # If it's a wifi interface, enable wifi radio
+            if resource_id.startswith("wlan"):
+                return await self._enable_wifi()
+            else:
+                 return await self._enable_interface(resource_id)
         elif action == "disable":
-            return await self._disable_wifi()
+            # If it's a wifi interface, disable wifi radio
+            if resource_id.startswith("wlan"):
+                return await self._disable_wifi()
+            else:
+                return await self._disable_interface(resource_id)
         elif action == "status":
             return await self._get_wifi_status()
         elif action == "connect":
@@ -104,6 +112,28 @@ class NetworkProvider(BaseProvider):
                 return ActionResult(False, f"Failed to disable WiFi: {err}", error=err)
             logger.info("WiFi disabled")
             return ActionResult(True, "WiFi disabled")
+        except Exception as e:
+            return ActionResult(False, str(e), error=str(e))
+
+    async def _enable_interface(self, interface: str) -> ActionResult:
+        """Enable a network interface."""
+        try:
+            rc, out, err = await self._run_nmcli(["device", "connect", interface])
+            if rc != 0:
+                return ActionResult(False, f"Failed to enable interface {interface}: {err}", error=err)
+            logger.info("Interface enabled", interface=interface)
+            return ActionResult(True, f"Interface {interface} enabled")
+        except Exception as e:
+            return ActionResult(False, str(e), error=str(e))
+
+    async def _disable_interface(self, interface: str) -> ActionResult:
+        """Disable a network interface."""
+        try:
+            rc, out, err = await self._run_nmcli(["device", "disconnect", interface])
+            if rc != 0:
+                return ActionResult(False, f"Failed to disable interface {interface}: {err}", error=err)
+            logger.info("Interface disabled", interface=interface)
+            return ActionResult(True, f"Interface {interface} disabled")
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
 

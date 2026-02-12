@@ -16,14 +16,25 @@ import random
 import asyncio
 import json
 import aiohttp
+import urllib.parse
 
 router = APIRouter()
 
+# In-memory cache of last color per device, used to restore state on power-on
+# for simple HTTP devices that don't support a dedicated "power on" API.
+_LAST_LED_COLOR: dict = {}
 # Request models
 class VirtualDeviceRequest(BaseModel):
     name: str
     ip: str = "192.168.1.100"
     port: int = 8080
+
+class ManualDeviceRequest(BaseModel):
+    ip: str
+    port: int = Field(80, ge=1, le=65535)
+    name: Optional[str] = None
+    device_id: Optional[str] = None
+    probe: bool = True
 
 class SensorReading(BaseModel):
     sensor_type: str
@@ -36,7 +47,6 @@ class LedColorRequest(BaseModel):
     red: int = Field(..., ge=0, le=255)
     green: int = Field(..., ge=0, le=255)
     blue: int = Field(..., ge=0, le=255)
-    brightness: int = Field(255, ge=0, le=255)
     power: bool = True
     persist: bool = True
 
@@ -51,6 +61,93 @@ LED_HTTP_COMMAND_ENDPOINTS = [
     "/led/command",
     "/command",
 ]
+
+LED_HTTP_STATUS_ENDPOINTS = [
+    "/status",
+]
+
+LED_HTTP_QUERY_SET_ENDPOINTS = [
+    "/set",  # e.g. GET /set?r=255&g=0&b=0
+]
+
+def _sanitize_device_id(raw: str) -> str:
+    # Keep it URL-safe and stable. (letters/digits/_/- only)
+    if not raw:
+        return ""
+    out = []
+    for ch in raw.strip():
+        if ch.isalnum() or ch in ("-", "_"):
+            out.append(ch)
+        elif ch in (" ", ".", ":", "/"):
+            out.append("-")
+    cleaned = "".join(out).strip("-")
+    return cleaned[:64] if cleaned else ""
+
+async def _probe_device_http(ip: str, port: int) -> dict:
+    """
+    Probe a device to see if it exposes `/info` or an LED command endpoint.
+    Returns a best-effort dict containing {id, name, sensors, led_http}.
+    """
+    result: dict = {"ip": ip, "port": port, "led_http": False}
+    timeout = aiohttp.ClientTimeout(total=2.0)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        # 1) Try /info
+        try:
+            async with session.get(f"http://{ip}:{port}/info") as resp:
+                if 200 <= resp.status < 300:
+                    data = await resp.json()
+                    if isinstance(data, dict):
+                        if data.get("id"):
+                            result["id"] = str(data.get("id"))
+                        if data.get("name"):
+                            result["name"] = str(data.get("name"))
+                        if isinstance(data.get("sensors"), list):
+                            result["sensors"] = data.get("sensors")
+                    return result
+        except Exception:
+            pass
+
+        # 2) Try status endpoint (common on simple RGB controllers)
+        for endpoint in LED_HTTP_STATUS_ENDPOINTS:
+            try:
+                async with session.get(f"http://{ip}:{port}{endpoint}") as resp:
+                    if 200 <= resp.status < 300:
+                        data = await resp.json()
+                        if isinstance(data, dict):
+                            dev_name = data.get("device") or data.get("name")
+                            if dev_name:
+                                result["name"] = str(dev_name)
+                                result["id"] = str(dev_name)
+                            # If r/g/b present, expose minimal sensors for UI.
+                            if all(k in data for k in ("r", "g", "b")):
+                                try:
+                                    result["sensors"] = [
+                                        {"type": "led_r", "value": int(data.get("r", 0)), "unit": ""},
+                                        {"type": "led_g", "value": int(data.get("g", 0)), "unit": ""},
+                                        {"type": "led_b", "value": int(data.get("b", 0)), "unit": ""},
+                                    ]
+                                except Exception:
+                                    pass
+                        result["led_http"] = True
+                        result["led_transport"] = "query"
+                        result["status_endpoint"] = endpoint
+                        return result
+            except Exception:
+                continue
+
+        # 2) Try LED command endpoints with a lightweight ping
+        request_body = {"command": "ping", "payload": {}}
+        for endpoint in LED_HTTP_COMMAND_ENDPOINTS:
+            try:
+                async with session.post(f"http://{ip}:{port}{endpoint}", json=request_body) as resp:
+                    if 200 <= resp.status < 300:
+                        result["led_http"] = True
+                        result["led_transport"] = "json"
+                        return result
+            except Exception:
+                continue
+
+    return result
 
 
 def _success_result(result) -> bool:
@@ -114,6 +211,125 @@ async def _send_led_command_http(device: Optional[dict], command: str, payload: 
             except Exception as e:
                 errors.append(f"{endpoint} -> {str(e)}")
 
+        # Fallback 2: Simple RGB controllers using query-string endpoints:
+        #   GET /set?r=255&g=0&b=0
+        #   GET /status
+        try:
+            if command == "set_color":
+                r = int(payload.get("r", 0) or 0)
+                g = int(payload.get("g", 0) or 0)
+                b = int(payload.get("b", 0) or 0)
+                power = bool(payload.get("power", True))
+
+                # Send raw RGB + power so the ESP can implement "true power off"
+                # by setting pins INPUT (high impedance) or by inverting PWM for common-anode LEDs.
+                # For backward compatibility, devices can ignore unknown params.
+                qs = urllib.parse.urlencode({
+                    "r": r,
+                    "g": g,
+                    "b": b,
+                    "power": 1 if power else 0,
+                })
+                for endpoint in LED_HTTP_QUERY_SET_ENDPOINTS:
+                    url = f"http://{ip}:{port}{endpoint}?{qs}"
+                    try:
+                        async with session.get(url) as resp:
+                            raw = await resp.text()
+                            if 200 <= resp.status < 300:
+                                try:
+                                    data = json.loads(raw) if raw else {}
+                                except json.JSONDecodeError:
+                                    data = {"raw": raw}
+                                return {
+                                    "success": True,
+                                    "transport": "http",
+                                    "endpoint": endpoint,
+                                    "status": resp.status,
+                                    "result": data,
+                                }
+                            errors.append(f"{endpoint} (GET query) -> HTTP {resp.status}")
+                    except Exception as e:
+                        errors.append(f"{endpoint} (GET query) -> {str(e)}")
+
+            if command == "set_power":
+                on = bool(payload.get("on", True))
+                # Preferred: explicit power param (lets firmware truly cut output by changing pinMode).
+                qs = urllib.parse.urlencode({"power": 1 if on else 0})
+                for endpoint in LED_HTTP_QUERY_SET_ENDPOINTS:
+                    url = f"http://{ip}:{port}{endpoint}?{qs}"
+                    try:
+                        async with session.get(url) as resp:
+                            raw = await resp.text()
+                            if 200 <= resp.status < 300:
+                                try:
+                                    data = json.loads(raw) if raw else {}
+                                except json.JSONDecodeError:
+                                    data = {"raw": raw}
+                                # Best-effort capability hint: older sketches ignore the `power` param
+                                # (and don't report it in /status). Surface a warning to help users
+                                # understand why "true power off" may not work.
+                                warning = None
+                                if not (isinstance(data, dict) and "power" in data):
+                                    for s_ep in LED_HTTP_STATUS_ENDPOINTS:
+                                        try:
+                                            async with session.get(f"http://{ip}:{port}{s_ep}") as s_resp:
+                                                if 200 <= s_resp.status < 300:
+                                                    s_raw = await s_resp.text()
+                                                    try:
+                                                        s_data = json.loads(s_raw) if s_raw else {}
+                                                    except json.JSONDecodeError:
+                                                        s_data = {}
+                                                    if isinstance(s_data, dict) and "power" in s_data:
+                                                        warning = None
+                                                        break
+                                                    warning = {
+                                                        "message": "Device firmware does not report/support `power` state; true GPIO cut-off may not work. Flash the project ESP firmware (esp32_rgb_minimal_common_anode)."
+                                                    }
+                                        except Exception:
+                                            warning = {
+                                                "message": "Unable to verify `power` support via /status; if on/off doesn't work, flash the project ESP firmware (esp32_rgb_minimal_common_anode)."
+                                            }
+                                return {
+                                    "success": True,
+                                    "transport": "http",
+                                    "endpoint": endpoint,
+                                    "status": resp.status,
+                                    "result": data,
+                                    **({"warning": warning} if warning else {}),
+                                }
+                            errors.append(f"{endpoint} (power={int(on)}) -> HTTP {resp.status}")
+                    except Exception as e:
+                        errors.append(f"{endpoint} (power={int(on)}) -> {str(e)}")
+
+                # Backward compatibility: if power param isn't supported, "off" falls back to RGB=0.
+                if not on:
+                    qs0 = urllib.parse.urlencode({"r": 0, "g": 0, "b": 0})
+                    for endpoint in LED_HTTP_QUERY_SET_ENDPOINTS:
+                        url = f"http://{ip}:{port}{endpoint}?{qs0}"
+                        try:
+                            async with session.get(url) as resp:
+                                raw = await resp.text()
+                                if 200 <= resp.status < 300:
+                                    try:
+                                        data = json.loads(raw) if raw else {}
+                                    except json.JSONDecodeError:
+                                        data = {"raw": raw}
+                                    return {
+                                        "success": True,
+                                        "transport": "http",
+                                        "endpoint": endpoint,
+                                        "status": resp.status,
+                                        "result": data,
+                                    }
+                                errors.append(f"{endpoint} (compat off) -> HTTP {resp.status}")
+                        except Exception as e:
+                            errors.append(f"{endpoint} (compat off) -> {str(e)}")
+                else:
+                    # If we don't know the last color, treat "on" as a no-op success.
+                    return {"success": True, "transport": "http", "endpoint": None, "status": 200, "result": {"noop": True}}
+        except Exception as e:
+            errors.append(f"query-fallback -> {str(e)}")
+
     return {
         "success": False,
         "transport": "http",
@@ -126,6 +342,43 @@ async def _send_led_command_http(device: Optional[dict], command: str, payload: 
 async def get_devices(user: dict = Depends(get_current_user)):
     """Get list of all discovered IoT devices."""
     return discovery_service.get_devices()
+
+@router.post("/devices/manual")
+async def add_manual_device(
+    request: ManualDeviceRequest,
+    user: dict = Depends(require_role("admin", "operator"))
+):
+    """
+    Manually add a device by IP (useful when mDNS is not available).
+    If `probe` is true, tries `/info` first, then LED HTTP ping to validate reachability.
+    """
+    ip = request.ip.strip()
+    port = int(request.port)
+
+    probe_data: dict = {}
+    if request.probe:
+        probe_data = await _probe_device_http(ip, port)
+
+    suggested_id = _sanitize_device_id(request.device_id or probe_data.get("id") or f"esp-{ip.replace('.', '-')}")
+    device_id = suggested_id or f"esp-{ip.replace('.', '-')}"
+    name = (request.name or probe_data.get("name") or device_id).strip()
+
+    sensors = probe_data.get("sensors") if isinstance(probe_data.get("sensors"), list) else None
+    await discovery_service.add_device_manual(
+        device_id=device_id,
+        name=name,
+        ip=ip,
+        port=port,
+        sensors=sensors,
+    )
+
+    device = await discovery_service.get_device(device_id)
+    return {
+        "success": True,
+        "device_id": device_id,
+        "device": device,
+        "probe": probe_data if request.probe else None,
+    }
 
 @router.get("/devices/{device_id}")
 async def get_device(device_id: str, user: dict = Depends(get_current_user)):
@@ -401,10 +654,10 @@ async def set_led_color(
         "r": request.red,
         "g": request.green,
         "b": request.blue,
-        "brightness": request.brightness,
         "power": request.power,
         "persist": request.persist,
     }
+    _LAST_LED_COLOR[device_id] = payload.copy()
 
     device = await discovery_service.get_device(device_id)
 
@@ -443,15 +696,29 @@ async def set_led_power(
     if mqtt_result.get("success"):
         return mqtt_result
 
-    http_result = await _send_led_command_http(device, "set_power", payload)
-    if http_result.get("success"):
-        return http_result
+    # Always send explicit power command for HTTP devices.
+    # Requirement: "off" must cut output drive (GPIO -> INPUT/high impedance) where supported by firmware.
+    http_power = await _send_led_command_http(device, "set_power", payload)
+    if not http_power.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "Failed to send LED power command",
+                "mqtt_error": mqtt_result.get("error"),
+                "http_error": http_power.get("error"),
+            },
+        )
 
-    raise HTTPException(
-        status_code=502,
-        detail={
-            "message": "Failed to send LED power command",
-            "mqtt_error": mqtt_result.get("error"),
-            "http_error": http_result.get("error"),
-        },
-    )
+    # Best-effort: on power-on, restore last selected RGB (without introducing a brightness layer).
+    if request.on and device_id in _LAST_LED_COLOR:
+        restore_payload = _LAST_LED_COLOR[device_id].copy()
+        restore_payload["power"] = True
+        http_restore = await _send_led_command_http(device, "set_color", restore_payload)
+        if http_restore.get("success"):
+            return http_restore
+
+        # Power-on succeeded, but restore failed; still return power result so UI can show something useful.
+        http_power["warning"] = {"message": "Power-on succeeded but color restore failed", "error": http_restore.get("error")}
+    return http_power
+
+    # (No trailing raise: we return above for success, and raise earlier for failure.)

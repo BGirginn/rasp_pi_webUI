@@ -154,11 +154,11 @@ function Header() {
 
 export default function Layout() {
     return (
-        <div className="min-h-screen flex bg-black aurora-bg">
+        <div className="h-screen flex bg-black aurora-bg">
             <Sidebar />
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 h-screen">
                 <Header />
-                <main className="flex-1 p-8 overflow-auto">
+                <main className="flex-1 p-6 overflow-auto">
                     <Outlet />
                 </main>
             </div>

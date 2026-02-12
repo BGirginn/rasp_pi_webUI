@@ -104,8 +104,8 @@ async def _get_local_interfaces() -> List[InterfaceResponse]:
         
         # Get IO counters
         io = io_counters.get(iface_name)
-        rx_bytes = io.bytes_recv if io else 0
-        tx_bytes = io.bytes_sent if io else 0
+        rx_bytes = io.bytes_recv if io and is_up else 0
+        tx_bytes = io.bytes_sent if io and is_up else 0
         
         # Determine interface type
         iface_type = "ethernet"

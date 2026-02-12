@@ -18,6 +18,13 @@ from services.sse import sse_manager, Channels
 
 logger = logging.getLogger(__name__)
 
+# Devices can be "LED-only": no `/info`, but accepts LED HTTP command endpoint.
+LED_HTTP_COMMAND_ENDPOINTS = [
+    "/api/led/command",
+    "/led/command",
+    "/command",
+]
+
 @dataclass
 class IoTDevice:
     id: str  # Unique ID (e.g., MAC address or sanitized hostname)
@@ -284,27 +291,79 @@ class DeviceDiscoveryService:
 
         # Real device - try to connect
         try:
-            url = f"http://{device.ip}:{device.port}/info"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
-                    if resp.status == 200:
+            timeout = aiohttp.ClientTimeout(total=2.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                # Prefer `/info` for full device state.
+                url = f"http://{device.ip}:{device.port}/info"
+                try:
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+
+                            device.last_seen = time.time()
+                            device.status = "online"
+
+                            if isinstance(data, dict) and "sensors" in data:
+                                device.sensors = data["sensors"] or []
+                                await self._save_sensor_readings(device_id, device.sensors)
+
+                            await self._save_device_to_db(device)
+                            self._broadcast_update()
+                            return
+                except Exception:
+                    # Fall through to LED-only probe.
+                    pass
+
+                # Some devices may not expose `/info`, but can still be controlled via LED HTTP endpoint.
+                if await self._probe_led_only_device(session, device):
+                    return
+
+                await self._mark_offline(device)
+        except Exception:
+            await self._mark_offline(device)
+
+    async def _probe_led_only_device(self, session: aiohttp.ClientSession, device: IoTDevice) -> bool:
+        """
+        Mark device online if it responds to a lightweight LED HTTP command.
+        This keeps LED controls usable even when `/info` is not implemented.
+        """
+        # First try a simple status endpoint used by some RGB sketches.
+        try:
+            async with session.get(f"http://{device.ip}:{device.port}/status") as resp:
+                if 200 <= resp.status < 300:
+                    try:
                         data = await resp.json()
-                        
+                        if isinstance(data, dict) and all(k in data for k in ("r", "g", "b")):
+                            device.sensors = [
+                                {"type": "led_r", "value": int(data.get("r", 0)), "unit": ""},
+                                {"type": "led_g", "value": int(data.get("g", 0)), "unit": ""},
+                                {"type": "led_b", "value": int(data.get("b", 0)), "unit": ""},
+                            ]
+                    except Exception:
+                        pass
+                    device.last_seen = time.time()
+                    device.status = "online"
+                    await self._save_device_to_db(device)
+                    self._broadcast_update()
+                    return True
+        except Exception:
+            pass
+
+        # Next try JSON LED command endpoints.
+        request_body = {"command": "ping", "payload": {}}
+        for endpoint in LED_HTTP_COMMAND_ENDPOINTS:
+            url = f"http://{device.ip}:{device.port}{endpoint}"
+            try:
+                async with session.post(url, json=request_body) as resp:
+                    if 200 <= resp.status < 300:
                         device.last_seen = time.time()
                         device.status = "online"
-                        
-                        if "sensors" in data:
-                            device.sensors = data["sensors"]
-                            await self._save_sensor_readings(device_id, data["sensors"])
-                        
                         await self._save_device_to_db(device)
                         self._broadcast_update()
-                    else:
-                        await self._mark_offline(device)
-
-        except Exception as e:
-            # Real device not reachable
-            await self._mark_offline(device)
+                        return True
+            except Exception:
+                continue
+        return False
 
     async def _update_simulated_device(self, device: IoTDevice):
         """Update a simulated device with realistic random sensor data."""

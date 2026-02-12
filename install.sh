@@ -177,7 +177,7 @@ WorkingDirectory=/opt/pi-control/panel/api
 Environment=PYTHONPATH=/opt/pi-control/panel/api
 Environment=DATABASE_PATH=/var/lib/pi-control/control.db
 Environment=TELEMETRY_DB_PATH=/var/lib/pi-control/telemetry.db
-Environment=AGENT_SOCKET=/run/pi-control/agent.sock
+Environment=AGENT_SOCKET=/run/pi-agent/agent.sock
 Environment=JWT_SECRET_FILE=/etc/pi-control/jwt_secret
 Environment=API_DEBUG=false
 ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080

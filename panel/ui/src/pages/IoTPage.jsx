@@ -8,6 +8,10 @@ export function IoTPage({ onDeviceClick }) {
     const [devices, setDevices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [manualIp, setManualIp] = useState('');
+    const [manualPort, setManualPort] = useState(80);
+    const [manualName, setManualName] = useState('');
+    const [manualLoading, setManualLoading] = useState(false);
     const { theme, isDarkMode } = useTheme();
     const themeColors = getThemeColors(theme);
 
@@ -34,7 +38,8 @@ export function IoTPage({ onDeviceClick }) {
         }, 2000);
 
         // Also connect to SSE for real-time updates (backup)
-        const eventSource = api.createSSE('/telemetry/stream', (data, type) => {
+        // Correct SSE endpoint is `/api/sse/telemetry` (token is passed as query param).
+        const eventSource = api.createSSE('/sse/telemetry', (data, type) => {
             if (type === 'iot_update') {
                 setDevices(data);
             }
@@ -89,6 +94,33 @@ export function IoTPage({ onDeviceClick }) {
         }
     };
 
+    const addManualDevice = async () => {
+        if (manualLoading) return;
+        const ip = manualIp.trim();
+        if (!ip) return;
+
+        setManualLoading(true);
+        setError(null);
+        try {
+            const response = await api.post('/iot/devices/manual', {
+                ip,
+                port: Number(manualPort) || 80,
+                name: manualName.trim() || null,
+                probe: true,
+            });
+            const createdId = response?.data?.device_id;
+            await loadDevices();
+            setManualIp('');
+            setManualName('');
+            if (createdId) handleDeviceClick(createdId);
+        } catch (err) {
+            console.error('Failed to add device manually:', err);
+            setError(err.response?.data?.detail?.message || err.response?.data?.detail || 'Cihaz eklenemedi.');
+        } finally {
+            setManualLoading(false);
+        }
+    };
+
     return (
         <div className="animate-fade-in">
             <div className="flex items-center justify-between mb-8">
@@ -122,6 +154,49 @@ export function IoTPage({ onDeviceClick }) {
                         className={`p-2 rounded-lg ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'} transition-colors`}
                     >
                         <RefreshCw size={20} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Manual device add (useful when mDNS isn't available) */}
+            <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white/80 border-gray-200'} backdrop-blur-xl border rounded-2xl p-5 mb-8`}>
+                <div className="flex items-center justify-between gap-4 mb-3">
+                    <div>
+                        <h2 className="font-bold">IP ile Cihaz Ekle</h2>
+                        <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            mDNS çalışmıyorsa ESP’nin IP adresini girerek ekleyebilirsin (örn: 192.168.0.104)
+                        </p>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <input
+                        value={manualIp}
+                        onChange={(e) => setManualIp(e.target.value)}
+                        placeholder="IP (örn: 192.168.0.104)"
+                        className={`px-3 py-2 rounded-lg text-sm outline-none border ${isDarkMode ? 'bg-black/30 border-white/10 text-white placeholder:text-gray-500' : 'bg-white border-gray-200 text-gray-900 placeholder:text-gray-400'}`}
+                        disabled={manualLoading}
+                    />
+                    <input
+                        value={manualPort}
+                        onChange={(e) => setManualPort(e.target.value)}
+                        placeholder="Port"
+                        className={`px-3 py-2 rounded-lg text-sm outline-none border ${isDarkMode ? 'bg-black/30 border-white/10 text-white placeholder:text-gray-500' : 'bg-white border-gray-200 text-gray-900 placeholder:text-gray-400'}`}
+                        disabled={manualLoading}
+                        inputMode="numeric"
+                    />
+                    <input
+                        value={manualName}
+                        onChange={(e) => setManualName(e.target.value)}
+                        placeholder="İsim (opsiyonel)"
+                        className={`px-3 py-2 rounded-lg text-sm outline-none border ${isDarkMode ? 'bg-black/30 border-white/10 text-white placeholder:text-gray-500' : 'bg-white border-gray-200 text-gray-900 placeholder:text-gray-400'}`}
+                        disabled={manualLoading}
+                    />
+                    <button
+                        onClick={addManualDevice}
+                        disabled={manualLoading || !manualIp.trim()}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r ${themeColors.secondary} text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                        {manualLoading ? 'Ekleniyor...' : 'Cihazı Ekle'}
                     </button>
                 </div>
             </div>

@@ -20,10 +20,11 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
     const [timeRange, setTimeRange] = useState(24); // hours
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [ledColor, setLedColor] = useState('#ff0000');
-    const [ledBrightness, setLedBrightness] = useState(255);
     const [ledPowerOn, setLedPowerOn] = useState(true);
     const [ledLoading, setLedLoading] = useState(false);
     const [ledStatus, setLedStatus] = useState(null);
+    const [ledHue, setLedHue] = useState(0); // 0..360
+    const [ledRgbText, setLedRgbText] = useState({ r: '255', g: '0', b: '0' });
     const { theme, isDarkMode } = useTheme();
     const { isOperator } = useAuth();
     const themeColors = getThemeColors(theme);
@@ -137,6 +138,90 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
         };
     };
 
+    const clamp255 = (n) => Math.max(0, Math.min(255, n));
+
+    const rgbToHex = (r, g, b) => {
+        const toHex = (v) => clamp255(v).toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    };
+
+    const rgbToHsv = (r, g, b) => {
+        const rr = r / 255, gg = g / 255, bb = b / 255;
+        const max = Math.max(rr, gg, bb);
+        const min = Math.min(rr, gg, bb);
+        const d = max - min;
+
+        let h = 0;
+        if (d !== 0) {
+            if (max === rr) h = ((gg - bb) / d) % 6;
+            else if (max === gg) h = (bb - rr) / d + 2;
+            else h = (rr - gg) / d + 4;
+            h *= 60;
+            if (h < 0) h += 360;
+        }
+
+        const s = max === 0 ? 0 : d / max;
+        const v = max;
+        return { h, s, v };
+    };
+
+    const hsvToRgb = (h, s, v) => {
+        const c = v * s;
+        const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+        const m = v - c;
+        let rr = 0, gg = 0, bb = 0;
+        if (h >= 0 && h < 60) { rr = c; gg = x; bb = 0; }
+        else if (h >= 60 && h < 120) { rr = x; gg = c; bb = 0; }
+        else if (h >= 120 && h < 180) { rr = 0; gg = c; bb = x; }
+        else if (h >= 180 && h < 240) { rr = 0; gg = x; bb = c; }
+        else if (h >= 240 && h < 300) { rr = x; gg = 0; bb = c; }
+        else { rr = c; gg = 0; bb = x; }
+        return {
+            r: Math.round((rr + m) * 255),
+            g: Math.round((gg + m) * 255),
+            b: Math.round((bb + m) * 255),
+        };
+    };
+
+    useEffect(() => {
+        // Keep hue + RGB boxes in sync with hex picker.
+        try {
+            const rgb = hexToRgb(ledColor);
+            const hsv = rgbToHsv(rgb.red, rgb.green, rgb.blue);
+            setLedHue(Math.round(hsv.h));
+            setLedRgbText({ r: String(rgb.red), g: String(rgb.green), b: String(rgb.blue) });
+        } catch {
+            // ignore parse errors
+        }
+    }, [ledColor]);
+
+    const onHueChange = (nextHue) => {
+        setLedHue(nextHue);
+        const rgb = hexToRgb(ledColor);
+        const hsv = rgbToHsv(rgb.red, rgb.green, rgb.blue);
+        const next = hsvToRgb(nextHue, hsv.s, hsv.v);
+        setLedColor(rgbToHex(next.r, next.g, next.b));
+    };
+
+    const onRgbBoxChange = (channel, value) => {
+        const next = { ...ledRgbText, [channel]: value };
+        setLedRgbText(next);
+
+        const parse = (v) => {
+            if (v === '' || v === null || v === undefined) return null;
+            const n = Number(v);
+            if (!Number.isFinite(n)) return null;
+            return clamp255(Math.trunc(n));
+        };
+
+        const cur = hexToRgb(ledColor);
+        const r = parse(next.r); const g = parse(next.g); const b = parse(next.b);
+        const rr = r === null ? cur.red : r;
+        const gg = g === null ? cur.green : g;
+        const bb = b === null ? cur.blue : b;
+        setLedColor(rgbToHex(rr, gg, bb));
+    };
+
     const sendLedColor = async () => {
         if (!isOperator || ledLoading) return;
         setLedLoading(true);
@@ -148,13 +233,20 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
                 red: rgb.red,
                 green: rgb.green,
                 blue: rgb.blue,
-                brightness: ledBrightness,
                 power: ledPowerOn,
                 persist: true,
             });
+            const endpoint = response.data?.endpoint ? ` ${response.data.endpoint}` : '';
+            const rr = response.data?.result?.r;
+            const gg = response.data?.result?.g;
+            const bb = response.data?.result?.b;
+            const resultRgb = (typeof rr === 'number' && typeof gg === 'number' && typeof bb === 'number')
+                ? ` r=${rr} g=${gg} b=${bb}`
+                : '';
+            const warn = response.data?.warning?.message ? ` | Uyarı: ${response.data.warning.message}` : '';
             setLedStatus({
                 type: 'success',
-                text: `Renk gönderildi (${response.data?.transport || 'unknown'})`
+                text: `Renk gönderildi (${response.data?.transport || 'unknown'}${endpoint}${resultRgb})${warn}`
             });
         } catch (err) {
             setLedStatus({
@@ -177,9 +269,17 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
                 persist: true,
             });
             setLedPowerOn(nextState);
+            const endpoint = response.data?.endpoint ? ` ${response.data.endpoint}` : '';
+            const rr = response.data?.result?.r;
+            const gg = response.data?.result?.g;
+            const bb = response.data?.result?.b;
+            const resultRgb = (typeof rr === 'number' && typeof gg === 'number' && typeof bb === 'number')
+                ? ` r=${rr} g=${gg} b=${bb}`
+                : (response.data?.result?.noop ? ' noop=true' : '');
+            const warn = response.data?.warning?.message ? ` | Uyarı: ${response.data.warning.message}` : '';
             setLedStatus({
                 type: 'success',
-                text: `LED ${nextState ? 'açıldı' : 'kapatıldı'} (${response.data?.transport || 'unknown'})`
+                text: `LED ${nextState ? 'açıldı' : 'kapatıldı'} (${response.data?.transport || 'unknown'}${endpoint}${resultRgb})${warn}`
             });
         } catch (err) {
             setLedStatus({
@@ -337,17 +437,70 @@ export function IoTDeviceDetail({ deviceId, onBack }) {
 
                     <div>
                         <label className={`block text-xs mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                            Parlaklık: {ledBrightness}
+                            Renk Barı (Hue): {ledHue}°
                         </label>
                         <input
                             type="range"
                             min="0"
-                            max="255"
-                            value={ledBrightness}
-                            onChange={(e) => setLedBrightness(Number(e.target.value))}
+                            max="360"
+                            value={ledHue}
+                            onChange={(e) => onHueChange(Number(e.target.value))}
                             disabled={!isOperator || ledLoading || device.status !== 'online'}
-                            className="w-full"
+                            className="w-full h-3 rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed"
+                            style={{
+                                background: 'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)'
+                            }}
                         />
+                        <div className="grid grid-cols-3 gap-2 mt-3">
+                            <div className="flex items-center gap-2">
+                                <label className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>R</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="255"
+                                    value={ledRgbText.r}
+                                    onChange={(e) => onRgbBoxChange('r', e.target.value)}
+                                    disabled={!isOperator || ledLoading || device.status !== 'online'}
+                                    className={`w-full px-2 py-1 rounded-md text-sm outline-none border ${
+                                        isDarkMode
+                                            ? 'bg-black/30 border-white/10 text-white'
+                                            : 'bg-white border-gray-200 text-gray-900'
+                                    }`}
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>G</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="255"
+                                    value={ledRgbText.g}
+                                    onChange={(e) => onRgbBoxChange('g', e.target.value)}
+                                    disabled={!isOperator || ledLoading || device.status !== 'online'}
+                                    className={`w-full px-2 py-1 rounded-md text-sm outline-none border ${
+                                        isDarkMode
+                                            ? 'bg-black/30 border-white/10 text-white'
+                                            : 'bg-white border-gray-200 text-gray-900'
+                                    }`}
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>B</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="255"
+                                    value={ledRgbText.b}
+                                    onChange={(e) => onRgbBoxChange('b', e.target.value)}
+                                    disabled={!isOperator || ledLoading || device.status !== 'online'}
+                                    className={`w-full px-2 py-1 rounded-md text-sm outline-none border ${
+                                        isDarkMode
+                                            ? 'bg-black/30 border-white/10 text-white'
+                                            : 'bg-white border-gray-200 text-gray-900'
+                                    }`}
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex md:justify-end">

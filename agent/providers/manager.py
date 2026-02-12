@@ -220,6 +220,28 @@ class ProviderManager:
         
         return await provider.get_stats(resource_id)
     
+    async def toggle_interface(self, interface: str, enable: bool, rollback_seconds: int = 0) -> Dict:
+        """Toggle a network interface."""
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        
+        action = "enable" if enable else "disable"
+        # Pass rollback_seconds in params if needed, though NetworkProvider might not use it yet
+        params = {"rollback_seconds": rollback_seconds} if rollback_seconds > 0 else {}
+        
+        result = await provider.execute_action(interface, action, params)
+        return result.to_dict()
+    
+    async def restart_interface(self, interface: str) -> Dict:
+        """Restart a network interface."""
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        
+        result = await provider.execute_action(interface, "restart")
+        return result.to_dict()
+
     async def get_network_interfaces(self) -> List[Dict]:
         """Get network interfaces from network provider."""
         provider = self._providers.get("network")
