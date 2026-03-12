@@ -2,10 +2,13 @@
 Pi Control Panel - Agent RPC Client
 
 Communicates with Pi Agent via Unix domain socket.
+Includes circuit breaker pattern for resilience.
 """
 
 import asyncio
 import json
+import time
+from enum import Enum
 from typing import Any, Dict, Optional
 
 import structlog
@@ -15,9 +18,15 @@ from config import settings
 logger = structlog.get_logger(__name__)
 
 
+class _CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
 class AgentClient:
     """RPC client for communicating with Pi Agent."""
-    
+
     def __init__(self, socket_path: str = None):
         self.socket_path = socket_path or settings.agent_socket
         self._reader: Optional[asyncio.StreamReader] = None
@@ -25,6 +34,15 @@ class AgentClient:
         self._request_id = 0
         self._lock = asyncio.Lock()
         self._connected = False
+
+        # Circuit breaker state
+        self._circuit_state = _CircuitState.CLOSED
+        self._failure_count = 0
+        self._failure_threshold = 5
+        self._last_failure_time = 0.0
+        self._circuit_timeout = 30.0  # seconds before trying half-open
+        self._half_open_successes = 0
+        self._half_open_threshold = 2
     
     async def connect(self) -> bool:
         """Connect to the agent socket."""
@@ -55,8 +73,46 @@ class AgentClient:
         self._writer = None
         self._connected = False
     
+    def _check_circuit(self) -> bool:
+        """Check if circuit breaker allows the request."""
+        if self._circuit_state == _CircuitState.CLOSED:
+            return True
+        if self._circuit_state == _CircuitState.OPEN:
+            if time.monotonic() - self._last_failure_time > self._circuit_timeout:
+                self._circuit_state = _CircuitState.HALF_OPEN
+                self._half_open_successes = 0
+                logger.info("Circuit breaker half-open, testing connection")
+                return True
+            return False
+        return True  # HALF_OPEN allows requests
+
+    def _record_success(self):
+        """Record successful call for circuit breaker."""
+        if self._circuit_state == _CircuitState.HALF_OPEN:
+            self._half_open_successes += 1
+            if self._half_open_successes >= self._half_open_threshold:
+                self._circuit_state = _CircuitState.CLOSED
+                self._failure_count = 0
+                logger.info("Circuit breaker closed, agent recovered")
+        else:
+            self._failure_count = 0
+
+    def _record_failure(self):
+        """Record failed call for circuit breaker."""
+        self._failure_count += 1
+        self._last_failure_time = time.monotonic()
+        if self._circuit_state == _CircuitState.HALF_OPEN:
+            self._circuit_state = _CircuitState.OPEN
+            logger.warning("Circuit breaker re-opened after half-open failure")
+        elif self._failure_count >= self._failure_threshold:
+            self._circuit_state = _CircuitState.OPEN
+            logger.warning("Circuit breaker opened", failures=self._failure_count)
+
     async def call(self, method: str, params: Optional[Dict] = None, timeout: float = 30.0) -> Any:
-        """Call an RPC method on the agent."""
+        """Call an RPC method on the agent with circuit breaker."""
+        if not self._check_circuit():
+            raise ConnectionError("Agent unavailable (circuit breaker open)")
+
         async with self._lock:
             if not self._connected:
                 if not await self.connect():
@@ -72,33 +128,44 @@ class AgentClient:
             }
             
             try:
-                # Send request
+                # Send request with timeout to prevent deadlock
                 request_bytes = json.dumps(request).encode("utf-8")
                 self._writer.write(len(request_bytes).to_bytes(4, byteorder="big"))
                 self._writer.write(request_bytes)
-                await self._writer.drain()
-                
+                await asyncio.wait_for(self._writer.drain(), timeout=5.0)
+
                 # Read response
                 length_bytes = await asyncio.wait_for(
                     self._reader.readexactly(4),
                     timeout=timeout
                 )
                 length = int.from_bytes(length_bytes, byteorder="big")
-                
+
                 response_bytes = await asyncio.wait_for(
                     self._reader.readexactly(length),
                     timeout=timeout
                 )
                 response = json.loads(response_bytes.decode("utf-8"))
-                
+
                 if "error" in response:
                     raise Exception(f"RPC error: {response['error']}")
-                
+
+                self._record_success()
                 return response.get("result")
-                
-            except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError) as e:
                 logger.error("RPC call failed", method=method, error=str(e))
                 self._connected = False
+                self._record_failure()
+                # Clean up connection to prevent stale state
+                try:
+                    if self._writer:
+                        self._writer.close()
+                        await self._writer.wait_closed()
+                except Exception:
+                    pass
+                self._reader = None
+                self._writer = None
                 raise
     
     # Discovery methods

@@ -23,6 +23,7 @@ Phase‑1 is **Tailscale‑first** and **not internet‑facing**.
 | 💻 **Terminal** | Full browser-based shell access |
 | 🔔 **Alerts** | Configurable alert rules with notifications |
 | 📈 **Telemetry** | Historical charts and analytics |
+| ☁️ **Archive & Backup** | Daily exports, 90-day local retention, optional Google Drive upload |
 
 ---
 
@@ -184,6 +185,29 @@ The service reads configuration from systemd environment:
 | `TELEMETRY_DB_PATH` | `/var/lib/pi-control/telemetry.db` | Metrics database |
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret key file |
 | `API_DEBUG` | `false` | Enable debug mode |
+| `BACKUP_GDRIVE_FOLDER_ID` | empty | Google Drive folder ID for cloud exports |
+| `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour (local time) |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute (local time) |
+
+### Google Drive Backup
+
+The panel keeps up to 90 days of telemetry and IoT data locally. Once Google
+Drive is configured, it also:
+
+- exports the previous day every 24 hours
+- archives expired local days into Drive before removing them locally
+
+Setup summary:
+
+```bash
+mkdir -p /opt/pi-control/credentials
+cp ~/Downloads/client_secret_*.json /opt/pi-control/credentials/gdrive_credentials.json
+cd /opt/pi-control
+./venv/bin/python scripts/gdrive_auth.py
+sudo systemctl restart pi-control
+```
+
+Then set the target Drive folder ID from the Archive > Yedekler screen.
 
 ### First-Run Setup
 
@@ -256,4 +280,3 @@ http://<tailscale-ip>/api/docs
 ## 📜 License
 
 © Bora Girgin (BGirginn)
-

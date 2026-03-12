@@ -9,6 +9,7 @@ const BASE_URL = '/api'
 class ApiService {
     constructor() {
         this.baseUrl = BASE_URL
+        this._refreshPromise = null
     }
 
     async request(method, path, data = null, options = {}) {
@@ -40,16 +41,21 @@ class ApiService {
 
         const response = await fetch(url, config)
 
-        // Handle 401 - try token refresh
+        // Handle 401 - try token refresh (singleton to prevent race condition)
         if (response.status === 401 && path !== '/auth/refresh' && path !== '/auth/login') {
             try {
-                await this.refreshToken()
-                // Retry original request
+                if (!this._refreshPromise) {
+                    this._refreshPromise = this.refreshToken().finally(() => {
+                        this._refreshPromise = null
+                    })
+                }
+                await this._refreshPromise
+                // Retry original request with new token
                 const newToken = localStorage.getItem('access_token')
                 headers['Authorization'] = `Bearer ${newToken}`
                 config.headers = headers
                 const retryResponse = await fetch(url, config)
-                return this.handleResponse(retryResponse)
+                return this.handleResponse(retryResponse, options.responseType)
             } catch (err) {
                 // Refresh failed, redirect to login
                 localStorage.removeItem('access_token')
@@ -60,19 +66,40 @@ class ApiService {
             }
         }
 
-        return this.handleResponse(response)
+        return this.handleResponse(response, options.responseType)
     }
 
-    async handleResponse(response) {
-        const data = await response.json().catch(() => ({}))
+    async handleResponse(response, responseType = 'json') {
+        const errorResponse = typeof response.clone === 'function' ? response.clone() : response
+        let data
+
+        if (responseType === 'blob') {
+            data = await response.blob()
+        } else if (responseType === 'text') {
+            data = await response.text()
+        } else {
+            data = await response.json().catch(() => ({}))
+        }
 
         if (!response.ok) {
-            const error = new Error(data.detail || response.statusText)
-            error.response = { status: response.status, data }
+            let errorData = {}
+            if (responseType === 'blob') {
+                errorData = await errorResponse.json().catch(async () => {
+                    const text = await errorResponse.text().catch(() => '')
+                    return { detail: text || response.statusText }
+                })
+            } else if (typeof data === 'string') {
+                errorData = { detail: data || response.statusText }
+            } else {
+                errorData = data
+            }
+
+            const error = new Error(errorData.detail || response.statusText)
+            error.response = { status: response.status, data: errorData }
             throw error
         }
 
-        return { data, status: response.status }
+        return { data, status: response.status, headers: response.headers }
     }
 
     async refreshToken() {

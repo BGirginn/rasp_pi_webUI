@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database } from 'lucide-react';
+import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database, GitBranch } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -21,6 +21,7 @@ export function Sidebar() {
     { icon: Wifi, label: 'Network', active: currentPage === 'network', page: 'network' },
     { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal', restricted: true },
     { icon: Folder, label: 'Files', active: currentPage === 'files', page: 'files', restricted: true },
+    { icon: GitBranch, label: 'Projects', active: currentPage === 'projects', page: 'projects' },
     { icon: Database, label: 'Archive', active: currentPage === 'archive', page: 'archive' },
   ];
   const adminItems = [
@@ -56,7 +57,7 @@ export function Sidebar() {
         {menuItems.filter(item => !item.restricted || isAdmin).map((item, index) => (<motion.button key={item.label} initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.4 + index * 0.05 }} onClick={() => setCurrentPage(item.page)} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${item.active
           ? isDarkMode ? 'bg-white/10' : 'bg-purple-50'
           : isDarkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'}`}>
-          {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border border-${themeColors.accent}/50`} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
+          {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border`} style={{ borderColor: `rgba(${themeColors.accentRgb}, 0.5)` }} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
 
           <motion.div whileHover={{ scale: 1.1 }} transition={{ duration: 0.2 }} className={`relative z-10 ${item.active
             ? 'text-white'
@@ -80,7 +81,7 @@ export function Sidebar() {
         {adminItems.map((item, index) => (<motion.button key={item.label} initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.7 + index * 0.05 }} onClick={() => setCurrentPage(item.page)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative group ${item.active
           ? isDarkMode ? 'bg-white/10' : 'bg-purple-50'
           : isDarkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'}`}>
-          {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border border-${themeColors.accent}/50`} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
+          {item.active && (<motion.div layoutId="activeTab" className={`absolute inset-0 bg-gradient-to-r ${themeColors.secondary} opacity-20 rounded-lg border`} style={{ borderColor: `rgba(${themeColors.accentRgb}, 0.5)` }} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />)}
 
           <motion.div whileHover={{ scale: 1.1 }} transition={{ duration: 0.2 }} className={`relative z-10 ${item.active
             ? 'text-white'

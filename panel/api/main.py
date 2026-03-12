@@ -23,6 +23,7 @@ from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
 from services.discovery import discovery_service
+from services.gdrive_backup import backup_service
 
 # ... existing code ...
 
@@ -72,11 +73,13 @@ async def lifespan(app: FastAPI):
     await alert_manager.start()
     await telemetry_collector.start()
     await discovery_service.start()
-    
+    await backup_service.start_scheduler()
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    await backup_service.stop_scheduler()
     await discovery_service.stop()
     await telemetry_collector.stop()
     await alert_manager.stop()

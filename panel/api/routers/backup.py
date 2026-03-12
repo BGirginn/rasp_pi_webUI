@@ -124,8 +124,8 @@ async def get_gdrive_auth_url(user: dict = Depends(require_admin)):
         "instructions": [
             "1. SSH into your Raspberry Pi",
             "2. Run: cd /opt/pi-control && python scripts/gdrive_auth.py",
-            "3. Follow the browser link to authorize",
-            "4. Paste the authorization code",
+            "3. Open the printed Google link in a browser and approve access",
+            "4. Copy the final redirected URL back into the terminal",
             "5. Restart pi-control service"
         ]
     }
@@ -135,6 +135,6 @@ async def set_gdrive_folder(
     folder_id: str,
     user: dict = Depends(require_admin)
 ):
-    """Set the Google Drive folder ID for backups."""
-    backup_service.folder_id = folder_id
-    return {"message": f"Backup folder set to {folder_id}"}
+    """Set the Google Drive folder ID (or folder URL) for backups."""
+    saved_folder_id = await backup_service.set_folder_id(folder_id)
+    return {"message": f"Backup folder set to {saved_folder_id}", "folder_id": saved_folder_id}

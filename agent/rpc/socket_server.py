@@ -94,17 +94,27 @@ class SocketServer:
         try:
             while True:
                 # Read message length (4 bytes, big-endian)
-                length_bytes = await reader.readexactly(4)
+                try:
+                    length_bytes = await reader.readexactly(4)
+                except asyncio.IncompleteReadError:
+                    logger.debug("Client disconnected during length read", peer=peer)
+                    break
+
                 length = int.from_bytes(length_bytes, byteorder="big")
-                
+
                 if length > 10 * 1024 * 1024:  # 10MB limit
                     logger.warning("Message too large", length=length)
                     break
-                
+
                 # Read message
-                message_bytes = await reader.readexactly(length)
+                try:
+                    message_bytes = await reader.readexactly(length)
+                except asyncio.IncompleteReadError:
+                    logger.debug("Client disconnected during message read", peer=peer)
+                    break
+
                 message = message_bytes.decode("utf-8")
-                
+
                 # Parse JSON-RPC request
                 try:
                     request = json.loads(message)
@@ -112,20 +122,27 @@ class SocketServer:
                     response = self._error_response(None, -32700, f"Parse error: {e}")
                 else:
                     response = await self._process_request(request)
-                
-                # Send response
+
+                # Send response with timeout to prevent hanging on slow clients
                 response_bytes = json.dumps(response).encode("utf-8")
                 writer.write(len(response_bytes).to_bytes(4, byteorder="big"))
                 writer.write(response_bytes)
-                await writer.drain()
-                
-        except asyncio.IncompleteReadError:
-            logger.debug("Client disconnected", peer=peer)
+                try:
+                    await asyncio.wait_for(writer.drain(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Client write timeout", peer=peer)
+                    break
+
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.exception("Client handler error", peer=peer, error=str(e))
         finally:
-            writer.close()
-            await writer.wait_closed()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
     
     async def _process_request(self, request: Dict) -> Dict:
         """Process a JSON-RPC request."""

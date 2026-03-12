@@ -222,6 +222,7 @@ async def migrate_001_initial_schema(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_job_logs_job_created ON job_logs(job_id, created_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_alerts_rule ON alerts(rule_id)")
 

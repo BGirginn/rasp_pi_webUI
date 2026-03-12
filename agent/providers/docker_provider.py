@@ -233,14 +233,15 @@ class DockerProvider(BaseProvider):
             # Get single stats snapshot (stream=False)
             stats = await asyncio.to_thread(container.stats, stream=False)
             
-            # Calculate CPU percentage
+            # Calculate CPU percentage (safe access for first call when precpu_stats may be empty)
+            precpu = stats.get("precpu_stats", {})
             cpu_delta = stats["cpu_stats"]["cpu_usage"]["total_usage"] - \
-                       stats["precpu_stats"]["cpu_usage"]["total_usage"]
-            system_delta = stats["cpu_stats"]["system_cpu_usage"] - \
-                          stats["precpu_stats"]["system_cpu_usage"]
-            cpu_count = stats["cpu_stats"]["online_cpus"]
-            
-            cpu_pct = (cpu_delta / system_delta) * cpu_count * 100 if system_delta > 0 else 0
+                       precpu.get("cpu_usage", {}).get("total_usage", 0)
+            system_delta = stats["cpu_stats"].get("system_cpu_usage", 0) - \
+                          precpu.get("system_cpu_usage", 0)
+            cpu_count = stats["cpu_stats"].get("online_cpus", 1)
+
+            cpu_pct = (cpu_delta / system_delta) * cpu_count * 100 if system_delta > 0 else 0.0
             
             # Memory stats
             mem_usage = stats["memory_stats"].get("usage", 0)

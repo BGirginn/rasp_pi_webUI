@@ -1,12 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { DashboardProvider } from './contexts/DashboardContext';
 import { NavigationProvider } from './contexts/NavigationContext';
 import { AuthProvider, useAuth } from './hooks/useAuth';
-import { Dashboard } from './components/Dashboard';
-import Login from './pages/Login';
-
 import Loader from './components/common/Loader';
+
+const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
+const Login = lazy(() => import('./pages/Login'));
 
 // Protected Route wrapper
 function ProtectedRoute({ children }) {
@@ -40,6 +41,7 @@ function PublicRoute({ children }) {
 
 function AppRoutes() {
     return (
+        <Suspense fallback={<Loader />}>
         <Routes>
             <Route
                 path="/login"
@@ -62,6 +64,7 @@ function AppRoutes() {
                 }
             />
         </Routes>
+        </Suspense>
     );
 }
 

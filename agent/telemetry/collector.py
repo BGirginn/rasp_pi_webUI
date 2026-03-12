@@ -40,7 +40,9 @@ class TelemetryCollector:
         self._rollup_task: Optional[asyncio.Task] = None
         self._batch: List[Dict] = []
         self._lock = asyncio.Lock()
-        
+        self._flush_fail_count = 0
+        self._max_flush_retries = 3
+
         # Degrade mode thresholds
         self._degrade_config = self.config.get("degrade", {})
         self._degrade_mode = False
@@ -132,7 +134,13 @@ class TelemetryCollector:
                 CREATE INDEX IF NOT EXISTS idx_metrics_summary_lookup
                 ON metrics_summary(metric, ts)
             """)
-            
+
+            # Index for time-range-first queries (e.g. cleanup, retention)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metrics_raw_ts
+                ON metrics_raw(ts)
+            """)
+
             await db.commit()
             logger.info("Telemetry database initialized", path=self._db_path)
     
@@ -274,14 +282,19 @@ class TelemetryCollector:
                     ]
                 )
                 await db.commit()
-            
+
+            self._flush_fail_count = 0
             logger.debug("Flushed metrics batch", count=len(batch_to_write))
             
         except Exception as e:
-            logger.exception("Failed to flush batch", error=str(e))
-            # Re-add failed batch (but don't exceed max size)
-            async with self._lock:
-                self._batch = batch_to_write[:self._batch_size // 2] + self._batch
+            self._flush_fail_count += 1
+            if self._flush_fail_count <= self._max_flush_retries:
+                logger.warning("Failed to flush batch, retrying", error=str(e), attempt=self._flush_fail_count)
+                async with self._lock:
+                    self._batch = batch_to_write[:self._batch_size // 2] + self._batch
+            else:
+                logger.error("Failed to flush batch after max retries, dropping batch", error=str(e), dropped=len(batch_to_write))
+                self._flush_fail_count = 0
     
     async def _rollup_loop(self) -> None:
         """Rollup raw metrics to summary periodically."""

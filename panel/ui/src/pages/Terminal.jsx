@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -10,6 +10,10 @@ export default function Terminal() {
     const xtermRef = useRef(null)
     const wsRef = useRef(null)
     const fitAddonRef = useRef(null)
+    const heartbeatRef = useRef(null)
+    const reconnectTimeoutRef = useRef(null)
+    const reconnectAttemptsRef = useRef(0)
+    const shouldReconnectRef = useRef(false)
 
     const [connected, setConnected] = useState(false)
     const [mode, setMode] = useState(null) // 'restricted' or 'full'
@@ -144,9 +148,13 @@ export default function Terminal() {
 
         return () => {
             window.removeEventListener('resize', handleResize)
+            shouldReconnectRef.current = false
+            if (heartbeatRef.current) clearInterval(heartbeatRef.current)
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
             term.dispose()
             if (wsRef.current) {
                 wsRef.current.close()
+                wsRef.current = null
             }
         }
     }, [])
@@ -230,7 +238,7 @@ export default function Terminal() {
             }
         }
 
-        ws.onerror = (err) => {
+        ws.onerror = () => {
             setError('Connection error')
             setConnecting(false)
             setConnected(false)
@@ -242,9 +250,33 @@ export default function Terminal() {
             setConnected(false)
             setConnecting(false)
             setMode(null)
+            if (heartbeatRef.current) {
+                clearInterval(heartbeatRef.current)
+                heartbeatRef.current = null
+            }
             term.writeln('')
             term.writeln('\x1b[33mConnection closed.\x1b[0m')
+
+            // Auto-reconnect with exponential backoff
+            if (shouldReconnectRef.current) {
+                const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000)
+                reconnectAttemptsRef.current += 1
+                term.writeln(`\x1b[33mReconnecting in ${delay / 1000}s...\x1b[0m`)
+                reconnectTimeoutRef.current = setTimeout(() => {
+                    if (shouldReconnectRef.current) connect()
+                }, delay)
+            }
         }
+
+        // Heartbeat to keep connection alive
+        heartbeatRef.current = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }))
+            }
+        }, 30000)
+
+        shouldReconnectRef.current = true
+        reconnectAttemptsRef.current = 0
 
         // Send terminal input to server (for full PTY mode)
         term.onData((data) => {
@@ -423,6 +455,15 @@ export default function Terminal() {
     }
 
     const disconnect = () => {
+        shouldReconnectRef.current = false
+        if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current)
+            reconnectTimeoutRef.current = null
+        }
+        if (heartbeatRef.current) {
+            clearInterval(heartbeatRef.current)
+            heartbeatRef.current = null
+        }
         if (wsRef.current) {
             wsRef.current.close()
             wsRef.current = null

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(du:*)",
+      "Bash(wc:*)",
+      "Bash(npm install:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(npm run build:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(pip3 list:*)",
+      "Bash(python3 -m pip list:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(/Users/bgirginn/Desktop/rasp_pi_webUI/panel/api/.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/python -m pytest tests/ -v --timeout=30)",
+      "Bash(.venv/bin/python -m pytest tests/ -v)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/python -m pytest:*)"
+    ]
+  }
+}

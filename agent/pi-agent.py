@@ -365,7 +365,7 @@ class PiAgent:
     def handle_signal(self, signum, frame):
         """Handle shutdown signals."""
         logger.info("Received signal", signal=signum)
-        asyncio.create_task(self.stop())
+        self._shutdown_event.set()
 
 
 async def main():
@@ -389,6 +389,8 @@ async def main():
     except Exception as e:
         logger.exception("Agent failed", error=str(e))
         sys.exit(1)
+    finally:
+        await agent.stop()
 
 
 if __name__ == "__main__":

@@ -194,6 +194,15 @@ async def _init_control_schema(db):
             FOREIGN KEY (acknowledged_by) REFERENCES users(id)
         )
     """)
+
+    # Settings table (used for backup scheduler state and operator config)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     
     # Break-glass terminal sessions table
     await db.execute("""
@@ -282,8 +291,10 @@ async def _init_telemetry_schema(db):
     
     # Create indexes
     await db.execute("CREATE INDEX IF NOT EXISTS idx_metrics_raw_lookup ON metrics_raw(metric, ts)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_metrics_raw_ts ON metrics_raw(ts)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_metrics_summary_lookup ON metrics_summary(metric, ts)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_iot_readings_device ON iot_sensor_readings(device_id, timestamp)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_iot_readings_lookup ON iot_sensor_readings(device_id, sensor_type, timestamp)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_iot_readings_ts ON iot_sensor_readings(timestamp)")
     
     await db.commit()

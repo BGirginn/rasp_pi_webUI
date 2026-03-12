@@ -36,7 +36,12 @@ async def execute_power_command(command_args: list):
     """Execute power command with a small delay to allow response to return."""
     await asyncio.sleep(2)
     # We use systemctl as it is whitelisted in sudoers
-    subprocess.run(["sudo"] + command_args, check=False)
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", *command_args,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL
+    )
+    await proc.wait()
 
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(user: dict = Depends(get_current_user)):

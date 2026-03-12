@@ -32,21 +32,40 @@ export function IoTPage({ onDeviceClick }) {
     useEffect(() => {
         loadDevices();
 
-        // Polling for real-time updates (every 2 seconds)
-        const pollInterval = setInterval(() => {
-            loadDevices();
-        }, 2000);
+        let pollInterval = null;
+        let sseConnected = false;
 
-        // Also connect to SSE for real-time updates (backup)
-        // Correct SSE endpoint is `/api/sse/telemetry` (token is passed as query param).
+        // Try SSE first for real-time updates
         const eventSource = api.createSSE('/sse/telemetry', (data, type) => {
             if (type === 'iot_update') {
+                sseConnected = true;
+                // Cancel polling if SSE is delivering updates
+                if (pollInterval) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                }
                 setDevices(data);
+            }
+        }, () => {
+            // SSE error - fall back to polling
+            sseConnected = false;
+            if (!pollInterval) {
+                pollInterval = setInterval(loadDevices, 2000);
             }
         });
 
+        // Start polling as fallback, stop if SSE delivers within 3s
+        pollInterval = setInterval(loadDevices, 2000);
+        const sseWaitTimeout = setTimeout(() => {
+            if (sseConnected && pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }, 3000);
+
         return () => {
-            clearInterval(pollInterval);
+            clearTimeout(sseWaitTimeout);
+            if (pollInterval) clearInterval(pollInterval);
             if (eventSource) eventSource.close();
         };
     }, []);

@@ -113,12 +113,14 @@ export function DashboardProvider({ children }) {
         const token = localStorage.getItem('access_token');
         let eventSource = null;
         let pollingInterval = null;
+        let sseConnected = false;
 
         if (token) {
             try {
                 eventSource = new EventSource(`/api/sse/telemetry?token=${token}`);
 
                 eventSource.addEventListener('connected', () => {
+                    sseConnected = true;
                     if (import.meta.env.DEV) {
                         console.log('SSE connected for real-time telemetry');
                     }
@@ -129,19 +131,29 @@ export function DashboardProvider({ children }) {
                         const data = JSON.parse(event.data);
                         processTelemetryData(data);
                     } catch (e) {
-                        console.error('Failed to parse SSE telemetry:', e);
+                        if (import.meta.env.DEV) {
+                            console.error('Failed to parse SSE telemetry:', e);
+                        }
                     }
                 });
 
                 eventSource.onerror = () => {
-                    console.warn('SSE error, falling back to polling');
-                    eventSource.close();
+                    if (import.meta.env.DEV) {
+                        console.warn('SSE error, falling back to polling');
+                    }
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                    sseConnected = false;
                     if (!pollingInterval) {
                         pollingInterval = setInterval(loadDashboardData, 2000);
                     }
                 };
             } catch (err) {
-                console.warn('SSE not available, using polling');
+                if (import.meta.env.DEV) {
+                    console.warn('SSE not available, using polling');
+                }
                 pollingInterval = setInterval(loadDashboardData, 2000);
             }
         } else {
@@ -152,8 +164,14 @@ export function DashboardProvider({ children }) {
         const otherDataInterval = setInterval(loadOtherData, 5000);
 
         return () => {
-            if (eventSource) eventSource.close();
-            if (pollingInterval) clearInterval(pollingInterval);
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
             clearInterval(otherDataInterval);
         };
     }, []);

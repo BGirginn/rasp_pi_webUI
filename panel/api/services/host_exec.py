@@ -5,6 +5,7 @@ Native mode: Executes commands directly on the system.
 Docker mode: Uses SSH to connect to the host via the gateway IP.
 """
 
+import asyncio
 import subprocess
 import os
 from typing import Tuple
@@ -110,3 +111,8 @@ def run_host_command_simple(command: str, timeout: int = 30) -> str:
     """Execute a command on host and return stdout only."""
     stdout, stderr, code = run_host_command(command, timeout)
     return stdout if code == 0 else ""
+
+
+async def run_host_command_async(command: str, timeout: int = 30) -> str:
+    """Execute a command on host asynchronously and return stdout only."""
+    return await asyncio.to_thread(run_host_command_simple, command, timeout)

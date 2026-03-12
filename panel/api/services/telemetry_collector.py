@@ -215,36 +215,33 @@ class TelemetryCollector:
         """Remove data older than retention policy."""
         db = await get_telemetry_db()
         now = int(time.time())
-        
-        # Calculate cutoffs
-        raw_cutoff = now - (settings.telemetry_raw_retention_days * 24 * 3600)
+
+        from services.gdrive_backup import backup_service
+
+        retention_result = await backup_service.enforce_retention()
         summary_cutoff = now - (settings.telemetry_summary_retention_days * 24 * 3600)
-        
-        # Delete old raw metrics
-        cursor = await db.execute(
-            "DELETE FROM metrics_raw WHERE ts < ?",
-            (raw_cutoff,)
-        )
-        raw_deleted = cursor.rowcount
-        
+
         # Delete old summaries
         cursor = await db.execute(
             "DELETE FROM metrics_summary WHERE ts < ?",
             (summary_cutoff,)
         )
         summary_deleted = cursor.rowcount
-        
+
         await db.commit()
-        
+
+        raw_deleted = retention_result["telemetry"]["deleted_rows"]
+        iot_deleted = retention_result["iot"]["deleted_rows"]
+
         # Vacuum if significant deletions
-        if raw_deleted > 1000 or summary_deleted > 100:
+        if raw_deleted > 1000 or iot_deleted > 1000 or summary_deleted > 100:
             await db.execute("VACUUM")
-        
+
         logger.info(
             "Old telemetry data cleaned up",
             raw_deleted=raw_deleted,
+            iot_deleted=iot_deleted,
             summary_deleted=summary_deleted,
-            raw_cutoff=datetime.fromtimestamp(raw_cutoff).isoformat(),
             summary_cutoff=datetime.fromtimestamp(summary_cutoff).isoformat()
         )
     

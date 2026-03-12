@@ -191,7 +191,8 @@ export function PerformanceWidget({ variant, width, height }) {
             <div className="flex gap-1 text-xs items-center">
               <button
                 onClick={() => setMetric('cpu')}
-                className={`transition-all duration-200 px-2 py-0.5 rounded ${metric === 'cpu' ? `font-bold bg-${themeColors.accent}/10 text-${themeColors.accent}` : 'text-gray-500 hover:text-gray-400'}`}
+                className={`transition-all duration-200 px-2 py-0.5 rounded ${metric === 'cpu' ? 'font-bold' : 'text-gray-500 hover:text-gray-400'}`}
+                style={metric === 'cpu' ? { backgroundColor: `rgba(${themeColors.accentRgb}, 0.1)`, color: `rgb(${themeColors.accentRgb})` } : undefined}
               >
                 CPU
               </button>
@@ -215,7 +216,8 @@ export function PerformanceWidget({ variant, width, height }) {
 
               <button
                 onClick={() => setMetric('all')}
-                className={`transition-all duration-200 px-2 py-0.5 rounded ${metric === 'all' ? `font-bold bg-${themeColors.accent}/10 text-${themeColors.accent}` : 'text-gray-500 hover:text-gray-400'}`}
+                className={`transition-all duration-200 px-2 py-0.5 rounded ${metric === 'all' ? 'font-bold' : 'text-gray-500 hover:text-gray-400'}`}
+                style={metric === 'all' ? { backgroundColor: `rgba(${themeColors.accentRgb}, 0.1)`, color: `rgb(${themeColors.accentRgb})` } : undefined}
               >
                 ALL
               </button>
@@ -267,8 +269,9 @@ export function PerformanceWidget({ variant, width, height }) {
               }}
               className={`p-1 rounded-md transition-colors ${refreshInterval === (inputVal * (inputUnit === 'm' ? 60 : 1))
                 ? (isDarkMode ? 'text-gray-600 cursor-default' : 'text-gray-300 cursor-default')
-                : (isDarkMode ? `hover:bg-${themeColors.accent}/20 text-${themeColors.accent}` : `hover:bg-${themeColors.accent}/10 text-${themeColors.accent}-600`)
+                : ''
                 }`}
+              style={refreshInterval !== (inputVal * (inputUnit === 'm' ? 60 : 1)) ? { color: `rgb(${themeColors.accentRgb})` } : undefined}
               title="Apply Refresh Rate"
               disabled={refreshInterval === (inputVal * (inputUnit === 'm' ? 60 : 1))}
             >

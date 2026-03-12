@@ -173,12 +173,17 @@ class MQTTBridge:
         }
         
         try:
-            result = self._client.publish(topic, json.dumps(message), qos=1)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self._client.publish, topic, json.dumps(message), 1),
+                timeout=5.0
+            )
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 logger.info("Command sent", device=device_id, command=command)
                 return {"success": True, "message": f"Command '{command}' sent to {device_id}"}
             else:
                 return {"success": False, "error": f"Publish failed: {result.rc}"}
+        except asyncio.TimeoutError:
+            return {"success": False, "error": "MQTT publish timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}
     

@@ -69,7 +69,7 @@ class JobRunner:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._workers: List[asyncio.Task] = []
         self._running = False
-            self._job_logs: Dict[str, List[Dict]] = {}
+        self._job_logs: Dict[str, List[Dict]] = {}
     
     @property
     def is_healthy(self) -> bool:

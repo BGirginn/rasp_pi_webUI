@@ -45,6 +45,7 @@ export default function Login() {
             window.removeEventListener('resize', handleResize)
             if (networkRef.current) {
                 networkRef.current.stop()
+                networkRef.current = null
             }
         }
     }, [])
@@ -57,6 +58,11 @@ export default function Login() {
 
         try {
             await login(username, password, needsTotp ? totpCode : null)
+            // Stop canvas animation before navigating away
+            if (networkRef.current) {
+                networkRef.current.stop()
+                networkRef.current = null
+            }
             navigate('/')
         } catch (err) {
             if (err.message?.includes('TOTP')) {

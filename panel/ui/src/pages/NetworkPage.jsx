@@ -4,16 +4,7 @@ import { useTheme, getThemeColors, } from "../contexts/ThemeContext";
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
-
-// Helper to format bytes
-function formatBytes(bytes, decimals = 2) {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-}
+import { formatBytes } from "../utils/format";
 
 // Get icon based on interface type
 function getInterfaceIcon(type) {

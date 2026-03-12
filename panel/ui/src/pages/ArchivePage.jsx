@@ -8,13 +8,43 @@ import {
 } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
+import { formatBytes, formatUptime } from '../utils/format';
+
+const TELEMETRY_METRIC_DETAILS = {
+    'host.cpu.pct_total': { label: 'Toplam CPU kullanimi', unit: '%', decimals: 1 },
+    'host.mem.pct': { label: 'Bellek kullanimi', unit: '%', decimals: 1 },
+    'host.mem.available_mb': { label: 'Kullanilabilir bellek', unit: 'GB', decimals: 1, transform: (value) => value / 1024 },
+    'host.mem.used_mb': { label: 'Kullanilan bellek', unit: 'GB', decimals: 1, transform: (value) => value / 1024 },
+    'host.mem.total_mb': { label: 'Toplam bellek', unit: 'GB', decimals: 1, transform: (value) => value / 1024 },
+    'host.temp.cpu_c': { label: 'CPU sicakligi', unit: '°C', decimals: 1 },
+    'disk._root.pct': { label: 'Disk kullanimi', unit: '%', decimals: 1 },
+    'disk._root.used_pct': { label: 'Disk kullanimi', unit: '%', decimals: 1 },
+    'disk._root.used_gb': { label: 'Kullanilan disk alani', unit: 'GB', decimals: 1 },
+    'disk._root.total_gb': { label: 'Toplam disk alani', unit: 'GB', decimals: 1 },
+    'host.net.rx_bytes': { label: 'Alinan veri', format: 'bytes' },
+    'host.net.tx_bytes': { label: 'Gonderilen veri', format: 'bytes' },
+    'host.load.1m': { label: '1 dakikalik yuk ortalamasi', decimals: 2 },
+    'host.load.5m': { label: '5 dakikalik yuk ortalamasi', decimals: 2 },
+    'host.load.15m': { label: '15 dakikalik yuk ortalamasi', decimals: 2 },
+    'host.uptime.seconds': { label: 'Calisma suresi', format: 'uptime' },
+};
+
+const telemetryCategoryDefinitions = {
+    'CPU': { prefixes: ['host.cpu'], icon: Activity, color: 'from-purple-500 to-violet-500' },
+    'Bellek': { prefixes: ['host.mem'], icon: HardDrive, color: 'from-green-500 to-emerald-500' },
+    'Sicaklik': { prefixes: ['host.temp'], icon: Thermometer, color: 'from-red-500 to-orange-500' },
+    'Disk': { prefixes: ['disk.'], icon: Database, color: 'from-blue-500 to-cyan-500' },
+    'Ag': { prefixes: ['host.net'], icon: Activity, color: 'from-yellow-500 to-amber-500' },
+    'Sistem': { prefixes: ['host.load', 'host.uptime'], icon: Gauge, color: 'from-slate-500 to-gray-600' },
+    'Diger': { prefixes: [], icon: Filter, color: 'from-gray-500 to-gray-600' },
+};
 
 export function ArchivePage() {
     const { theme, isDarkMode } = useTheme();
     const themeColors = getThemeColors(theme);
 
     // State
-    const [activeTab, setActiveTab] = useState('stats'); // stats, telemetry, iot, backups
+    const [activeTab, setActiveTab] = useState('telemetry'); // stats, telemetry, iot, backups
     const [stats, setStats] = useState(null);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -39,6 +69,8 @@ export function ArchivePage() {
     const [backupStatus, setBackupStatus] = useState(null);
     const [backupFiles, setBackupFiles] = useState([]);
     const [backupRunning, setBackupRunning] = useState(false);
+    const [folderIdInput, setFolderIdInput] = useState('');
+    const [savingFolder, setSavingFolder] = useState(false);
 
     // Sensor icon helper
     const getSensorIcon = (type) => {
@@ -74,6 +106,196 @@ export function ArchivePage() {
             co2: 'from-teal-500 to-cyan-500',
         };
         return colors[type?.toLowerCase()] || 'from-gray-500 to-gray-600';
+    };
+
+    const getTelemetryMetricDetail = (metric) => {
+        const exactMatch = TELEMETRY_METRIC_DETAILS[metric];
+        if (exactMatch) {
+            return exactMatch;
+        }
+
+        const fallbackLabel = metric
+            ?.split('.')
+            .filter(Boolean)
+            .slice(-2)
+            .join(' ')
+            .replace(/_/g, ' ');
+
+        return {
+            label: fallbackLabel || metric || 'Bilinmeyen metrik',
+            decimals: 2,
+        };
+    };
+
+    const formatNumberValue = (value, decimals = 1) => {
+        return new Intl.NumberFormat('tr-TR', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+        }).format(value);
+    };
+
+    const formatCompactPercent = (value, decimals = 0) => {
+        return `%${formatNumberValue(value, decimals)}`;
+    };
+
+    const formatTelemetryValue = (metric, rawValue) => {
+        const numericValue = Number(rawValue);
+        if (!Number.isFinite(numericValue)) {
+            return '-';
+        }
+
+        const detail = getTelemetryMetricDetail(metric);
+
+        if (detail.format === 'bytes') {
+            return formatBytes(numericValue, numericValue >= 1024 ? 1 : 0);
+        }
+
+        if (detail.format === 'uptime') {
+            return formatUptime(numericValue);
+        }
+
+        const transformedValue = detail.transform ? detail.transform(numericValue) : numericValue;
+        const formattedValue = formatNumberValue(transformedValue, detail.decimals ?? 1);
+
+        if (!detail.unit) {
+            return formattedValue;
+        }
+
+        return detail.unit === '%'
+            ? `${formattedValue}%`
+            : `${formattedValue} ${detail.unit}`;
+    };
+
+    const buildGenericTelemetryRows = (rows) => {
+        return rows.map((row) => {
+            const metricDetail = getTelemetryMetricDetail(row.metric);
+
+            return {
+                timestamp: row.timestamp,
+                datetime: row.datetime,
+                primaryLabel: metricDetail.label,
+                secondaryLabel: row.metric,
+                valueText: formatTelemetryValue(row.metric, row.value),
+            };
+        });
+    };
+
+    const groupTelemetryRowsByTimestamp = (rows) => {
+        const groupedRows = new Map();
+
+        rows.forEach((row) => {
+            const key = row.timestamp ?? row.datetime;
+            if (!groupedRows.has(key)) {
+                groupedRows.set(key, []);
+            }
+            groupedRows.get(key).push(row);
+        });
+
+        return Array.from(groupedRows.values()).sort(
+            (left, right) => (right[0]?.timestamp ?? 0) - (left[0]?.timestamp ?? 0)
+        );
+    };
+
+    const buildMemorySummaryRows = (rows) => {
+        const displayRows = [];
+
+        groupTelemetryRowsByTimestamp(rows).forEach((snapshotRows) => {
+            const values = Object.fromEntries(
+                snapshotRows.map((row) => [row.metric, Number(row.value)])
+            );
+
+            const usedGb = Number.isFinite(values['host.mem.used_mb']) ? values['host.mem.used_mb'] / 1024 : null;
+            const totalGb = Number.isFinite(values['host.mem.total_mb']) ? values['host.mem.total_mb'] / 1024 : null;
+            const availableGb = Number.isFinite(values['host.mem.available_mb']) ? values['host.mem.available_mb'] / 1024 : null;
+            const pct = Number.isFinite(values['host.mem.pct']) ? values['host.mem.pct'] : null;
+
+            if (usedGb == null && totalGb == null && pct == null) {
+                displayRows.push(...buildGenericTelemetryRows(snapshotRows));
+                return;
+            }
+
+            const summaryParts = [];
+
+            if (usedGb != null && totalGb != null) {
+                summaryParts.push(`${formatNumberValue(usedGb, 1)} / ${formatNumberValue(totalGb, 1)} GB`);
+            } else if (usedGb != null) {
+                summaryParts.push(`${formatNumberValue(usedGb, 1)} GB`);
+            } else if (totalGb != null) {
+                summaryParts.push(`${formatNumberValue(totalGb, 1)} GB toplam`);
+            }
+
+            if (pct != null) {
+                summaryParts.push(`(${formatCompactPercent(pct, 0)})`);
+            }
+
+            displayRows.push({
+                timestamp: snapshotRows[0]?.timestamp,
+                datetime: snapshotRows[0]?.datetime,
+                primaryLabel: 'Bellek ozeti',
+                secondaryLabel: availableGb != null ? `Bos: ${formatNumberValue(availableGb, 1)} GB` : 'host.mem.*',
+                valueText: summaryParts.join(' '),
+            });
+        });
+
+        return displayRows;
+    };
+
+    const buildDiskSummaryRows = (rows) => {
+        const displayRows = [];
+
+        groupTelemetryRowsByTimestamp(rows).forEach((snapshotRows) => {
+            const values = Object.fromEntries(
+                snapshotRows.map((row) => [row.metric, Number(row.value)])
+            );
+
+            const usedGb = Number.isFinite(values['disk._root.used_gb']) ? values['disk._root.used_gb'] : null;
+            const totalGb = Number.isFinite(values['disk._root.total_gb']) ? values['disk._root.total_gb'] : null;
+            const pct = Number.isFinite(values['disk._root.used_pct'])
+                ? values['disk._root.used_pct']
+                : (Number.isFinite(values['disk._root.pct']) ? values['disk._root.pct'] : null);
+            const freeGb = usedGb != null && totalGb != null ? Math.max(totalGb - usedGb, 0) : null;
+
+            if (usedGb == null && totalGb == null && pct == null) {
+                displayRows.push(...buildGenericTelemetryRows(snapshotRows));
+                return;
+            }
+
+            const summaryParts = [];
+
+            if (usedGb != null && totalGb != null) {
+                summaryParts.push(`${formatNumberValue(usedGb, 1)} / ${formatNumberValue(totalGb, 1)} GB`);
+            } else if (usedGb != null) {
+                summaryParts.push(`${formatNumberValue(usedGb, 1)} GB`);
+            } else if (totalGb != null) {
+                summaryParts.push(`${formatNumberValue(totalGb, 1)} GB toplam`);
+            }
+
+            if (pct != null) {
+                summaryParts.push(`(${formatCompactPercent(pct, 0)})`);
+            }
+
+            displayRows.push({
+                timestamp: snapshotRows[0]?.timestamp,
+                datetime: snapshotRows[0]?.datetime,
+                primaryLabel: 'Disk ozeti',
+                secondaryLabel: freeGb != null ? `Bos: ${formatNumberValue(freeGb, 1)} GB` : 'Kok dizin',
+                valueText: summaryParts.join(' '),
+            });
+        });
+
+        return displayRows;
+    };
+
+    const buildTelemetryDisplayRows = (categoryName, rows) => {
+        if (categoryName === 'Bellek') {
+            return buildMemorySummaryRows(rows);
+        }
+
+        if (categoryName === 'Disk') {
+            return buildDiskSummaryRows(rows);
+        }
+
+        return buildGenericTelemetryRows(rows);
     };
 
     // Group data by device and sensor type
@@ -129,26 +351,24 @@ export function ArchivePage() {
     const groupedTelemetry = useMemo(() => {
         if (activeTab !== 'telemetry' || !data.length) return {};
 
-        const categories = {
-            'CPU': { prefix: 'host.cpu', icon: Activity, color: 'from-purple-500 to-violet-500', metrics: [] },
-            'Bellek': { prefix: 'host.mem', icon: HardDrive, color: 'from-green-500 to-emerald-500', metrics: [] },
-            'Sıcaklık': { prefix: 'host.temp', icon: Thermometer, color: 'from-red-500 to-orange-500', metrics: [] },
-            'Disk': { prefix: 'host.disk', icon: Database, color: 'from-blue-500 to-cyan-500', metrics: [] },
-            'Ağ': { prefix: 'host.net', icon: Activity, color: 'from-yellow-500 to-amber-500', metrics: [] },
-            'Diğer': { prefix: '', icon: Filter, color: 'from-gray-500 to-gray-600', metrics: [] }
-        };
+        const categories = Object.fromEntries(
+            Object.entries(telemetryCategoryDefinitions).map(([name, config]) => [
+                name,
+                { ...config, metrics: [] }
+            ])
+        );
 
         data.forEach(row => {
             let assigned = false;
             for (const [catName, cat] of Object.entries(categories)) {
-                if (catName !== 'Diğer' && row.metric?.startsWith(cat.prefix)) {
+                if (catName !== 'Diger' && cat.prefixes.some((prefix) => row.metric?.startsWith(prefix))) {
                     cat.metrics.push(row);
                     assigned = true;
                     break;
                 }
             }
             if (!assigned) {
-                categories['Diğer'].metrics.push(row);
+                categories['Diger'].metrics.push(row);
             }
         });
 
@@ -156,6 +376,8 @@ export function ArchivePage() {
         Object.keys(categories).forEach(key => {
             if (categories[key].metrics.length === 0) {
                 delete categories[key];
+            } else {
+                categories[key].displayRows = buildTelemetryDisplayRows(key, categories[key].metrics);
             }
         });
 
@@ -225,6 +447,7 @@ export function ArchivePage() {
             ]);
             setBackupStatus(statusRes.data);
             setBackupFiles(filesRes.data.files || []);
+            setFolderIdInput(statusRes.data.folder_id || '');
         } catch (err) {
             console.error('Failed to load backup status:', err);
         }
@@ -251,13 +474,15 @@ export function ArchivePage() {
             const response = await api.get(`/backup/download/${filename}`, {
                 responseType: 'blob'
             });
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const url = window.URL.createObjectURL(response.data);
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', filename);
+            const headerName = response.headers?.get('content-disposition')?.match(/filename="?([^"]+)"?/)?.[1];
+            link.setAttribute('download', headerName || filename);
             document.body.appendChild(link);
             link.click();
             link.remove();
+            window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error('Download failed:', err);
         }
@@ -275,15 +500,30 @@ export function ArchivePage() {
                 responseType: 'blob'
             });
 
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const url = window.URL.createObjectURL(response.data);
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `export_${dataType}_${new Date().toISOString().split('T')[0]}.${format}`);
+            const headerName = response.headers?.get('content-disposition')?.match(/filename="?([^"]+)"?/)?.[1];
+            link.setAttribute('download', headerName || `export_${dataType}_${new Date().toISOString().split('T')[0]}.${format}`);
             document.body.appendChild(link);
             link.click();
             link.remove();
+            window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error('Export failed:', err);
+        }
+    };
+
+    const saveFolderId = async () => {
+        if (!folderIdInput.trim()) return;
+        setSavingFolder(true);
+        try {
+            await api.post(`/backup/gdrive/set-folder?folder_id=${encodeURIComponent(folderIdInput.trim())}`);
+            await loadBackupStatus();
+        } catch (err) {
+            console.error('Failed to save Google Drive folder:', err);
+        } finally {
+            setSavingFolder(false);
         }
     };
 
@@ -299,14 +539,31 @@ export function ArchivePage() {
         }
     }, [activeTab, page, startDate, endDate, deviceFilter, metricFilter]);
 
-    // Format helpers
-    const formatBytes = (bytes) => {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
+    useEffect(() => {
+        if (activeTab === 'telemetry' && Object.keys(groupedTelemetry).length > 0) {
+            setExpandedGroups(prev => (
+                Object.keys(prev).length > 0
+                    ? prev
+                    : Object.keys(groupedTelemetry).reduce((acc, key, index) => {
+                        acc[key] = index === 0;
+                        return acc;
+                    }, {})
+            ));
+        }
+    }, [activeTab, groupedTelemetry]);
+
+    useEffect(() => {
+        if (activeTab === 'iot' && Object.keys(groupedData).length > 0) {
+            setExpandedGroups(prev => (
+                Object.keys(prev).length > 0
+                    ? prev
+                    : Object.keys(groupedData).reduce((acc, key, index) => {
+                        acc[key] = index === 0;
+                        return acc;
+                    }, {})
+            ));
+        }
+    }, [activeTab, groupedData]);
 
     const formatNumber = (num) => {
         return new Intl.NumberFormat('tr-TR').format(num);
@@ -314,7 +571,7 @@ export function ArchivePage() {
 
     const formatValue = (value, decimals = 1) => {
         if (typeof value !== 'number') return value;
-        return value.toFixed(decimals);
+        return formatNumberValue(value, decimals);
     };
 
     return (
@@ -347,7 +604,7 @@ export function ArchivePage() {
                 ].map(tab => (
                     <button
                         key={tab.id}
-                        onClick={() => { setActiveTab(tab.id); setPage(0); }}
+                        onClick={() => { setActiveTab(tab.id); setPage(0); setExpandedGroups({}); }}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id
                             ? `bg-gradient-to-r ${themeColors.secondary} text-white`
                             : isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
@@ -450,6 +707,8 @@ export function ArchivePage() {
 
                     {loading ? (
                         <div className="text-center py-8 text-gray-500">Yükleniyor...</div>
+                    ) : error ? (
+                        <div className="text-center py-8 text-red-500">{error}</div>
                     ) : Object.keys(groupedData).length === 0 ? (
                         <div className="text-center py-8 text-gray-500">Veri bulunamadı</div>
                     ) : (
@@ -562,6 +821,8 @@ export function ArchivePage() {
 
                     {loading ? (
                         <div className="text-center py-8 text-gray-500">Yükleniyor...</div>
+                    ) : error ? (
+                        <div className="text-center py-8 text-red-500">{error}</div>
                     ) : Object.keys(groupedTelemetry).length === 0 ? (
                         <div className="text-center py-8 text-gray-500">Veri bulunamadı</div>
                     ) : (
@@ -577,7 +838,11 @@ export function ArchivePage() {
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-lg">{category}</h3>
-                                            <p className="text-xs text-gray-500">{catData.metrics.length} kayıt</p>
+                                            <p className="text-xs text-gray-500">
+                                                {catData.displayRows?.length === catData.metrics.length
+                                                    ? `${catData.metrics.length} kayıt`
+                                                    : `${catData.displayRows?.length || 0} özet • ${catData.metrics.length} kayıt`}
+                                            </p>
                                         </div>
                                     </div>
                                     {expandedGroups[category] ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
@@ -595,18 +860,29 @@ export function ArchivePage() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {catData.metrics.slice(0, 20).map((row, idx) => (
-                                                    <tr key={idx} className={`border-t ${isDarkMode ? 'border-white/5' : 'border-gray-100'}`}>
-                                                        <td className="px-4 py-2 font-mono text-xs">{row.datetime?.split('T').join(' ').substring(0, 19)}</td>
-                                                        <td className="px-4 py-2 text-xs">{row.metric?.split('.').slice(-1)[0]}</td>
-                                                        <td className="px-4 py-2 text-right font-mono">{formatValue(row.value, 2)}</td>
-                                                    </tr>
-                                                ))}
+                                                {(catData.displayRows || []).slice(0, 20).map((row, idx) => {
+                                                    return (
+                                                        <tr key={idx} className={`border-t ${isDarkMode ? 'border-white/5' : 'border-gray-100'}`}>
+                                                            <td className="px-4 py-2 font-mono text-xs">{row.datetime?.split('T').join(' ').substring(0, 19)}</td>
+                                                            <td className="px-4 py-2">
+                                                                <div className="text-sm font-medium">
+                                                                    {row.primaryLabel}
+                                                                </div>
+                                                                <div className="text-[11px] text-gray-500">
+                                                                    {row.secondaryLabel}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2 text-right font-mono">
+                                                                {row.valueText}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
-                                        {catData.metrics.length > 20 && (
+                                        {(catData.displayRows?.length || 0) > 20 && (
                                             <div className="px-4 py-2 text-center text-xs text-gray-500">
-                                                +{catData.metrics.length - 20} daha fazla kayıt
+                                                +{(catData.displayRows?.length || 0) - 20} daha fazla kayıt
                                             </div>
                                         )}
                                     </div>
@@ -650,6 +926,51 @@ export function ArchivePage() {
                             <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
                                 <div className="text-sm text-gray-500 mb-1">Lokal Yedekler</div>
                                 <div className="font-medium">{backupFiles.length} dosya</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                                <div className="text-sm text-gray-500 mb-1">Zamanlama</div>
+                                <div className="font-medium">
+                                    Her gun {String(backupStatus?.daily_export?.hour ?? 0).padStart(2, '0')}:
+                                    {String(backupStatus?.daily_export?.minute ?? 0).padStart(2, '0')}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-2">
+                                    Son gunluk export: {backupStatus?.last_daily_export_date || 'Henuz yok'}
+                                </div>
+                            </div>
+                            <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                                <div className="text-sm text-gray-500 mb-1">Local Saklama</div>
+                                <div className="font-medium">
+                                    Sistem: {backupStatus?.retention_days?.telemetry ?? 90} gun
+                                </div>
+                                <div className="text-xs text-gray-500 mt-2">
+                                    IoT: {backupStatus?.retention_days?.iot ?? 90} gun
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className={`p-4 rounded-xl mb-6 ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                            <div className="text-sm text-gray-500 mb-3">Google Drive Klasoru</div>
+                            <div className="flex flex-col md:flex-row gap-3">
+                                <input
+                                    type="text"
+                                    value={folderIdInput}
+                                    onChange={(e) => setFolderIdInput(e.target.value)}
+                                    placeholder="Folder ID veya Google Drive klasor URL"
+                                    className={`flex-1 px-3 py-2 rounded-lg text-sm ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'} border`}
+                                />
+                                <button
+                                    onClick={saveFolderId}
+                                    disabled={savingFolder || !folderIdInput.trim()}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-200 hover:bg-gray-300'} ${savingFolder || !folderIdInput.trim() ? 'opacity-50' : ''}`}
+                                >
+                                    {savingFolder ? 'Kaydediliyor...' : 'Klasoru Kaydet'}
+                                </button>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-2">
+                                Sonraki planli calisma: {backupStatus?.next_run_at ? new Date(backupStatus.next_run_at).toLocaleString('tr-TR') : 'Bekleniyor'}
                             </div>
                         </div>
 

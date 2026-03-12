@@ -13,6 +13,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { IoTPage } from '../pages/IoTPage';
 import { IoTDeviceDetail } from '../pages/IoTDeviceDetail';
 import { ArchivePage } from '../pages/ArchivePage';
+import { ProjectsPage } from '../pages/ProjectsPage';
 import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -80,6 +81,8 @@ export function Dashboard() {
             <p>You do not have permission to access the file manager.</p>
           </div>
         );
+      case 'projects':
+        return <ProjectsPage />;
       case 'settings':
         return <SettingsPage />;
       case 'archive':

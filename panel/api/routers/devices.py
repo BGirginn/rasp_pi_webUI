@@ -410,10 +410,11 @@ async def configure_gpio(
     
     db = await get_control_db()
     
-    await db.run(
-        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (:uid, 'device.gpio.configure', :details, '127.0.0.1')",
-        {"uid": user["id"], "details": json.dumps(config.dict())}
+    await db.execute(
+        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, 'device.gpio.configure', ?, '127.0.0.1')",
+        (user["id"], json.dumps(config.dict()))
     )
+    await db.commit()
     
     # Execute change
     # raspi-gpio set <pin> [ip|op] [pu|pd|pn] [dh|dl]

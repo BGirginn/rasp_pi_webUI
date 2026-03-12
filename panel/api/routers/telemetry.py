@@ -75,6 +75,7 @@ async def get_current_metrics(user: dict = Depends(get_current_user)):
 
 async def _get_local_system_metrics() -> Dict:
     """Get real HOST system metrics by reading from mounted /host filesystem."""
+    import asyncio
     import platform
     import subprocess
     import os
@@ -88,8 +89,8 @@ async def _get_local_system_metrics() -> Dict:
     # ============ CPU Usage ============
     try:
         import psutil
-        # This blocks for 0.5s to calculate accurate delta
-        metrics["host.cpu.pct_total"] = psutil.cpu_percent(interval=0.5)
+        # Use asyncio.to_thread to avoid blocking the event loop
+        metrics["host.cpu.pct_total"] = await asyncio.to_thread(psutil.cpu_percent, 0.5)
     except (OSError, ImportError, ValueError):
         try:
             # Manual fallback: Read /proc/stat twice
@@ -105,7 +106,7 @@ async def _get_local_system_metrics() -> Dict:
 
             t1, i1 = read_stat()
             if t1 > 0:
-                time.sleep(0.5)
+                await asyncio.sleep(0.5)
                 t2, i2 = read_stat()
                 delta_total = t2 - t1
                 delta_idle = i2 - i1
@@ -456,6 +457,7 @@ async def get_metric_series(
     metrics: str = Query(..., description="Comma-separated metric names"),
     start: Optional[int] = Query(None, description="Start timestamp (epoch)"),
     end: Optional[int] = Query(None, description="End timestamp (epoch)"),
+    step: int = Query(300, description="Downsample step size in seconds for summary data"),
     user: dict = Depends(get_current_user)
 ):
     """Get summarized historical time-series data."""
@@ -469,12 +471,22 @@ async def get_metric_series(
     results = []
     
     for metric_name in metric_names:
-        cursor = await db.execute(
-            """SELECT ts, avg FROM metrics_summary 
-               WHERE metric = ? AND ts BETWEEN ? AND ?
-               ORDER BY ts""",
-            (metric_name, start, end)
-        )
+        if step > 1:
+            cursor = await db.execute(
+                """SELECT (ts / ?) * ? as bucket_ts, AVG(avg)
+                   FROM metrics_summary
+                   WHERE metric = ? AND ts BETWEEN ? AND ?
+                   GROUP BY bucket_ts
+                   ORDER BY bucket_ts""",
+                (step, step, metric_name, start, end)
+            )
+        else:
+            cursor = await db.execute(
+                """SELECT ts, avg FROM metrics_summary 
+                   WHERE metric = ? AND ts BETWEEN ? AND ?
+                   ORDER BY ts""",
+                (metric_name, start, end)
+            )
         rows = await cursor.fetchall()
         
         points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]
@@ -493,6 +505,7 @@ async def get_metric_series_post(
         metrics=query.metrics,
         start=query.start,
         end=query.end,
+        step=query.step,
         user=user
     )
 
@@ -563,32 +576,30 @@ async def cleanup_old_data(
 ):
     """Manually trigger data cleanup based on retention policies."""
     from config import settings
-    
+    from services.gdrive_backup import backup_service
+
     db = await get_telemetry_db()
-    
     now = int(time.time())
-    raw_cutoff = now - (settings.telemetry_raw_retention_days * 24 * 3600)
     summary_cutoff = now - (settings.telemetry_summary_retention_days * 24 * 3600)
-    
-    # Delete old raw metrics
-    cursor = await db.execute(
-        "DELETE FROM metrics_raw WHERE ts < ?",
-        (raw_cutoff,)
-    )
-    raw_deleted = cursor.rowcount
-    
+
+    retention_result = await backup_service.enforce_retention()
+
     # Delete old summaries
     cursor = await db.execute(
         "DELETE FROM metrics_summary WHERE ts < ?",
         (summary_cutoff,)
     )
     summary_deleted = cursor.rowcount
-    
+
     await db.commit()
-    
+
     return {
-        "raw_deleted": raw_deleted,
+        "raw_deleted": retention_result["telemetry"]["deleted_rows"],
+        "iot_deleted": retention_result["iot"]["deleted_rows"],
+        "telemetry_archived_days": retention_result["telemetry"]["archived_days"],
+        "iot_archived_days": retention_result["iot"]["archived_days"],
         "summary_deleted": summary_deleted,
-        "raw_cutoff": datetime.fromtimestamp(raw_cutoff).isoformat(),
-        "summary_cutoff": datetime.fromtimestamp(summary_cutoff).isoformat()
+        "summary_cutoff": datetime.fromtimestamp(summary_cutoff).isoformat(),
+        "retention_status": retention_result["status"],
+        "retention_errors": retention_result["errors"],
     }
