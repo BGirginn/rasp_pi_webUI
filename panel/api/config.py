@@ -64,10 +64,8 @@ class Settings(BaseSettings):
     audit_log_retention_days: int = Field(default=90, alias="AUDIT_LOG_RETENTION_DAYS")
     iot_sensor_retention_days: int = Field(default=90, alias="IOT_SENSOR_RETENTION_DAYS")
 
-    # Backup / Google Drive
+    # Local backup
     backup_local_dir: str = Field(default="/opt/pi-control/backups", alias="BACKUP_LOCAL_DIR")
-    backup_credentials_dir: str = Field(default="/opt/pi-control/credentials", alias="BACKUP_CREDENTIALS_DIR")
-    backup_gdrive_folder_id: str = Field(default="", alias="BACKUP_GDRIVE_FOLDER_ID")
     backup_daily_export_enabled: bool = Field(default=True, alias="BACKUP_DAILY_EXPORT_ENABLED")
     backup_daily_export_hour: int = Field(default=0, alias="BACKUP_DAILY_EXPORT_HOUR")
     backup_daily_export_minute: int = Field(default=5, alias="BACKUP_DAILY_EXPORT_MINUTE")

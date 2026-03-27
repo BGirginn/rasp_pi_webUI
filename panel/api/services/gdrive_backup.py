@@ -1,14 +1,13 @@
 """
-Pi Control Panel - Google Drive Backup Service
+Pi Control Panel - Backup Service
 
-Handles scheduled daily exports, retention archiving, and optional uploads
-to Google Drive.
+Handles scheduled daily exports and retention archiving.
+Google Drive integration is temporarily disabled.
 """
 
 import asyncio
 import csv
 import json
-import re
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -20,40 +19,22 @@ from config import settings
 from db import get_control_db, get_telemetry_db
 
 logger = structlog.get_logger(__name__)
-
-# Google Drive API (optional - graceful fallback if not installed)
-try:
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
-
-    GDRIVE_AVAILABLE = True
-except ImportError:
-    Credentials = None
-    GDRIVE_AVAILABLE = False
-    logger.warning(
-        "Google Drive API not installed. Run: pip install google-auth google-auth-oauthlib google-api-python-client"
-    )
-
-
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+GDRIVE_DISABLED_REASON = "Temporarily disabled. TODO: redesign cloud backup flow."
 
 
 class GDriveBackupService:
-    """Service for local exports and optional Google Drive uploads."""
+    """Service for local exports and retention archiving."""
 
-    SETTING_FOLDER_ID = "backup.gdrive.folder_id"
     SETTING_LAST_DAILY_EXPORT_DATE = "backup.daily.last_export_date"
 
     def __init__(self):
-        self.creds: Optional[Credentials] = None
+        self.creds = None
         self.service = None
-        self.folder_id: Optional[str] = settings.backup_gdrive_folder_id or None
+        self.folder_id: Optional[str] = None
         self.backup_dir = Path(settings.backup_local_dir)
-        credentials_dir = Path(settings.backup_credentials_dir)
-        self.credentials_file = credentials_dir / "gdrive_credentials.json"
-        self.token_file = credentials_dir / "gdrive_token.json"
+        # Kept for backward compatibility with older tests/tools.
+        self.credentials_file = self.backup_dir / ".gdrive_disabled_credentials"
+        self.token_file = self.backup_dir / ".gdrive_disabled_token"
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._initialized = False
@@ -64,38 +45,21 @@ class GDriveBackupService:
         self.last_daily_export_date: Optional[str] = None
 
     def is_configured(self) -> bool:
-        """Check if Google Drive credentials are available."""
-        return GDRIVE_AVAILABLE and self.credentials_file.exists()
+        """Cloud backup is temporarily disabled."""
+        return False
 
     def is_authenticated(self) -> bool:
-        """Check if we have valid Google Drive credentials."""
-        return self.creds is not None and self.creds.valid and self.service is not None
+        """Cloud backup is temporarily disabled."""
+        return False
 
     async def initialize(self) -> bool:
-        """Prepare directories, load persisted settings, and authenticate."""
+        """Prepare directories and load runtime markers."""
         self.backup_dir.mkdir(parents=True, exist_ok=True)
-        self.credentials_file.parent.mkdir(parents=True, exist_ok=True)
         await self._ensure_settings_table()
         await self._load_runtime_settings()
-
-        if not GDRIVE_AVAILABLE:
-            self._initialized = True
-            logger.warning("Google Drive API libraries are unavailable")
-            return False
-
-        if not self.credentials_file.exists():
-            self._initialized = True
-            logger.info("Google Drive credentials not found. Scheduled exports will stay local.")
-            return False
-
-        try:
-            await self._authenticate()
-        except Exception as exc:
-            logger.error("Failed to authenticate with Google Drive", error=str(exc))
-        finally:
-            self._initialized = True
-
-        return self.is_authenticated()
+        self._initialized = True
+        logger.info("Cloud backup is disabled", reason=GDRIVE_DISABLED_REASON)
+        return False
 
     async def _ensure_ready(self):
         """Lazily initialize the service when called directly."""
@@ -139,36 +103,8 @@ class GDriveBackupService:
         await db.commit()
 
     async def _load_runtime_settings(self):
-        """Load Google Drive folder and scheduler markers from the database."""
-        stored_folder_id = await self._get_setting(self.SETTING_FOLDER_ID)
-        if stored_folder_id:
-            self.folder_id = stored_folder_id
-        elif self.folder_id:
-            await self._set_setting(self.SETTING_FOLDER_ID, self.folder_id)
-
+        """Load scheduler markers from the database."""
         self.last_daily_export_date = await self._get_setting(self.SETTING_LAST_DAILY_EXPORT_DATE)
-
-    async def _authenticate(self):
-        """Authenticate with Google Drive using a stored token."""
-        if not GDRIVE_AVAILABLE:
-            return
-
-        creds = None
-        if self.token_file.exists():
-            creds = Credentials.from_authorized_user_file(str(self.token_file), SCOPES)
-
-        if creds and creds.expired and creds.refresh_token:
-            await asyncio.to_thread(creds.refresh, Request())
-
-        if not creds or not creds.valid:
-            logger.warning("Google Drive authentication required. Run scripts/gdrive_auth.py once on the Pi.")
-            return
-
-        self.creds = creds
-        self.service = await asyncio.to_thread(build, "drive", "v3", credentials=creds, cache_discovery=False)
-        async with aiofiles.open(self.token_file, "w") as handle:
-            await handle.write(creds.to_json())
-        logger.info("Google Drive authentication successful")
 
     async def start_scheduler(self):
         """Start scheduled daily export and retention maintenance."""
@@ -275,7 +211,7 @@ class GDriveBackupService:
             scope="manual",
             stamp=stamp,
             target_date=end_dt.date(),
-            upload_to_cloud=True,
+            upload_to_cloud=False,
             require_cloud_if_configured=False,
         )
         result["type"] = "manual_backup"
@@ -307,8 +243,8 @@ class GDriveBackupService:
             scope="daily",
             stamp=target_day,
             target_date=target_date,
-            upload_to_cloud=True,
-            require_cloud_if_configured=True,
+            upload_to_cloud=False,
+            require_cloud_if_configured=False,
         )
         result["type"] = "daily_export"
         result["date"] = target_day
@@ -413,8 +349,8 @@ class GDriveBackupService:
             scope="archive",
             stamp=archive_day.isoformat(),
             target_date=archive_day,
-            upload_to_cloud=True,
-            require_cloud_if_configured=True,
+            upload_to_cloud=False,
+            require_cloud_if_configured=False,
             data_types=(data_type,),
         )
 
@@ -493,8 +429,6 @@ class GDriveBackupService:
                 result["status"] = "failed"
             elif not result["files"]:
                 result["status"] = "completed_no_data"
-            elif upload_to_cloud and not self.is_configured():
-                result["status"] = "completed_local_only"
             else:
                 result["status"] = "completed"
         except Exception as exc:
@@ -518,7 +452,7 @@ class GDriveBackupService:
         upload_to_cloud: bool,
         require_cloud_if_configured: bool,
     ) -> Optional[Dict]:
-        """Export one dataset and optionally upload it to Google Drive."""
+        """Export one dataset to local backup storage."""
         if data_type == "telemetry":
             cursor = await db.execute(
                 """
@@ -559,13 +493,8 @@ class GDriveBackupService:
             "uploaded": False,
         }
 
-        if upload_to_cloud:
-            if self.is_authenticated():
-                parent_id = await self._ensure_remote_folder_path(self._remote_parts_for_scope(scope, target_date))
-                file_info["gdrive_id"] = await self._upload_to_gdrive(filepath, parent_id=parent_id)
-                file_info["uploaded"] = True
-            elif require_cloud_if_configured and self.is_configured():
-                raise RuntimeError("Google Drive is configured but not authenticated")
+        if upload_to_cloud and require_cloud_if_configured:
+            logger.warning("Cloud upload requested but disabled", reason=GDRIVE_DISABLED_REASON)
 
         return file_info
 
@@ -632,19 +561,6 @@ class GDriveBackupService:
         """Create stable filenames for local exports."""
         return f"{scope}_{stamp}_{data_type}.{export_format}"
 
-    def _remote_parts_for_scope(self, scope: str, target_date: date) -> List[str]:
-        """Map export scopes to Google Drive folder hierarchy."""
-        base_folders = {
-            "daily": "daily-exports",
-            "archive": "retention-archive",
-            "manual": "manual-backups",
-        }
-        return [
-            base_folders.get(scope, "exports"),
-            target_date.strftime("%Y"),
-            target_date.strftime("%m"),
-        ]
-
     def _normalize_format(self, export_format: str) -> str:
         """Allow only JSON or CSV for export."""
         return "csv" if str(export_format).lower() == "csv" else "json"
@@ -657,98 +573,15 @@ class GDriveBackupService:
             self.backup_history = self.backup_history[-30:]
 
     async def set_folder_id(self, folder_ref: str) -> str:
-        """Persist a Google Drive folder ID or folder URL."""
-        folder_id = self._extract_drive_folder_id(folder_ref)
-        self.folder_id = folder_id
-        self._folder_cache.clear()
-        await self._set_setting(self.SETTING_FOLDER_ID, folder_id)
-        return folder_id
-
-    def _extract_drive_folder_id(self, folder_ref: str) -> str:
-        """Accept a raw folder ID or a full Google Drive folder URL."""
-        cleaned = folder_ref.strip()
-        patterns = [
-            r"/folders/([a-zA-Z0-9_-]+)",
-            r"[?&]id=([a-zA-Z0-9_-]+)",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, cleaned)
-            if match:
-                return match.group(1)
-        return cleaned
-
-    async def _ensure_remote_folder_path(self, parts: Sequence[str]) -> Optional[str]:
-        """Create or fetch nested folders under the configured root."""
-        if not self.is_authenticated():
-            return self.folder_id
-
-        parent_id = self.folder_id or "root"
-        for name in parts:
-            cache_key = (parent_id, name)
-            if cache_key in self._folder_cache:
-                parent_id = self._folder_cache[cache_key]
-                continue
-
-            folder_id = await self._find_or_create_folder(name=name, parent_id=parent_id)
-            self._folder_cache[cache_key] = folder_id
-            parent_id = folder_id
-
-        return None if parent_id == "root" else parent_id
-
-    async def _find_or_create_folder(self, name: str, parent_id: str) -> str:
-        """Find an existing Drive folder or create it."""
-        escaped_name = name.replace("'", "\\'")
-        query = (
-            "mimeType = 'application/vnd.google-apps.folder' and "
-            f"name = '{escaped_name}' and "
-            f"'{parent_id}' in parents and trashed = false"
-        )
-
-        def _list_folder():
-            return (
-                self.service.files()
-                .list(q=query, spaces="drive", fields="files(id, name)", pageSize=1)
-                .execute()
-            )
-
-        existing = await asyncio.to_thread(_list_folder)
-        files = existing.get("files", [])
-        if files:
-            return files[0]["id"]
-
-        metadata = {
-            "name": name,
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [parent_id] if parent_id else [],
-        }
-
-        def _create_folder():
-            return self.service.files().create(body=metadata, fields="id").execute()
-
-        created = await asyncio.to_thread(_create_folder)
-        return created["id"]
-
-    async def _upload_to_gdrive(self, filepath: Path, parent_id: Optional[str]) -> str:
-        """Upload a local export file to Google Drive."""
-        if not self.service:
-            raise RuntimeError("Google Drive not authenticated")
-
-        metadata = {"name": filepath.name}
-        if parent_id:
-            metadata["parents"] = [parent_id]
-
-        def _upload():
-            media = MediaFileUpload(str(filepath), resumable=False)
-            return self.service.files().create(body=metadata, media_body=media, fields="id").execute()
-
-        uploaded = await asyncio.to_thread(_upload)
-        logger.info("Uploaded file to Google Drive", filename=filepath.name, file_id=uploaded.get("id"))
-        return uploaded.get("id")
+        """Cloud folder configuration is disabled for now."""
+        raise RuntimeError(GDRIVE_DISABLED_REASON)
 
     def get_status(self) -> Dict:
-        """Get current scheduler and Google Drive status."""
+        """Get current scheduler and local backup status."""
         return {
-            "gdrive_available": GDRIVE_AVAILABLE,
+            "gdrive_available": False,
+            "gdrive_enabled": False,
+            "gdrive_todo": GDRIVE_DISABLED_REASON,
             "configured": self.is_configured(),
             "authenticated": self.is_authenticated(),
             "scheduler_running": self._running,
@@ -756,7 +589,7 @@ class GDriveBackupService:
             "last_backup": self.last_backup,
             "last_daily_export_date": self.last_daily_export_date,
             "backup_directory": str(self.backup_dir),
-            "folder_id": self.folder_id,
+            "folder_id": None,
             "retention_days": {
                 "telemetry": settings.telemetry_raw_retention_days,
                 "iot": settings.iot_sensor_retention_days,

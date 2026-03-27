@@ -1,13 +1,11 @@
 """
 Pi Control Panel - Backup Router
 
-Provides API endpoints for backup management and Google Drive integration.
+Provides API endpoints for local backup management.
 """
 
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
-from typing import Optional
-from pathlib import Path
 from .auth import get_current_user, require_role
 from services.gdrive_backup import backup_service
 
@@ -107,34 +105,5 @@ async def delete_backup_file(
     filepath.unlink()
     return {"message": f"Deleted {filename}"}
 
-# ==================== Google Drive Auth ====================
-
-@router.get("/gdrive/auth-url")
-async def get_gdrive_auth_url(user: dict = Depends(require_admin)):
-    """Get Google Drive authorization URL for setup."""
-    if not backup_service.credentials_file.exists():
-        raise HTTPException(
-            status_code=400, 
-            detail="Google Drive credentials not configured. Upload credentials.json first."
-        )
-    
-    # For headless setup, provide instructions
-    return {
-        "message": "Google Drive authentication is done via command line on the Raspberry Pi",
-        "instructions": [
-            "1. SSH into your Raspberry Pi",
-            "2. Run: cd /opt/pi-control && python scripts/gdrive_auth.py",
-            "3. Open the printed Google link in a browser and approve access",
-            "4. Copy the final redirected URL back into the terminal",
-            "5. Restart pi-control service"
-        ]
-    }
-
-@router.post("/gdrive/set-folder")
-async def set_gdrive_folder(
-    folder_id: str,
-    user: dict = Depends(require_admin)
-):
-    """Set the Google Drive folder ID (or folder URL) for backups."""
-    saved_folder_id = await backup_service.set_folder_id(folder_id)
-    return {"message": f"Backup folder set to {saved_folder_id}", "folder_id": saved_folder_id}
+# NOTE: Google Drive backup endpoints are intentionally removed for now.
+# TODO: Re-introduce cloud backup endpoints once the new GDrive flow is finalized.

@@ -1,282 +1,290 @@
-# 🍓 Pi Control Panel
+# Pi Control Panel
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-c51a4a.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/tailscale-required-0A66C2.svg" alt="Tailscale">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
-</p>
-
-A **modern, beautiful web dashboard** to monitor and control your Raspberry Pi from anywhere via Tailscale VPN.  
-Phase‑1 is **Tailscale‑first** and **not internet‑facing**.
-
----
-
-## ✨ Features
-
-| Feature | Description |
-|---------|-------------|
-| 📊 **Dashboard** | Real-time CPU, memory, disk, temperature monitoring |
-| ⚙️ **Services** | Start/stop/restart systemd services |
-| 🔌 **Devices** | USB, serial, and IoT device discovery |
-| 🌐 **Network** | View and manage network interfaces |
-| 💻 **Terminal** | Full browser-based shell access |
-| 🔔 **Alerts** | Configurable alert rules with notifications |
-| 📈 **Telemetry** | Historical charts and analytics |
-| ☁️ **Archive & Backup** | Daily exports, 90-day local retention, optional Google Drive upload |
-
----
-
-## 📸 Screenshots
-
-Take a look at the modern, beautiful interface:
-
-<p align="center">
-  <img src="./ReadMePhotos/Screenshot%202026-01-14%20at%2022.21.16.png" alt="Dashboard Overview" width="45%">
-  <img src="./ReadMePhotos/Screenshot%202026-01-14%20at%2022.21.25.png" alt="Service Management" width="45%">
+  <strong>Raspberry Pi icin modern, guvenli ve operasyon odakli yonetim paneli</strong><br/>
+  FastAPI + React + Agent + Telemetry + Backup
 </p>
 
 <p align="center">
-  <img src="./ReadMePhotos/Screenshot%202026-01-14%20at%2022.21.37.png" alt="Device Discovery" width="45%">
-  <img src="./ReadMePhotos/Screenshot%202026-01-14%20at%2022.22.13.png" alt="Network Monitoring" width="45%">
-</p>
-
-<p align="center">
-  <img src="./ReadMePhotos/Screenshot%202026-01-14%20at%2022.22.27.png" alt="Terminal Access" width="45%">
+  <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
+  <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
+  <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
+  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
+  <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
 </p>
 
 ---
 
-## 📋 Requirements
+## Genel Bakis
 
-> ⚠️ **Tailscale is REQUIRED** for secure remote access.
+Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmenizi saglayan production-ready bir web platformudur.
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| Raspberry Pi | 3B+ or newer | 64-bit OS recommended |
-| Python | 3.11+ | For API backend |
-| Node.js | 18+ | For UI build |
-| Caddy | 2.7+ | Reverse proxy |
-| Tailscale | Latest | For secure remote access |
-| Free disk | 1GB+ | For application files |
+- Gercek zamanli sistem telemetrisi (CPU, RAM, disk, sicaklik, load, RX/TX)
+- systemd servis yonetimi ve temel operasyon komutlari
+- USB/Serial/IoT cihaz kesfi ve kontrolu
+- Tarayici uzerinden terminal (guvenlik katmanlariyla)
+- Alarm kurallari, audit izleri, arsiv ve yedekleme
+- Lokal gunluk export ve retention arsivleme akisi
+
+> Guvenlik modeli: varsayilan olarak Tailscale-first ve internete dogrudan acik degil.
 
 ---
 
-## 🚀 Quick Installation
+## Ekran Goruntuleri
 
-### From Your Mac (Remote Deploy)
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.25.48.png" alt="Screenshot 01" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.25.55.png" alt="Screenshot 02" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.04.png" alt="Screenshot 03" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.09.png" alt="Screenshot 04" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.19.png" alt="Screenshot 05" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.05.png" alt="Screenshot 06" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.10.png" alt="Screenshot 07" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.21.png" alt="Screenshot 08" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.25.png" alt="Screenshot 09" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.48.png" alt="Screenshot 10" width="48%">
+</p>
 
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-./deploy-native.sh user@<tailscale-ip>
+---
+
+## Teknoloji Yigini
+
+| Katman | Teknolojiler |
+|---|---|
+| UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
+| API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
+| Agent | Python tabanli sistem agenti, Unix socket RPC, psutil, docker, MQTT |
+| Veri | SQLite (`control.db`, `telemetry.db`) |
+| Reverse Proxy | Caddy |
+| Test ve Kalite | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
+| Altyapi | systemd servisleri, Tailscale erisimi, script tabanli deployment |
+
+---
+
+## Mimari
+
+```mermaid
+flowchart TD
+    A[Client Browser] --> B[Caddy :80]
+    B --> C[FastAPI API :8080]
+    C --> D[(control.db)]
+    C --> E[(telemetry.db)]
+    C --> F[Pi Agent via Unix Socket]
+    C --> G[SSE Stream]
+    F --> H[System / Devices / Docker / MQTT]
 ```
 
-### Installation on Pi
+Temel calisma modeli:
+
+1. UI, Caddy uzerinden servis edilir.
+2. `/api/*` istekleri FastAPI'ye proxylenir.
+3. API; DB, background joblar, agent RPC ve SSE akislarini yonetir.
+4. Agent, host seviyesinde cihaz/servis/sistem bilgilerini toplar ve komut uygular.
+
+---
+
+## Proje Yapisi
+
+```text
+.
+|-- panel/
+|   |-- ui/                    # React + Vite frontend
+|   `-- api/                   # FastAPI backend
+|-- agent/                     # Pi agent (RPC, telemetry, providers)
+|-- esp/                       # ESP32 ornek firmware dosyalari
+|-- scripts/                   # Kurulum, guncelleme, dogrulama scriptleri
+|-- caddy/                     # Caddy config
+|-- docs/                      # API, guvenlik ve operasyon dokumanlari
+|-- install.sh                 # Pi uzerinde native kurulum
+`-- deploy-native.sh           # Uzak hosta tek komut deploy
+```
+
+---
+
+## Kurulum
+
+### 1) Uzak Deployment (Mac/Linux -> Pi)
 
 ```bash
-# Clone the repository
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
+./deploy-native.sh pi@<tailscale-ip-veya-lan-ip>
+```
 
-# Run install script
+Bu akista script:
+
+- SSH baglantisini test eder
+- proje dosyalarini rsync ile hedefe tasir
+- hedefte `install.sh` calistirir
+- API health kontrolu yapar
+
+### 2) Pi Uzerinde Dogrudan Kurulum
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-This script will:
-- ✅ Install all dependencies (Python, Node.js, Caddy)
-- ✅ Build the UI
-- ✅ Configure systemd services
-- ✅ Enable auto-start on boot
-- ✅ Start all services
+Sik kullanilan opsiyonlar:
+
+```bash
+sudo ./install.sh --skip-preflight
+sudo ./install.sh --no-tailscale
+sudo ./install.sh --upgrade
+```
+
+Kurulum sonrasi:
+
+- UI: `http://<pi-ip>`
+- API health: `http://<pi-ip>/api/health`
+- API docs (debug aciksa): `http://<pi-ip>/api/docs`
 
 ---
 
-## 🔧 Architecture
+## Yerel Gelistirme
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Tailscale VPN                    │
-│              (Secure Remote Access)                 │
-└───────────────────────┬─────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────┐
-│                  Raspberry Pi                        │
-│  ┌───────────────────────────────────────────────┐  │
-│  │              Caddy (Port 80/443)              │  │
-│  │           Reverse Proxy + Static UI           │  │
-│  └─────────────────────┬─────────────────────────┘  │
-│                        │                             │
-│  ┌─────────────────────▼─────────────────────────┐  │
-│  │     Pi Control Panel API (FastAPI:8080)       │  │
-│  │         systemd: pi-control.service           │  │
-│  └─────────────────────┬─────────────────────────┘  │
-│                        │                             │
-│  ┌──────────┬──────────┼──────────┬──────────────┐  │
-│  │ SQLite   │  System  │  Agent   │  Telemetry   │  │
-│  │ Database │  Metrics │  (Pi)    │  Collector   │  │
-│  └──────────┴──────────┴──────────┴──────────────┘  │
-└─────────────────────────────────────────────────────┘
+### API (FastAPI)
+
+```bash
+cd panel/api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-### Directory Structure
+### UI (React + Vite)
 
+```bash
+cd panel/ui
+npm install
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
-/opt/pi-control/           # Application root
-├── panel/
-│   ├── api/               # FastAPI backend
-│   └── ui/dist/           # Built React frontend
-├── agent/                 # Pi Agent
-├── caddy/                 # Caddy config
-└── venv/                  # Python virtual environment
 
-/var/lib/pi-control/       # Data directory
-├── control.db             # Main database
-└── telemetry.db           # Metrics database
+### Testler
 
-/etc/pi-control/           # Config directory
-└── jwt_secret             # JWT signing key
+```bash
+# API
+cd panel/api && pytest
+
+# UI
+cd panel/ui && npm test
 ```
 
 ---
 
-## 🛠️ Maintenance
+## Konfigurasyon
 
-### View Logs
+Ornek env dosyasi: [`.env.example`](./.env.example)
+
+Sik kullanilan degiskenler:
+
+| Degisken | Varsayilan | Amac |
+|---|---|---|
+| `DATABASE_PATH` | `/var/lib/pi-control/control.db` | Ana uygulama veritabani |
+| `TELEMETRY_DB_PATH` | `/var/lib/pi-control/telemetry.db` | Telemetry veritabani |
+| `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket yolu |
+| `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret dosyasi |
+| `API_DEBUG` | `false` | Debug ve docs aktivasyonu |
+| `PANEL_ALLOW_LAN` | `false` | LAN erisim modu |
+| `BACKUP_DAILY_EXPORT_HOUR` | `0` | Gunluk export saati |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Gunluk export dakikasi |
+
+Ilk acilista varsayilan admin:
+
+- kullanici: `admin`
+- sifre: `admin123`
+
+Kurulumda sifre override:
 
 ```bash
-# API service logs
-sudo journalctl -u pi-control -f
-
-# Caddy logs
-sudo journalctl -u caddy -f
-```
-
-### Restart Services
-
-```bash
-sudo systemctl restart pi-control
-sudo systemctl restart caddy
-```
-
-### Update to Latest Version
-
-```bash
-cd /opt/pi-control
-git pull
-source venv/bin/activate
-pip install -r panel/api/requirements.txt
-cd panel/ui && npm install && npm run build
-sudo systemctl restart pi-control
+sudo DEFAULT_ADMIN_PASSWORD='guclu-bir-sifre' ./install.sh
 ```
 
 ---
 
-## 🔐 Configuration
-
-### Environment Variables
-
-The service reads configuration from systemd environment:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_PATH` | `/var/lib/pi-control/control.db` | Main database path |
-| `TELEMETRY_DB_PATH` | `/var/lib/pi-control/telemetry.db` | Metrics database |
-| `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret key file |
-| `API_DEBUG` | `false` | Enable debug mode |
-| `BACKUP_GDRIVE_FOLDER_ID` | empty | Google Drive folder ID for cloud exports |
-| `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour (local time) |
-| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute (local time) |
-
-### Google Drive Backup
-
-The panel keeps up to 90 days of telemetry and IoT data locally. Once Google
-Drive is configured, it also:
-
-- exports the previous day every 24 hours
-- archives expired local days into Drive before removing them locally
-
-Setup summary:
+## Operasyon ve Bakim
 
 ```bash
-mkdir -p /opt/pi-control/credentials
-cp ~/Downloads/client_secret_*.json /opt/pi-control/credentials/gdrive_credentials.json
-cd /opt/pi-control
-./venv/bin/python scripts/gdrive_auth.py
-sudo systemctl restart pi-control
-```
-
-Then set the target Drive folder ID from the Archive > Yedekler screen.
-
-### First-Run Setup
-
-On first launch, the API requires creation of an **owner** account via the first-run endpoint.
-There are **no default credentials** shipped with the product.
-
----
-
-## 🐛 Troubleshooting
-
-### Service won't start
-
-```bash
-# Check status
+# Servis durumlari
 sudo systemctl status pi-control
+sudo systemctl status pi-agent
+sudo systemctl status caddy
 
-# View detailed logs
-sudo journalctl -u pi-control -n 50 --no-pager
+# Loglar
+sudo journalctl -u pi-control -f
+sudo journalctl -u pi-agent -f
+sudo journalctl -u caddy -f
+
+# Servis restart
+sudo systemctl restart pi-control
+sudo systemctl restart pi-agent
+sudo systemctl restart caddy
+
+# Guncelleme akisi
+sudo ./scripts/update.sh
 ```
 
-### Can't access dashboard
+Not: Google Drive backup entegrasyonu gecici olarak devre disidir.
 
-1. Ensure both devices are on Tailscale:
-   ```bash
-   tailscale status
-   ```
+---
 
-2. Check if service is running:
-   ```bash
-   sudo systemctl status pi-control
-   curl -s http://localhost:8080/api/health
-   ```
+## Son Guncelleme Notlari
 
-3. Check Caddy:
-   ```bash
-   sudo systemctl status caddy
-   ```
+**Guncel tarih:** 2026-03-27
 
-### Reset everything
+- Telemetry history ekraninda metrik bazli secim/filtre akisi iyilestirildi.
+- Canli metrik yenilemelerinde gereksiz UI resetlerini azaltan stabilizasyonlar eklendi.
+- Devices ekraninda kategori tabanli stil yapisi netlestirildi ve tekrar eden kayitlara karsi dedupe mantigi guclendirildi.
+- API tarafinda background servis baslatma ve loglama akislarinda dayaniklilik artirildi.
+- Kurulum/guncelleme scriptleri operasyonel kullanim icin sadelestirildi ve hizlandirildi.
+- Google Drive backup sistemi gecici olarak kaldirildi (local backup aktif).
+
+---
+
+## TODO
+
+- [ ] Google Drive backup entegrasyonunu yeni akisla tekrar devreye almak.
+
+---
+
+## Sorun Giderme
 
 ```bash
-sudo systemctl stop pi-control
-rm -f /var/lib/pi-control/*.db
-sudo systemctl start pi-control
+# API ayakta mi?
+curl -s http://127.0.0.1:8080/api/health
+
+# Son 100 log
+sudo journalctl -u pi-control -n 100 --no-pager
+
+# Caddy config dogrulama
+sudo caddy validate --config /etc/caddy/Caddyfile
 ```
+
+Dashboard acilmiyorsa:
+
+1. `tailscale status` ile baglantiyi kontrol edin.
+2. `sudo systemctl status pi-control caddy` ile servis durumlarini dogrulayin.
+3. `http://<pi-ip>/api/health` yanitini test edin.
 
 ---
 
-## 📄 API
+## Lisans
 
-API documentation available at:
-
-```
-http://<tailscale-ip>/api/docs
-```
-
-### Key Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auth/login` | POST | Login |
-| `/api/telemetry/current` | GET | Current metrics |
-| `/api/resources` | GET | List services |
-| `/api/resources/{id}/action` | POST | Control service |
-| `/api/alerts/rules` | GET/POST | Alert rules |
-| `/api/health` | GET | Health check |
+MIT License - detaylar icin [LICENSE](./LICENSE).
 
 ---
 
-## 📜 License
+## Not
 
-© Bora Girgin (BGirginn)
+Bu README proje deposundaki scriptler ve mevcut kod yapisiyla uyumlu olacak sekilde yeniden duzenlenmistir.

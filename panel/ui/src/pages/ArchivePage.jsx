@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {
     Database, Download, Calendar, Filter, RefreshCw,
-    HardDrive, Cloud, CloudOff, Clock, FileJson, FileSpreadsheet,
+    HardDrive, CloudOff, Clock, FileJson, FileSpreadsheet,
     ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Search, Trash2, Play,
     Thermometer, Droplets, Sun, Gauge, Flame, Wind, Volume2, Zap, Activity
 } from 'lucide-react';
@@ -69,8 +69,6 @@ export function ArchivePage() {
     const [backupStatus, setBackupStatus] = useState(null);
     const [backupFiles, setBackupFiles] = useState([]);
     const [backupRunning, setBackupRunning] = useState(false);
-    const [folderIdInput, setFolderIdInput] = useState('');
-    const [savingFolder, setSavingFolder] = useState(false);
 
     // Sensor icon helper
     const getSensorIcon = (type) => {
@@ -447,7 +445,6 @@ export function ArchivePage() {
             ]);
             setBackupStatus(statusRes.data);
             setBackupFiles(filesRes.data.files || []);
-            setFolderIdInput(statusRes.data.folder_id || '');
         } catch (err) {
             console.error('Failed to load backup status:', err);
         }
@@ -511,19 +508,6 @@ export function ArchivePage() {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error('Export failed:', err);
-        }
-    };
-
-    const saveFolderId = async () => {
-        if (!folderIdInput.trim()) return;
-        setSavingFolder(true);
-        try {
-            await api.post(`/backup/gdrive/set-folder?folder_id=${encodeURIComponent(folderIdInput.trim())}`);
-            await loadBackupStatus();
-        } catch (err) {
-            console.error('Failed to save Google Drive folder:', err);
-        } finally {
-            setSavingFolder(false);
         }
     };
 
@@ -600,7 +584,7 @@ export function ArchivePage() {
                     { id: 'stats', label: 'İstatistikler', icon: Database },
                     { id: 'telemetry', label: 'Sistem', icon: Activity },
                     { id: 'iot', label: 'IoT Cihazlar', icon: Thermometer },
-                    { id: 'backups', label: 'Yedekler', icon: Cloud },
+                    { id: 'backups', label: 'Yedekler', icon: HardDrive },
                 ].map(tab => (
                     <button
                         key={tab.id}
@@ -900,11 +884,9 @@ export function ArchivePage() {
                         <div className="flex items-center justify-between mb-6">
                             <h3 className="text-lg font-bold">Yedekleme Durumu</h3>
                             <div className="flex items-center gap-2">
-                                {backupStatus?.authenticated ? (
-                                    <span className="flex items-center gap-2 text-green-500 text-sm"><Cloud size={16} />Google Drive Bağlı</span>
-                                ) : (
-                                    <span className="flex items-center gap-2 text-gray-500 text-sm"><CloudOff size={16} />Sadece Lokal</span>
-                                )}
+                                <span className="flex items-center gap-2 text-gray-500 text-sm">
+                                    <CloudOff size={16} />Sadece Lokal
+                                </span>
                             </div>
                         </div>
 
@@ -951,23 +933,10 @@ export function ArchivePage() {
                             </div>
                         </div>
 
-                        <div className={`p-4 rounded-xl mb-6 ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
-                            <div className="text-sm text-gray-500 mb-3">Google Drive Klasoru</div>
-                            <div className="flex flex-col md:flex-row gap-3">
-                                <input
-                                    type="text"
-                                    value={folderIdInput}
-                                    onChange={(e) => setFolderIdInput(e.target.value)}
-                                    placeholder="Folder ID veya Google Drive klasor URL"
-                                    className={`flex-1 px-3 py-2 rounded-lg text-sm ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'} border`}
-                                />
-                                <button
-                                    onClick={saveFolderId}
-                                    disabled={savingFolder || !folderIdInput.trim()}
-                                    className={`px-4 py-2 rounded-lg text-sm font-medium ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-200 hover:bg-gray-300'} ${savingFolder || !folderIdInput.trim() ? 'opacity-50' : ''}`}
-                                >
-                                    {savingFolder ? 'Kaydediliyor...' : 'Klasoru Kaydet'}
-                                </button>
+                        <div className={`p-4 rounded-xl mb-6 border ${isDarkMode ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200'}`}>
+                            <div className="text-sm font-semibold mb-1">TODO: Cloud Backup</div>
+                            <div className="text-sm text-gray-500">
+                                Google Drive entegrasyonu gecici olarak kaldirildi. Yeni akista tekrar eklenecek.
                             </div>
                             <div className="text-xs text-gray-500 mt-2">
                                 Sonraki planli calisma: {backupStatus?.next_run_at ? new Date(backupStatus.next_run_at).toLocaleString('tr-TR') : 'Bekleniyor'}
