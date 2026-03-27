@@ -291,14 +291,6 @@ If dashboard is not accessible:
 
 MIT License - see [LICENSE](./LICENSE) for details.
 
----
-
-## Note
-
-This README has been reorganized to align with the current scripts and code structure in this repository.
-
----
-
 <a id="turkce"></a>
 
 # Pi Control Panel (Turkce)
@@ -591,9 +583,3 @@ Dashboard acilmiyorsa:
 ## Lisans
 
 MIT License - detaylar icin [LICENSE](./LICENSE).
-
----
-
-## Not
-
-Bu README proje deposundaki scriptler ve mevcut kod yapisiyla uyumlu olacak sekilde yeniden duzenlenmistir.
