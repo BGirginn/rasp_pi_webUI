@@ -1,4 +1,313 @@
+<a id="english"></a>
+
 # Pi Control Panel
+
+<p align="center">
+  <strong>Language:</strong>
+  <a href="#english">English (Default)</a> |
+  <a href="#turkce">Turkce</a>
+</p>
+
+<p align="center">
+  <strong>A modern, secure, operations-focused management panel for Raspberry Pi</strong><br/>
+  FastAPI + React + Agent + Telemetry + Backup
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
+  <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
+  <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
+  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
+  <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
+</p>
+
+---
+
+## Overview
+
+Pi Control Panel is a production-ready web platform that lets you monitor and manage Raspberry Pi devices from a single interface.
+
+- Real-time system telemetry (CPU, RAM, disk, temperature, load, RX/TX)
+- systemd service management and core operational commands
+- USB/Serial/IoT device discovery and control
+- Browser-based terminal (with security layers)
+- Alert rules, audit logs, archiving, and backups
+- Local daily export and retention archiving flow
+
+> Security model: Tailscale-first by default and not directly exposed to the public internet.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.25.48.png" alt="Screenshot 01" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.25.55.png" alt="Screenshot 02" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.04.png" alt="Screenshot 03" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.09.png" alt="Screenshot 04" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.26.19.png" alt="Screenshot 05" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.05.png" alt="Screenshot 06" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.10.png" alt="Screenshot 07" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.21.png" alt="Screenshot 08" width="48%">
+</p>
+<p align="center">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.25.png" alt="Screenshot 09" width="48%">
+  <img src="./ReadMePhotos/Screenshot%202026-03-27%20at%2014.28.48.png" alt="Screenshot 10" width="48%">
+</p>
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
+| API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
+| Agent | Python-based system agent, Unix socket RPC, psutil, docker, MQTT |
+| Data | SQLite (`control.db`, `telemetry.db`) |
+| Reverse Proxy | Caddy |
+| Testing & Quality | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
+| Infrastructure | systemd services, Tailscale access, script-based deployment |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Client Browser] --> B[Caddy :80]
+    B --> C[FastAPI API :8080]
+    C --> D[(control.db)]
+    C --> E[(telemetry.db)]
+    C --> F[Pi Agent via Unix Socket]
+    C --> G[SSE Stream]
+    F --> H[System / Devices / Docker / MQTT]
+```
+
+Core flow:
+
+1. UI is served through Caddy.
+2. `/api/*` requests are proxied to FastAPI.
+3. API handles DB, background jobs, agent RPC, and SSE streams.
+4. Agent collects host-level system/device data and executes commands.
+
+---
+
+## Project Structure
+
+```text
+.
+|-- panel/
+|   |-- ui/                    # React + Vite frontend
+|   `-- api/                   # FastAPI backend
+|-- agent/                     # Pi agent (RPC, telemetry, providers)
+|-- esp/                       # ESP32 example firmware files
+|-- scripts/                   # Install, update, and verification scripts
+|-- caddy/                     # Caddy config
+|-- docs/                      # API, security, and operations docs
+|-- install.sh                 # Native install on Pi
+`-- deploy-native.sh           # One-command remote deploy
+```
+
+---
+
+## Installation
+
+### 1) Remote Deployment (Mac/Linux -> Pi)
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+./deploy-native.sh pi@<tailscale-ip-or-lan-ip>
+```
+
+In this flow, the script:
+
+- Tests SSH connection
+- Syncs project files to target via rsync
+- Runs `install.sh` on target
+- Performs API health check
+
+### 2) Direct Installation on Pi
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Common options:
+
+```bash
+sudo ./install.sh --skip-preflight
+sudo ./install.sh --no-tailscale
+sudo ./install.sh --upgrade
+```
+
+After installation:
+
+- UI: `http://<pi-ip>`
+- API health: `http://<pi-ip>/api/health`
+- API docs (if debug enabled): `http://<pi-ip>/api/docs`
+
+---
+
+## Local Development
+
+### API (FastAPI)
+
+```bash
+cd panel/api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### UI (React + Vite)
+
+```bash
+cd panel/ui
+npm install
+npm run dev -- --host 0.0.0.0 --port 5173
+```
+
+### Tests
+
+```bash
+# API
+cd panel/api && pytest
+
+# UI
+cd panel/ui && npm test
+```
+
+---
+
+## Configuration
+
+Example env file: [`.env.example`](./.env.example)
+
+Common variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_PATH` | `/var/lib/pi-control/control.db` | Main app database |
+| `TELEMETRY_DB_PATH` | `/var/lib/pi-control/telemetry.db` | Telemetry database |
+| `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket path |
+| `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret file |
+| `API_DEBUG` | `false` | Enables debug and docs |
+| `PANEL_ALLOW_LAN` | `false` | LAN access mode |
+| `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute |
+
+Default admin at first startup:
+
+- username: `admin`
+- password: `admin123`
+
+Override default password during install:
+
+```bash
+sudo DEFAULT_ADMIN_PASSWORD='a-strong-password' ./install.sh
+```
+
+---
+
+## Operations and Maintenance
+
+```bash
+# Service status
+sudo systemctl status pi-control
+sudo systemctl status pi-agent
+sudo systemctl status caddy
+
+# Logs
+sudo journalctl -u pi-control -f
+sudo journalctl -u pi-agent -f
+sudo journalctl -u caddy -f
+
+# Service restart
+sudo systemctl restart pi-control
+sudo systemctl restart pi-agent
+sudo systemctl restart caddy
+
+# Update flow
+sudo ./scripts/update.sh
+```
+
+Note: Google Drive backup integration is temporarily disabled.
+
+---
+
+## Latest Update Notes
+
+**Current date:** 2026-03-27
+
+- Improved metric selection/filter flow in telemetry history.
+- Added stabilizations to reduce unnecessary UI resets during live metric refresh.
+- Refined category-based styling in Devices and strengthened dedupe behavior for repeated records.
+- Improved resilience in API background service startup and logging flows.
+- Simplified and accelerated install/update scripts for operational usage.
+- Google Drive backup system is temporarily removed (local backup remains active).
+
+---
+
+## TODO
+
+- [ ] Re-enable Google Drive backup integration with a new flow.
+
+---
+
+## Troubleshooting
+
+```bash
+# Is API up?
+curl -s http://127.0.0.1:8080/api/health
+
+# Last 100 logs
+sudo journalctl -u pi-control -n 100 --no-pager
+
+# Validate Caddy config
+sudo caddy validate --config /etc/caddy/Caddyfile
+```
+
+If dashboard is not accessible:
+
+1. Check connection with `tailscale status`.
+2. Verify services with `sudo systemctl status pi-control caddy`.
+3. Test `http://<pi-ip>/api/health`.
+
+---
+
+## License
+
+MIT License - see [LICENSE](./LICENSE) for details.
+
+---
+
+## Note
+
+This README has been reorganized to align with the current scripts and code structure in this repository.
+
+---
+
+<a id="turkce"></a>
+
+# Pi Control Panel (Turkce)
+
+<p align="center">
+  <strong>Dil:</strong>
+  <a href="#english">English (Varsayilan)</a> |
+  <a href="#turkce">Turkce</a>
+</p>
 
 <p align="center">
   <strong>Raspberry Pi icin modern, guvenli ve operasyon odakli yonetim paneli</strong><br/>
