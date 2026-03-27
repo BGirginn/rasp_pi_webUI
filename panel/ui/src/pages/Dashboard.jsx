@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 
 // Format uptime
@@ -98,20 +98,25 @@ export default function Dashboard() {
     })
     const [resources, setResources] = useState([])
     const [alerts, setAlerts] = useState([])
+    const dashboardHashRef = useRef('')
+    const refreshInFlightRef = useRef(false)
 
-    useEffect(() => {
-        loadDashboardData()
-        const interval = setInterval(loadDashboardData, 5000)
-        return () => clearInterval(interval)
-    }, [])
+    const loadDashboardData = useCallback(async () => {
+        if (refreshInFlightRef.current) {
+            return
+        }
 
-    async function loadDashboardData() {
+        refreshInFlightRef.current = true
         try {
-            const telemetryRes = await api.get('/telemetry/current')
+            const [telemetryRes, resourcesRes, alertsRes] = await Promise.all([
+                api.get('/telemetry/current'),
+                api.get('/resources'),
+                api.get('/alerts'),
+            ])
             const metrics = telemetryRes.data?.metrics || {}
             const systemInfo = telemetryRes.data?.system || {}
 
-            setStats({
+            const nextStats = {
                 cpu: Math.round(metrics['host.cpu.pct_total'] || 0),
                 memory: Math.round(metrics['host.mem.pct'] || 0),
                 memUsedGb: ((metrics['host.mem.used_mb'] || 0) / 1024).toFixed(1),
@@ -124,19 +129,54 @@ export default function Dashboard() {
                 hostname: systemInfo.hostname || 'Unknown',
                 os: systemInfo.os || 'Unknown',
                 machine: systemInfo.machine || 'Unknown',
-            })
+            }
 
-            const resourcesRes = await api.get('/resources')
-            setResources(resourcesRes.data.slice(0, 5))
+            const nextResources = (resourcesRes.data || []).slice(0, 5)
+            const nextAlerts = (alertsRes.data || []).slice(0, 3)
+            const nextHash = JSON.stringify({ nextStats, nextResources, nextAlerts })
 
-            const alertsRes = await api.get('/alerts')
-            setAlerts(alertsRes.data.slice(0, 3))
+            if (nextHash !== dashboardHashRef.current) {
+                dashboardHashRef.current = nextHash
+                setStats(nextStats)
+                setResources(nextResources)
+                setAlerts(nextAlerts)
+            }
         } catch (err) {
             console.error('Failed to load dashboard data:', err)
         } finally {
             setLoading(false)
+            refreshInFlightRef.current = false
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        loadDashboardData()
+
+        const tick = () => {
+            if (typeof document !== 'undefined' && document.hidden) {
+                return
+            }
+            loadDashboardData()
+        }
+
+        const interval = setInterval(tick, 5000)
+        const handleVisibilityChange = () => {
+            if (typeof document !== 'undefined' && !document.hidden) {
+                tick()
+            }
+        }
+
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', handleVisibilityChange)
+        }
+
+        return () => {
+            clearInterval(interval)
+            if (typeof document !== 'undefined') {
+                document.removeEventListener('visibilitychange', handleVisibilityChange)
+            }
+        }
+    }, [loadDashboardData])
 
     const getColor = (value, warn, crit) => {
         if (value >= crit) return 'red'

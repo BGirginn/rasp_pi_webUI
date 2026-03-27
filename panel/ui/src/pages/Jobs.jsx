@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 
@@ -296,35 +296,44 @@ export default function Jobs() {
     const [loading, setLoading] = useState(true)
     const [filter, setFilter] = useState('all')
     const [showCreate, setShowCreate] = useState(false)
+    const jobsHashRef = useRef('')
 
-    useEffect(() => {
-        loadJobs()
-        loadJobTypes()
-
-        // Refresh running jobs
-        const interval = setInterval(loadJobs, 5000)
-        return () => clearInterval(interval)
-    }, [])
-
-    async function loadJobs() {
+    const loadJobs = useCallback(async () => {
         try {
             const response = await api.get('/jobs?limit=100')
-            setJobs(response.data)
+            const nextJobs = response.data || []
+            const nextHash = JSON.stringify(nextJobs)
+            if (nextHash !== jobsHashRef.current) {
+                jobsHashRef.current = nextHash
+                setJobs(nextJobs)
+            }
         } catch (err) {
             console.error('Failed to load jobs:', err)
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
 
-    async function loadJobTypes() {
+    const loadJobTypes = useCallback(async () => {
         try {
             const response = await api.get('/jobs/types')
             setJobTypes(response.data)
         } catch (err) {
             console.error('Failed to load job types:', err)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        loadJobs()
+        loadJobTypes()
+
+        // Skip expensive refresh when tab is not visible.
+        const interval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.hidden) return
+            loadJobs()
+        }, 5000)
+        return () => clearInterval(interval)
+    }, [loadJobs, loadJobTypes])
 
     async function handleAction(jobId, action) {
         try {

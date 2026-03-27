@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 
@@ -328,35 +328,50 @@ export default function Alerts() {
     const [tab, setTab] = useState('alerts')
     const [filter, setFilter] = useState('all')
     const [showCreateRule, setShowCreateRule] = useState(false)
+    const alertsHashRef = useRef('')
+    const rulesHashRef = useRef('')
 
-    useEffect(() => {
-        loadData()
-        const interval = setInterval(loadAlerts, 10000)
-        return () => clearInterval(interval)
-    }, [])
-
-    async function loadData() {
-        await Promise.all([loadAlerts(), loadRules()])
-        setLoading(false)
-    }
-
-    async function loadAlerts() {
+    const loadAlerts = useCallback(async () => {
         try {
             const response = await api.get('/alerts')
-            setAlerts(response.data)
+            const nextAlerts = response.data || []
+            const nextHash = JSON.stringify(nextAlerts)
+            if (nextHash !== alertsHashRef.current) {
+                alertsHashRef.current = nextHash
+                setAlerts(nextAlerts)
+            }
         } catch (err) {
             console.error('Failed to load alerts:', err)
         }
-    }
+    }, [])
 
-    async function loadRules() {
+    const loadRules = useCallback(async () => {
         try {
             const response = await api.get('/alerts/rules')
-            setRules(response.data)
+            const nextRules = response.data || []
+            const nextHash = JSON.stringify(nextRules)
+            if (nextHash !== rulesHashRef.current) {
+                rulesHashRef.current = nextHash
+                setRules(nextRules)
+            }
         } catch (err) {
             console.error('Failed to load rules:', err)
         }
-    }
+    }, [])
+
+    const loadData = useCallback(async () => {
+        await Promise.all([loadAlerts(), loadRules()])
+        setLoading(false)
+    }, [loadAlerts, loadRules])
+
+    useEffect(() => {
+        loadData()
+        const interval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.hidden) return
+            loadAlerts()
+        }, 10000)
+        return () => clearInterval(interval)
+    }, [loadData, loadAlerts])
 
     async function handleAlertAction(alertId, action) {
         try {

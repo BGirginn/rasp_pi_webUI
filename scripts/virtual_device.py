@@ -2,13 +2,14 @@ import asyncio
 import random
 import socket
 import sys
+import argparse
 from aiohttp import web
 from zeroconf import ServiceInfo, Zeroconf
 
 # Configuration
 DEVICE_NAME = "Virtual IoT Device"
 SERVICE_TYPE = "_iot-device._tcp.local."
-PORT = 8080
+DEFAULT_PORT = 8080
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -23,8 +24,9 @@ def get_local_ip():
     return IP
 
 class VirtualDevice:
-    def __init__(self):
+    def __init__(self, port: int):
         self.ip = get_local_ip()
+        self.port = port
         # Use InterfaceChoice.Default to avoid socket binding issues on macOS
         from zeroconf import InterfaceChoice
         self.zeroconf = Zeroconf(interfaces=InterfaceChoice.Default)
@@ -37,12 +39,12 @@ class VirtualDevice:
             SERVICE_TYPE,
             f"{DEVICE_NAME.replace(' ', '-')}.{SERVICE_TYPE}",
             addresses=[socket.inet_aton(self.ip)],
-            port=PORT,
+            port=self.port,
             properties=desc,
             server=f"{DEVICE_NAME.replace(' ', '-')}.local."
         )
         
-        print(f"📡 Broadcasting mDNS service: {DEVICE_NAME} at {self.ip}:{PORT}")
+        print(f"📡 Broadcasting mDNS service: {DEVICE_NAME} at {self.ip}:{self.port}")
         self.zeroconf.register_service(self.service_info)
 
     def stop_mdns(self):
@@ -64,8 +66,8 @@ class VirtualDevice:
         }
         return web.json_response(data)
 
-async def main():
-    device = VirtualDevice()
+async def main(port: int):
+    device = VirtualDevice(port)
     device.start_mdns()
 
     app = web.Application()
@@ -73,9 +75,9 @@ async def main():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    site = web.TCPSite(runner, '0.0.0.0', device.port)
     
-    print(f"🚀 Virtual IoT Device running on http://{device.ip}:{PORT}")
+    print(f"🚀 Virtual IoT Device running on http://{device.ip}:{device.port}")
     print("Press Ctrl+C to stop")
     
     await site.start()
@@ -93,6 +95,9 @@ async def main():
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        parser = argparse.ArgumentParser(description="Run a virtual IoT device simulator.")
+        parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP port to bind (default: 8080)")
+        args = parser.parse_args()
+        asyncio.run(main(args.port))
     except KeyboardInterrupt:
         pass

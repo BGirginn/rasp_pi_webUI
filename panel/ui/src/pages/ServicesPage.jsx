@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Package, Play, Square, RotateCcw, Search, Activity, Cpu, HardDrive, Shield, Terminal, AlertCircle, CheckCircle2, XCircle, Info } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
@@ -12,15 +12,22 @@ export function ServicesPage() {
   const [error, setError] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const servicesHashRef = useRef('');
+  const hasLoadedServicesRef = useRef(false);
   const { theme, isDarkMode } = useTheme();
   const { isOperator } = useAuth();
   const themeColors = getThemeColors(theme);
 
-  const loadServices = async () => {
-    if (!loading) setRefreshing(true);
+  const loadServices = useCallback(async () => {
+    if (hasLoadedServicesRef.current) setRefreshing(true);
     try {
       const response = await api.get('/resources');
-      setServices(response.data || []);
+      const nextServices = response.data || [];
+      const nextHash = JSON.stringify(nextServices);
+      if (nextHash !== servicesHashRef.current) {
+        servicesHashRef.current = nextHash;
+        setServices(nextServices);
+      }
       setError(null);
     } catch (err) {
       console.error('Failed to load services:', err);
@@ -28,14 +35,18 @@ export function ServicesPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedServicesRef.current = true;
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadServices();
-    const interval = setInterval(loadServices, 30000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadServices();
+    }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadServices]);
 
   const handleAction = async (serviceId, action) => {
     try {

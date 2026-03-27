@@ -8,6 +8,7 @@ This folder contains a minimal ESP32 firmware that works with this project:
   - `GET /set?r=..&g=..&b=..&power=..` -> set RGB + power (query-string)
   - `GET /info` -> sensors payload for panel discovery polling
   - `POST /api/led/command` (and `/led/command`, `/command`) -> JSON command (`set_color`, `set_power`, `ping`)
+    - `set_power` accepts either `payload.on` or `payload.power`
 
 ## Wiring (4-pin RGB LED)
 

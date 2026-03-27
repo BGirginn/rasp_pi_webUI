@@ -42,11 +42,23 @@ export function DashboardProvider({ children }) {
     const [alerts, setAlerts] = useState([]);
 
     const lastNetStats = useRef({ tx: 0, rx: 0, time: Date.now() });
+    const telemetryHashRef = useRef('');
+    const resourcesHashRef = useRef('');
+    const alertsHashRef = useRef('');
+    const processesHashRef = useRef('');
+    const dashboardLoadInFlightRef = useRef(false);
+    const otherLoadInFlightRef = useRef(false);
 
     // Process telemetry data from SSE or polling
     const processTelemetryData = (telemetryData) => {
         const metrics = telemetryData?.metrics || {};
         const systemInfo = telemetryData?.system || {};
+        const payloadHash = JSON.stringify({ metrics, systemInfo });
+
+        if (payloadHash === telemetryHashRef.current) {
+            return;
+        }
+        telemetryHashRef.current = payloadHash;
 
         // Network Speed Calculation
         const currentTx = metrics['net.all.bytes_sent'] || (metrics['net.wlan0.tx_bytes'] || 0) + (metrics['net.eth0.tx_bytes'] || 0);
@@ -108,19 +120,31 @@ export function DashboardProvider({ children }) {
         // Initial data load
         loadDashboardData();
         loadOtherData();
+        const pollDashboard = () => {
+            if (typeof document !== 'undefined' && document.hidden) return;
+            loadDashboardData();
+        };
+        const pollOtherData = () => {
+            if (typeof document !== 'undefined' && document.hidden) return;
+            loadOtherData();
+        };
+        const handleVisibilityChange = () => {
+            if (typeof document !== 'undefined' && !document.hidden) {
+                loadDashboardData();
+                loadOtherData();
+            }
+        };
 
         // Try SSE for real-time telemetry
         const token = localStorage.getItem('access_token');
         let eventSource = null;
         let pollingInterval = null;
-        let sseConnected = false;
 
         if (token) {
             try {
                 eventSource = new EventSource(`/api/sse/telemetry?token=${token}`);
 
                 eventSource.addEventListener('connected', () => {
-                    sseConnected = true;
                     if (import.meta.env.DEV) {
                         console.log('SSE connected for real-time telemetry');
                     }
@@ -145,23 +169,26 @@ export function DashboardProvider({ children }) {
                         eventSource.close();
                         eventSource = null;
                     }
-                    sseConnected = false;
                     if (!pollingInterval) {
-                        pollingInterval = setInterval(loadDashboardData, 2000);
+                        pollingInterval = setInterval(pollDashboard, 2000);
                     }
                 };
             } catch (err) {
                 if (import.meta.env.DEV) {
                     console.warn('SSE not available, using polling');
                 }
-                pollingInterval = setInterval(loadDashboardData, 2000);
+                pollingInterval = setInterval(pollDashboard, 2000);
             }
         } else {
-            pollingInterval = setInterval(loadDashboardData, 2000);
+            pollingInterval = setInterval(pollDashboard, 2000);
         }
 
         // Refresh resources/alerts every 5 seconds
-        const otherDataInterval = setInterval(loadOtherData, 5000);
+        const otherDataInterval = setInterval(pollOtherData, 5000);
+
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+        }
 
         return () => {
             if (eventSource) {
@@ -173,27 +200,60 @@ export function DashboardProvider({ children }) {
                 pollingInterval = null;
             }
             clearInterval(otherDataInterval);
+            if (typeof document !== 'undefined') {
+                document.removeEventListener('visibilitychange', handleVisibilityChange);
+            }
         };
     }, []);
 
     const loadOtherData = async () => {
+        if (otherLoadInFlightRef.current) {
+            return;
+        }
+
+        otherLoadInFlightRef.current = true;
         try {
             const [resourcesRes, alertsRes] = await Promise.all([
                 api.get('/resources').catch(() => ({ data: [] })),
                 api.get('/alerts').catch(() => ({ data: [] }))
             ]);
-            setResources(Array.isArray(resourcesRes.data) ? resourcesRes.data : []);
-            setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : []);
+            const nextResources = Array.isArray(resourcesRes.data) ? resourcesRes.data : [];
+            const nextAlerts = Array.isArray(alertsRes.data) ? alertsRes.data : [];
+            const nextResourcesHash = JSON.stringify(nextResources);
+            const nextAlertsHash = JSON.stringify(nextAlerts);
+
+            if (nextResourcesHash !== resourcesHashRef.current) {
+                resourcesHashRef.current = nextResourcesHash;
+                setResources(nextResources);
+            }
+            if (nextAlertsHash !== alertsHashRef.current) {
+                alertsHashRef.current = nextAlertsHash;
+                setAlerts(nextAlerts);
+            }
 
             api.get('/system/processes')
-                .then(res => setProcesses(Array.isArray(res.data) ? res.data : []))
+                .then(res => {
+                    const nextProcesses = Array.isArray(res.data) ? res.data : [];
+                    const nextProcessesHash = JSON.stringify(nextProcesses);
+                    if (nextProcessesHash !== processesHashRef.current) {
+                        processesHashRef.current = nextProcessesHash;
+                        setProcesses(nextProcesses);
+                    }
+                })
                 .catch(() => { });
         } catch (err) {
             console.warn('Failed to load other data:', err);
+        } finally {
+            otherLoadInFlightRef.current = false;
         }
     };
 
     const loadDashboardData = async () => {
+        if (dashboardLoadInFlightRef.current) {
+            return;
+        }
+
+        dashboardLoadInFlightRef.current = true;
         try {
             const [telemetryRes, systemInfoRes] = await Promise.all([
                 api.get('/telemetry/current').catch(() => ({ data: {} })),
@@ -258,20 +318,29 @@ export function DashboardProvider({ children }) {
                 ip: 'N/A' // Will be fetched from network interfaces
             };
 
-            setStats(newStats);
+            setStats(prev => {
+                const nextHash = JSON.stringify(newStats);
+                const prevHash = JSON.stringify(prev);
+                return nextHash === prevHash ? prev : newStats;
+            });
 
             // Limit history to 20 points (including temp and disk)
-            setHistory(prev => ({
-                cpu: [...prev.cpu.slice(1), newStats.cpu],
-                memory: [...prev.memory.slice(1), newStats.memory],
-                networkRx: [...prev.networkRx.slice(1), newStats.netRxSpeed],
-                networkTx: [...prev.networkTx.slice(1), newStats.netTxSpeed],
-                temp: [...prev.temp.slice(1), newStats.temp],
-                disk: [...prev.disk.slice(1), newStats.disk]
-            }));
+            setHistory(prev => {
+                const nextHistory = {
+                    cpu: [...prev.cpu.slice(1), newStats.cpu],
+                    memory: [...prev.memory.slice(1), newStats.memory],
+                    networkRx: [...prev.networkRx.slice(1), newStats.netRxSpeed],
+                    networkTx: [...prev.networkTx.slice(1), newStats.netTxSpeed],
+                    temp: [...prev.temp.slice(1), newStats.temp],
+                    disk: [...prev.disk.slice(1), newStats.disk]
+                };
+                return JSON.stringify(nextHistory) === JSON.stringify(prev) ? prev : nextHistory;
+            });
 
         } catch (err) {
             console.error('Failed to load dashboard data:', err);
+        } finally {
+            dashboardLoadInFlightRef.current = false;
         }
     };
 

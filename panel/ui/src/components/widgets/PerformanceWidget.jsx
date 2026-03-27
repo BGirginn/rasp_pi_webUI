@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Activity, Thermometer, HardDrive, Layers, Check } from 'lucide-react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { useTheme, getThemeColors } from '../../contexts/ThemeContext';
 import { useDashboard } from '../../contexts/DashboardContext';
 import { api } from '../../services/api';
 
-export function PerformanceWidget({ variant, width, height }) {
+export function PerformanceWidget({ variant }) {
   const { stats } = useDashboard();
   const { theme, isDarkMode } = useTheme();
   const themeColors = getThemeColors(theme);
@@ -13,8 +13,9 @@ export function PerformanceWidget({ variant, width, height }) {
   const [metric, setMetric] = useState('all'); // cpu, mem, temp, all
   const [range, setRange] = useState('1h');   // 1m, 1h, 24h, 7d, 15d
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const requestSeqRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   // Initialize from localStorage or default to 15
   const [refreshInterval, setRefreshInterval] = useState(() => {
@@ -48,95 +49,78 @@ export function PerformanceWidget({ variant, width, height }) {
   };
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+    const fetchData = async (force = false) => {
+      if (inFlightRef.current && !force) {
+        return;
+      }
+
+      const requestToken = ++requestSeqRef.current;
+      inFlightRef.current = true;
+
       try {
         const params = getRangeParams(range);
+        const endpoint = params.type === 'summary'
+          ? '/telemetry/metrics/series/query'
+          : '/telemetry/metrics/query';
+        const metricKeys = metric === 'all'
+          ? ['host.cpu.pct_total', 'host.mem.pct', 'host.temp.cpu_c']
+          : [getMetricKey(metric)];
+
+        const response = await api.post(endpoint, {
+          metrics: metricKeys.join(','),
+          start: params.start,
+          step: params.step || 60,
+        });
+
+        if (requestToken !== requestSeqRef.current) {
+          return;
+        }
+
+        const seriesByMetric = new Map(
+          (response.data || []).map((series) => [series.metric, series.points || []])
+        );
 
         if (metric === 'all') {
-          // Fetch all 3 metrics
-          const keys = {
-            cpu: 'host.cpu.pct_total',
-            mem: 'host.mem.pct',
-            temp: 'host.temp.cpu_c'
-          };
+          const cpuPoints = seriesByMetric.get('host.cpu.pct_total') || [];
+          const memPoints = seriesByMetric.get('host.mem.pct') || [];
+          const tempPoints = seriesByMetric.get('host.temp.cpu_c') || [];
 
-          let responses = {};
-
-          if (params.type === 'summary') {
-            // Use POST for summary data to avoid antivirus blocks
-            const [cpuRes, memRes, tempRes] = await Promise.all([
-              api.post(`/telemetry/metrics/series/query`, { metrics: keys.cpu, start: params.start }),
-              api.post(`/telemetry/metrics/series/query`, { metrics: keys.mem, start: params.start }),
-              api.post(`/telemetry/metrics/series/query`, { metrics: keys.temp, start: params.start })
-            ]);
-            responses = {
-              cpu: cpuRes.data?.[0]?.points || [],
-              mem: memRes.data?.[0]?.points || [],
-              temp: tempRes.data?.[0]?.points || []
-            };
-          } else {
-            // Use POST for raw data to avoid antivirus blocks
-            const [cpuRes, memRes, tempRes] = await Promise.all([
-              api.post(`/telemetry/metrics/query`, { metrics: keys.cpu, start: params.start, step: params.step || 60 }),
-              api.post(`/telemetry/metrics/query`, { metrics: keys.mem, start: params.start, step: params.step || 60 }),
-              api.post(`/telemetry/metrics/query`, { metrics: keys.temp, start: params.start, step: params.step || 60 })
-            ]);
-            responses = {
-              cpu: cpuRes.data?.[0]?.points || [],
-              mem: memRes.data?.[0]?.points || [],
-              temp: tempRes.data?.[0]?.points || []
-            };
-          }
-
-          // Merge data
-          // Base it on the longest array (usually they should be same length if aligned)
-          // Use step as tolerance, defaulting to 2s if step is small or undefined
           const tolerance = (params.step && params.step > 5) ? params.step / 2 : 2;
+          const merged = cpuPoints.map((point) => {
+            const ts = point.ts;
+            const memPoint = memPoints.find((candidate) => Math.abs(candidate.ts - ts) <= tolerance);
+            const tempPoint = tempPoints.find((candidate) => Math.abs(candidate.ts - ts) <= tolerance);
 
-          const merged = responses.cpu.map(p => {
-            const ts = p.ts;
-            const memP = responses.mem.find(x => Math.abs(x.ts - ts) <= tolerance);
-            const tempP = responses.temp.find(x => Math.abs(x.ts - ts) <= tolerance);
             return {
               time: ts * 1000,
-              cpu: Math.round(p.value * 10) / 10,
-              mem: memP ? Math.round(memP.value * 10) / 10 : null,
-              temp: tempP ? Math.round(tempP.value * 10) / 10 : null
+              cpu: Math.round(point.value * 10) / 10,
+              mem: memPoint ? Math.round(memPoint.value * 10) / 10 : null,
+              temp: tempPoint ? Math.round(tempPoint.value * 10) / 10 : null,
             };
           });
+
           setData(merged);
-
         } else {
-          // Single metric fetch
-          const metricKey = getMetricKey(metric);
-          let points = [];
-
-          if (params.type === 'summary') {
-            // Use POST for summary data
-            const res = await api.post(`/telemetry/metrics/series/query`, { metrics: metricKey, start: params.start });
-            if (res.data && res.data[0]) points = res.data[0].points;
-          } else {
-            // Use POST for raw data
-            const res = await api.post(`/telemetry/metrics/query`, { metrics: metricKey, start: params.start, step: params.step || 60 });
-            if (res.data && res.data[0]) points = res.data[0].points;
-          }
-
-          setData(points.map(p => ({
-            time: p.ts * 1000,
-            value: Math.round(p.value * 10) / 10
+          const metricKey = metricKeys[0];
+          const points = seriesByMetric.get(metricKey) || [];
+          setData(points.map((point) => ({
+            time: point.ts * 1000,
+            value: Math.round(point.value * 10) / 10,
           })));
         }
+        setError(null);
       } catch (err) {
         console.error("Failed to fetch history:", err);
         setError(err);
       } finally {
-        setLoading(false);
+        if (requestToken === requestSeqRef.current) {
+          inFlightRef.current = false;
+        }
       }
     };
 
-    fetchData();
-    const interval = setInterval(fetchData, refreshInterval * 1000);
+    fetchData(true);
+    const interval = setInterval(() => fetchData(false), refreshInterval * 1000);
     return () => clearInterval(interval);
   }, [metric, range, refreshInterval]);
 

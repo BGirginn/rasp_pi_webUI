@@ -18,6 +18,7 @@ import argparse
 import signal
 import sys
 import shlex
+import time
 from pathlib import Path
 
 import structlog
@@ -167,7 +168,7 @@ class PiAgent:
             "platform": platform.platform(),
             "python_version": platform.python_version(),
             "agent_version": self.config["agent"]["version"],
-            "uptime_seconds": int(psutil.boot_time()),
+            "uptime_seconds": int(time.time() - psutil.boot_time()),
             "cpu_count": psutil.cpu_count(),
             "memory_total_mb": psutil.virtual_memory().total // (1024 * 1024),
         }

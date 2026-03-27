@@ -473,12 +473,45 @@ async def iot_stream(user: dict = Depends(get_current_user)):
     async def event_generator():
         # Send initial state
         devices = discovery_service.get_devices()
+        last_signature = json.dumps(
+            [
+                {
+                    "id": device.get("id"),
+                    "name": device.get("name"),
+                    "ip": device.get("ip"),
+                    "port": device.get("port"),
+                    "status": device.get("status"),
+                    "sensors": device.get("sensors") or [],
+                }
+                for device in devices
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         yield f"event: iot_update\ndata: {json.dumps(devices)}\n\n"
         
         # Keep connection alive and send periodic updates
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             devices = discovery_service.get_devices()
+            signature = json.dumps(
+                [
+                    {
+                        "id": device.get("id"),
+                        "name": device.get("name"),
+                        "ip": device.get("ip"),
+                        "port": device.get("port"),
+                        "status": device.get("status"),
+                        "sensors": device.get("sensors") or [],
+                    }
+                    for device in devices
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if signature == last_signature:
+                continue
+            last_signature = signature
             yield f"event: iot_update\ndata: {json.dumps(devices)}\n\n"
     
     return StreamingResponse(

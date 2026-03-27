@@ -16,8 +16,9 @@
 #include <WebServer.h>
 #include <driver/gpio.h>
 
-#define WIFI_SSID "uni1n020"
-#define WIFI_PASS "368117bG!!!"
+// Fill these in with your own WiFi credentials before flashing.
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASS "YOUR_WIFI_PASSWORD"
 
 // Wiring pins (color control still needs concrete pins).
 // WROOM-32 does NOT have GPIO24.
@@ -115,9 +116,9 @@ static void setPower(bool on) {
     // This does NOT cut the ESP32's 3V3 supply. It only makes GPIOs high-impedance.
     pinsInput();
     // Detach PWM if it was attached (safe even if not attached).
-    ledcDetachPin(RED_PIN);
-    ledcDetachPin(GREEN_PIN);
-    ledcDetachPin(BLUE_PIN);
+    ledcDetach(RED_PIN);
+    ledcDetach(GREEN_PIN);
+    ledcDetach(BLUE_PIN);
     if (POWER_OFF_ALL_SAFE_GPIO) {
       cutAllSafeGpioOutputs();
       Serial.println("POWER OFF (all safe GPIO -> INPUT/FLOATING)");

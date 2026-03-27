@@ -14,6 +14,7 @@ import json
 import os
 import platform
 import subprocess
+from time import monotonic
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -30,6 +31,23 @@ from .base import BaseProvider, Resource, ResourceClass, ResourceState, ActionRe
 
 logger = structlog.get_logger(__name__)
 
+ESP_HTTP_COMMAND_ENDPOINTS = [
+    "/api/led/command",
+    "/led/command",
+    "/command",
+]
+
+ESP_HTTP_STATUS_ENDPOINTS = [
+    "/status",
+]
+
+ESP_HTTP_INFO_ENDPOINTS = [
+    "/info",
+]
+
+_DISCOVERY_CACHE_TTL_SECONDS = 3.0
+_ESP_DISCOVERY_CONCURRENCY = 8
+
 
 class DevicesProvider(BaseProvider):
     """Provider for hardware devices."""
@@ -39,6 +57,12 @@ class DevicesProvider(BaseProvider):
         self._esp_devices: Dict[str, dict] = {}
         self._usb_devices: Dict[str, dict] = {}
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._discover_cache: Optional[List[Resource]] = None
+        self._discover_cache_expires_at: float = 0.0
+        self._discover_cache_ttl: float = float(
+            config.get("discovery", {}).get("devices_cache_ttl", _DISCOVERY_CACHE_TTL_SECONDS)
+        )
+        self._discover_cache_lock = asyncio.Lock()
     
     @property
     def name(self) -> str:
@@ -58,8 +82,25 @@ class DevicesProvider(BaseProvider):
     
     async def discover(self) -> List[Resource]:
         """Discover all hardware devices."""
+        now = monotonic()
+        if self._discover_cache is not None and now < self._discover_cache_expires_at:
+            return list(self._discover_cache)
+
+        async with self._discover_cache_lock:
+            now = monotonic()
+            if self._discover_cache is not None and now < self._discover_cache_expires_at:
+                return list(self._discover_cache)
+
+            resources = await self._discover_all_resources()
+            self._resources = {r.id: r for r in resources}
+            self._discover_cache = list(resources)
+            self._discover_cache_expires_at = monotonic() + self._discover_cache_ttl
+            return list(resources)
+
+    async def _discover_all_resources(self) -> List[Resource]:
+        """Run the expensive discovery pass once and assemble the result."""
         resources = []
-        
+
         # Discover USB devices
         usb_resources = await self._discover_usb_devices()
         resources.extend(usb_resources)
@@ -73,14 +114,15 @@ class DevicesProvider(BaseProvider):
         resources.extend(esp_resources)
         
         # Cache all resources
-        for r in resources:
-            self._resources[r.id] = r
-        
         logger.info("Device discovery complete", 
                    usb=len(usb_resources),
                    serial=len(serial_resources),
                    esp=len(esp_resources))
         return resources
+
+    def _invalidate_discovery_cache(self) -> None:
+        """Force the next discover() call to refresh from the host/network."""
+        self._discover_cache_expires_at = 0.0
     
     # =========================================
     # USB Device Discovery
@@ -333,51 +375,53 @@ class DevicesProvider(BaseProvider):
     
     async def _discover_esp_devices(self) -> List[Resource]:
         """Discover ESP devices via network scanning or MQTT."""
-        resources = []
-        
-        # Get known ESP devices from config
         esp_config = self.config.get("esp_devices", [])
-        
-        for esp in esp_config:
+        if not esp_config:
+            return []
+
+        semaphore = asyncio.Semaphore(_ESP_DISCOVERY_CONCURRENCY)
+        discovered: List[Optional[Resource]] = [None] * len(esp_config)
+        esp_state: Dict[str, dict] = {}
+
+        async def inspect_esp(index: int, esp: dict) -> None:
             ip = esp.get("ip")
-            name = esp.get("name", f"ESP-{ip}")
-            
             if not ip:
-                continue
-            
-            # Check if device is online
-            is_online = await self._check_esp_online(ip)
-            device_id = f"esp-{ip.replace('.', '-')}"
-            
-            # Get device info if online
-            telemetry = {}
-            capabilities = ["command"]
-            
-            if is_online:
-                info = await self._get_esp_info(ip)
-                if info:
-                    name = info.get("name", name)
-                    telemetry = info.get("telemetry", {})
-                    capabilities = info.get("capabilities", capabilities)
-            
-            resource = Resource(
-                id=device_id,
-                name=name,
-                type="esp",
-                provider=self.name,
-                resource_class=ResourceClass.DEVICE,
-                state=ResourceState.ONLINE if is_online else ResourceState.OFFLINE,
-                capabilities=capabilities,
-                last_seen=datetime.utcnow() if is_online else None,
-                metadata={
-                    "ip": ip,
-                    "telemetry": telemetry,
-                }
-            )
-            resources.append(resource)
-            self._esp_devices[device_id] = {"ip": ip, "online": is_online}
-        
-        return resources
+                return
+
+            async with semaphore:
+                name = esp.get("name", f"ESP-{ip}")
+                is_online = await self._check_esp_online(ip)
+                device_id = f"esp-{ip.replace('.', '-')}"
+
+                telemetry = {}
+                capabilities = ["command"]
+
+                if is_online:
+                    info = await self._get_esp_info(ip)
+                    if info:
+                        name = info.get("name", name)
+                        telemetry = info.get("telemetry", {})
+                        capabilities = info.get("capabilities", capabilities)
+
+                discovered[index] = Resource(
+                    id=device_id,
+                    name=name,
+                    type="esp",
+                    provider=self.name,
+                    resource_class=ResourceClass.DEVICE,
+                    state=ResourceState.ONLINE if is_online else ResourceState.OFFLINE,
+                    capabilities=capabilities,
+                    last_seen=datetime.utcnow() if is_online else None,
+                    metadata={
+                        "ip": ip,
+                        "telemetry": telemetry,
+                    }
+                )
+                esp_state[device_id] = {"ip": ip, "online": is_online}
+
+        await asyncio.gather(*(inspect_esp(index, esp) for index, esp in enumerate(esp_config)))
+        self._esp_devices = esp_state
+        return [resource for resource in discovered if resource is not None]
     
     async def _check_esp_online(self, ip: str) -> bool:
         """Check if ESP device is reachable."""
@@ -385,20 +429,24 @@ class DevicesProvider(BaseProvider):
             return False
         
         try:
-            response = await self._http_client.get(f"http://{ip}/state", timeout=3.0)
-            return response.status_code == 200
+            for endpoint in ESP_HTTP_STATUS_ENDPOINTS:
+                response = await self._http_client.get(f"http://{ip}{endpoint}", timeout=3.0)
+                if response.status_code == 200:
+                    return True
         except Exception:
             return False
-    
+        return False
+
     async def _get_esp_info(self, ip: str) -> Optional[dict]:
         """Get ESP device info via HTTP."""
         if not self._http_client:
             return None
         
         try:
-            response = await self._http_client.get(f"http://{ip}/discovery", timeout=3.0)
-            if response.status_code == 200:
-                return response.json()
+            for endpoint in ESP_HTTP_INFO_ENDPOINTS:
+                response = await self._http_client.get(f"http://{ip}{endpoint}", timeout=3.0)
+                if response.status_code == 200:
+                    return response.json()
         except Exception:
             pass
         return None
@@ -429,12 +477,18 @@ class DevicesProvider(BaseProvider):
         
         # USB eject action
         if resource.type == "usb" and action == "eject":
-            return await self._eject_usb(resource)
-        
+            result = await self._eject_usb(resource)
+            if result.success:
+                self._invalidate_discovery_cache()
+            return result
+
         # ESP command action
         if resource.type == "esp" and action == "command":
             command = params.get("command", "") if params else ""
-            return await self._send_esp_command(resource, command, params)
+            result = await self._send_esp_command(resource, command, params)
+            if result.success:
+                self._invalidate_discovery_cache()
+            return result
         
         return ActionResult(
             success=False,
@@ -521,28 +575,65 @@ class DevicesProvider(BaseProvider):
             )
         
         try:
-            payload = {"action": command}
-            if params:
-                payload.update(params)
-            
-            response = await self._http_client.post(
-                f"http://{ip}/control",
-                json=payload,
-                timeout=5.0
+            payload = {"command": command, "payload": params or {}}
+            endpoints = list(ESP_HTTP_COMMAND_ENDPOINTS)
+
+            # Keep a simple query-string fallback for controllers that only expose /set.
+            if command in {"set_color", "set_power"}:
+                endpoints.append("/set")
+
+            last_error = None
+            for endpoint in endpoints:
+                if endpoint == "/set" and command == "set_color":
+                    payload_data = params or {}
+                    query = {}
+                    if "r" in payload_data:
+                        query["r"] = payload_data.get("r", 0)
+                    if "g" in payload_data:
+                        query["g"] = payload_data.get("g", 0)
+                    if "b" in payload_data:
+                        query["b"] = payload_data.get("b", 0)
+                    if "brightness" in payload_data:
+                        query["brightness"] = payload_data.get("brightness", 255)
+                    if "power" in payload_data:
+                        query["power"] = 1 if bool(payload_data.get("power")) else 0
+                    response = await self._http_client.get(
+                        f"http://{ip}{endpoint}",
+                        params=query,
+                        timeout=5.0
+                    )
+                elif endpoint == "/set" and command == "set_power":
+                    payload_data = params or {}
+                    response = await self._http_client.get(
+                        f"http://{ip}{endpoint}",
+                        params={"power": 1 if bool(payload_data.get("on", payload_data.get("power", True))) else 0},
+                        timeout=5.0
+                    )
+                else:
+                    response = await self._http_client.post(
+                        f"http://{ip}{endpoint}",
+                        json=payload,
+                        timeout=5.0
+                    )
+
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                    except Exception:
+                        data = {"raw": response.text}
+                    return ActionResult(
+                        success=True,
+                        message=f"Command sent: {command}",
+                        data=data
+                    )
+
+                last_error = f"{endpoint} -> HTTP {response.status_code}"
+
+            return ActionResult(
+                success=False,
+                message=last_error or f"ESP returned an unexpected status for {command}",
+                error="ESP_ERROR"
             )
-            
-            if response.status_code == 200:
-                return ActionResult(
-                    success=True,
-                    message=f"Command sent: {command}",
-                    data=response.json()
-                )
-            else:
-                return ActionResult(
-                    success=False,
-                    message=f"ESP returned {response.status_code}",
-                    error="ESP_ERROR"
-                )
                 
         except Exception as e:
             return ActionResult(

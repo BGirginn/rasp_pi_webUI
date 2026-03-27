@@ -44,6 +44,7 @@ class DeviceDiscoveryService:
         self._poll_task: Optional[asyncio.Task] = None
         self.service_type = "_iot-device._tcp.local."
         self._db = None
+        self._last_broadcast_signature: Optional[str] = None
 
     async def _ensure_db(self) -> bool:
         """Ensure database connection is available. Returns True if connected."""
@@ -64,6 +65,7 @@ class DeviceDiscoveryService:
 
         logger.info("Starting IoT Device Discovery Service...")
         self._running = True
+        self._last_broadcast_signature = None
         
         # Get database connection
         try:
@@ -95,6 +97,7 @@ class DeviceDiscoveryService:
     async def stop(self):
         """Stop the discovery service."""
         self._running = False
+        self._last_broadcast_signature = None
         if self.browser:
             self.browser.cancel()
         if self.zeroconf:
@@ -273,7 +276,7 @@ class DeviceDiscoveryService:
             for device_id in list(self.devices.keys()):
                 await self._poll_device(device_id)
             
-            await asyncio.sleep(2)  # Poll every 2 seconds
+            await asyncio.sleep(3)  # Poll every few seconds to reduce discovery churn
 
     async def _poll_device(self, device_id: str):
         """Poll a single device for its status/info."""
@@ -482,11 +485,29 @@ class DeviceDiscoveryService:
     def _broadcast_update(self):
         """Broadcast current device list to frontend via SSE."""
         payload = [asdict(d) for d in self.devices.values()]
+        signature = self._build_broadcast_signature(payload)
+        if signature == self._last_broadcast_signature:
+            return
+        self._last_broadcast_signature = signature
         asyncio.create_task(sse_manager.broadcast(
             Channels.TELEMETRY,
             "iot_update",
             payload
         ))
+
+    def _build_broadcast_signature(self, payload: List[Dict]) -> str:
+        """Create a stable signature that ignores volatile heartbeat timestamps."""
+        normalized = []
+        for device in payload:
+            normalized.append({
+                "id": device.get("id"),
+                "name": device.get("name"),
+                "ip": device.get("ip"),
+                "port": device.get("port"),
+                "status": device.get("status"),
+                "sensors": device.get("sensors") or [],
+            })
+        return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
 
     def get_devices(self) -> List[Dict]:
         """Get all devices as list of dicts."""

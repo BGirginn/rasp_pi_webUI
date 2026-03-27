@@ -369,33 +369,41 @@ async def query_metrics(
     start = start or (now - 3600)  # Default 1 hour
     end = end or now
     
-    metric_names = [m.strip() for m in metrics.split(",")]
+    metric_names = [m.strip() for m in metrics.split(",") if m.strip()]
+    if not metric_names:
+        return []
+
     results = []
-    
+
+    placeholders = ",".join("?" for _ in metric_names)
+
+    if step > 1:
+        # One grouped query is cheaper than one query per metric.
+        cursor = await db.execute(
+            f"""SELECT metric, (ts / ?) * ? as bucket_ts, AVG(value)
+                FROM metrics_raw
+                WHERE metric IN ({placeholders}) AND ts BETWEEN ? AND ?
+                GROUP BY metric, bucket_ts
+                ORDER BY metric, bucket_ts""",
+            (step, step, *metric_names, start, end)
+        )
+    else:
+        cursor = await db.execute(
+            f"""SELECT metric, ts, value FROM metrics_raw
+                WHERE metric IN ({placeholders}) AND ts BETWEEN ? AND ?
+                ORDER BY metric, ts""",
+            (*metric_names, start, end)
+        )
+
+    rows = await cursor.fetchall()
+    points_by_metric: Dict[str, List[MetricPoint]] = {name: [] for name in metric_names}
+    for row in rows:
+        metric_name = row[0]
+        if metric_name in points_by_metric:
+            points_by_metric[metric_name].append(MetricPoint(ts=row[1], value=row[2]))
+
     for metric_name in metric_names:
-        if step > 1:
-            # Downsample using SQLite integer division for grouping
-            cursor = await db.execute(
-                """SELECT (ts / ?) * ? as bucket_ts, AVG(value) 
-                   FROM metrics_raw 
-                   WHERE metric = ? AND ts BETWEEN ? AND ?
-                   GROUP BY bucket_ts
-                   ORDER BY bucket_ts""",
-                (step, step, metric_name, start, end)
-            )
-        else:
-            # Raw query for step=1
-            cursor = await db.execute(
-                """SELECT ts, value FROM metrics_raw 
-                   WHERE metric = ? AND ts BETWEEN ? AND ?
-                   ORDER BY ts""",
-                (metric_name, start, end)
-            )
-            
-        rows = await cursor.fetchall()
-        
-        points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]
-        results.append(MetricsResponse(metric=metric_name, points=points))
+        results.append(MetricsResponse(metric=metric_name, points=points_by_metric.get(metric_name, [])))
     
     return results
 
@@ -467,30 +475,40 @@ async def get_metric_series(
     start = start or (now - 86400 * 7)  # Default 7 days
     end = end or now
     
-    metric_names = [m.strip() for m in metrics.split(",")]
+    metric_names = [m.strip() for m in metrics.split(",") if m.strip()]
+    if not metric_names:
+        return []
+
     results = []
-    
+
+    placeholders = ",".join("?" for _ in metric_names)
+
+    if step > 1:
+        cursor = await db.execute(
+            f"""SELECT metric, (ts / ?) * ? as bucket_ts, AVG(avg)
+               FROM metrics_summary
+               WHERE metric IN ({placeholders}) AND ts BETWEEN ? AND ?
+               GROUP BY metric, bucket_ts
+               ORDER BY metric, bucket_ts""",
+            (step, step, *metric_names, start, end)
+        )
+    else:
+        cursor = await db.execute(
+            f"""SELECT metric, ts, avg FROM metrics_summary
+               WHERE metric IN ({placeholders}) AND ts BETWEEN ? AND ?
+               ORDER BY metric, ts""",
+            (*metric_names, start, end)
+        )
+
+    rows = await cursor.fetchall()
+    points_by_metric: Dict[str, List[MetricPoint]] = {name: [] for name in metric_names}
+    for row in rows:
+        metric_name = row[0]
+        if metric_name in points_by_metric:
+            points_by_metric[metric_name].append(MetricPoint(ts=row[1], value=row[2]))
+
     for metric_name in metric_names:
-        if step > 1:
-            cursor = await db.execute(
-                """SELECT (ts / ?) * ? as bucket_ts, AVG(avg)
-                   FROM metrics_summary
-                   WHERE metric = ? AND ts BETWEEN ? AND ?
-                   GROUP BY bucket_ts
-                   ORDER BY bucket_ts""",
-                (step, step, metric_name, start, end)
-            )
-        else:
-            cursor = await db.execute(
-                """SELECT ts, avg FROM metrics_summary 
-                   WHERE metric = ? AND ts BETWEEN ? AND ?
-                   ORDER BY ts""",
-                (metric_name, start, end)
-            )
-        rows = await cursor.fetchall()
-        
-        points = [MetricPoint(ts=row[0], value=row[1]) for row in rows]
-        results.append(MetricsResponse(metric=metric_name, points=points))
+        results.append(MetricsResponse(metric=metric_name, points=points_by_metric.get(metric_name, [])))
     
     return results
 

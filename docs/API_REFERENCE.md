@@ -180,6 +180,11 @@ GET /api/telemetry/dashboard
 GET /api/telemetry/metrics?metrics=host.cpu.pct_total,host.mem.pct&start=1705300000&end=1705310000
 ```
 
+```http
+POST /api/telemetry/metrics/query
+POST /api/telemetry/metrics/series/query
+```
+
 **Query Parameters:**
 | Param | Type | Description |
 |-------|------|-------------|
@@ -187,6 +192,8 @@ GET /api/telemetry/metrics?metrics=host.cpu.pct_total,host.mem.pct&start=1705300
 | start | int | Start timestamp (epoch) |
 | end | int | End timestamp (epoch) |
 | step | int | Step size in seconds (default: 60) |
+
+The POST endpoints accept the same `metrics`, `start`, `end`, and `step` fields in the JSON body. The frontend uses them for larger queries and summary ranges.
 
 ### Available Metrics
 

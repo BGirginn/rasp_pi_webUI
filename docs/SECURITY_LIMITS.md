@@ -196,9 +196,8 @@ cors:
 
 | Data Type | Retention | Cleanup |
 |-----------|-----------|---------|
-| Raw metrics | 72 hours | Hourly |
-| Summary metrics | 30 days | Daily |
-| Resource samples | 24 hours | Hourly |
+| Raw metrics | 90 days | Hourly |
+| Summary metrics | 90 days | Daily |
 
 ### Logs
 

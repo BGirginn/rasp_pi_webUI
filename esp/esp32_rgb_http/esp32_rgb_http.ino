@@ -35,10 +35,6 @@ static const bool COMMON_ANODE = false;
 // LEDC PWM
 static const int PWM_FREQ_HZ = 5000;
 static const int PWM_RES_BITS = 8;   // 0-255
-static const int CH_R = 0;
-static const int CH_G = 1;
-static const int CH_B = 2;
-
 static WebServer server(80);
 
 // Current state (0-255)
@@ -68,19 +64,34 @@ static int scaleWithBrightness(int v, int brightness, bool power) {
   return clamp255((int)((float)v * s));
 }
 
-static void writeChannel(int channel, int value /* 0-255 */) {
+static void writeChannel(int pin, int value /* 0-255 */) {
   int duty = clamp255(value);
   if (COMMON_ANODE) duty = 255 - duty;
-  ledcWrite(channel, duty);
+  ledcWrite(pin, duty);
+}
+
+static void attachRgbPwm() {
+  ledcAttach(PIN_R, PWM_FREQ_HZ, PWM_RES_BITS);
+  ledcAttach(PIN_G, PWM_FREQ_HZ, PWM_RES_BITS);
+  ledcAttach(PIN_B, PWM_FREQ_HZ, PWM_RES_BITS);
+}
+
+static void detachRgbPwm() {
+  ledcDetach(PIN_R);
+  ledcDetach(PIN_G);
+  ledcDetach(PIN_B);
+  pinMode(PIN_R, INPUT);
+  pinMode(PIN_G, INPUT);
+  pinMode(PIN_B, INPUT);
 }
 
 static void applyState() {
   int r = scaleWithBrightness(curR, curBrightness, curPower);
   int g = scaleWithBrightness(curG, curBrightness, curPower);
   int b = scaleWithBrightness(curB, curBrightness, curPower);
-  writeChannel(CH_R, r);
-  writeChannel(CH_G, g);
-  writeChannel(CH_B, b);
+  writeChannel(PIN_R, r);
+  writeChannel(PIN_G, g);
+  writeChannel(PIN_B, b);
 }
 
 static String jsonEscape(const String& s) {
@@ -145,7 +156,12 @@ static void handleSetQuery() {
   if (server.hasArg("brightness")) curBrightness = clamp255(server.arg("brightness").toInt());
   if (server.hasArg("power")) curPower = parseBool(server.arg("power"), curPower);
 
-  applyState();
+  if (curPower) {
+    attachRgbPwm();
+    applyState();
+  } else {
+    detachRgbPwm();
+  }
 
   String body = "{";
   body += "\"r\":" + String(curR) + ",";
@@ -226,15 +242,25 @@ static void handleLedCommandJson() {
     curB = clamp255(jsonGetInt(body, "b", curB));
     curBrightness = clamp255(jsonGetInt(body, "brightness", curBrightness));
     curPower = jsonGetBool(body, "power", curPower);
-    applyState();
+    if (curPower) {
+      attachRgbPwm();
+      applyState();
+    } else {
+      detachRgbPwm();
+    }
     sendJson(200, "{\"success\":true}");
     return;
   }
 
   if (command == "set_power") {
-    bool on = jsonGetBool(body, "on", curPower);
+    bool on = jsonGetBool(body, "on", jsonGetBool(body, "power", curPower));
     curPower = on;
-    applyState();
+    if (curPower) {
+      attachRgbPwm();
+      applyState();
+    } else {
+      detachRgbPwm();
+    }
     sendJson(200, "{\"success\":true}");
     return;
   }
@@ -247,12 +273,7 @@ static void handleNotFound() {
 }
 
 static void setupPwm() {
-  ledcSetup(CH_R, PWM_FREQ_HZ, PWM_RES_BITS);
-  ledcSetup(CH_G, PWM_FREQ_HZ, PWM_RES_BITS);
-  ledcSetup(CH_B, PWM_FREQ_HZ, PWM_RES_BITS);
-  ledcAttachPin(PIN_R, CH_R);
-  ledcAttachPin(PIN_G, CH_G);
-  ledcAttachPin(PIN_B, CH_B);
+  attachRgbPwm();
   applyState();
 }
 
@@ -297,4 +318,3 @@ void setup() {
 void loop() {
   server.handleClient();
 }
-

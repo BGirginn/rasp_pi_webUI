@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Cpu,
   Activity,
@@ -12,7 +12,6 @@ import {
   Download,
   Upload,
   Zap,
-  Gauge,
   Network,
 } from 'lucide-react';
 import {
@@ -131,10 +130,18 @@ export function TelemetryPage() {
   const [activeRange, setActiveRange] = useState('live');
   const [telemetry, setTelemetry] = useState(null);
   const [history, setHistory] = useState([]);
+  const [selectedMetricKeys, setSelectedMetricKeys] = useState(
+    historyMetricConfigs.map((metric) => metric.key)
+  );
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const hasHistoryDataRef = useRef(false);
+  const telemetryHashRef = useRef('');
+  const historyHashRef = useRef('');
+  const telemetryInFlightRef = useRef(false);
+  const historyInFlightRef = useRef(false);
   const { theme, isDarkMode } = useTheme();
   const themeColors = getThemeColors(theme);
 
@@ -143,10 +150,20 @@ export function TelemetryPage() {
     [activeRange]
   );
 
-  const loadCurrentTelemetry = async () => {
+  const loadCurrentTelemetry = useCallback(async () => {
+    if (telemetryInFlightRef.current) {
+      return;
+    }
+
+    telemetryInFlightRef.current = true;
     try {
       const response = await api.get('/telemetry/current');
-      setTelemetry(response.data);
+      const payload = response.data || {};
+      const nextHash = JSON.stringify(payload);
+      if (nextHash !== telemetryHashRef.current) {
+        telemetryHashRef.current = nextHash;
+        setTelemetry(payload);
+      }
       setError(null);
     } catch (err) {
       console.error('Failed to load telemetry:', err);
@@ -154,17 +171,26 @@ export function TelemetryPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      telemetryInFlightRef.current = false;
     }
-  };
+  }, []);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
+    if (historyInFlightRef.current) {
+      return;
+    }
+
+    historyInFlightRef.current = true;
     const end = Math.floor(Date.now() / 1000);
     const start = end - activeRangeConfig.seconds;
     const endpoint = activeRangeConfig.source === 'summary'
       ? '/telemetry/metrics/series/query'
       : '/telemetry/metrics/query';
 
-    setHistoryLoading(true);
+    const shouldShowLoader = !hasHistoryDataRef.current;
+    if (shouldShowLoader) {
+      setHistoryLoading(true);
+    }
 
     try {
       const response = await api.post(endpoint, {
@@ -199,14 +225,22 @@ export function TelemetryPage() {
       });
 
       const mergedRows = Array.from(dataMap.values()).sort((left, right) => left.ts - right.ts);
-      setHistory(mergedRows);
+      const nextHash = JSON.stringify(mergedRows);
+      if (nextHash !== historyHashRef.current) {
+        historyHashRef.current = nextHash;
+        setHistory(mergedRows);
+      }
+      hasHistoryDataRef.current = mergedRows.length > 0;
     } catch (err) {
       console.error('Failed to load history:', err);
       setError('History data unavailable');
     } finally {
-      setHistoryLoading(false);
+      if (shouldShowLoader) {
+        setHistoryLoading(false);
+      }
+      historyInFlightRef.current = false;
     }
-  };
+  }, [activeRange, activeRangeConfig]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -214,16 +248,38 @@ export function TelemetryPage() {
   };
 
   useEffect(() => {
+    hasHistoryDataRef.current = false;
+    historyHashRef.current = '';
     loadCurrentTelemetry();
     loadHistory();
 
-    const interval = setInterval(() => {
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
       loadCurrentTelemetry();
       loadHistory();
-    }, activeRangeConfig.refreshMs);
+    };
 
-    return () => clearInterval(interval);
-  }, [activeRange, activeRangeConfig.refreshMs]);
+    const interval = setInterval(tick, activeRangeConfig.refreshMs);
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined' || document.hidden) {
+        return;
+      }
+      tick();
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [activeRangeConfig.refreshMs, loadCurrentTelemetry, loadHistory]);
 
   const metrics = useMemo(() => {
     if (!telemetry) return [];
@@ -236,6 +292,59 @@ export function TelemetryPage() {
       { label: 'Temperature', value: currentMetrics['host.temp.cpu_c'] || 0, unit: '°C', icon: Thermometer, color: 'red', barValue: Math.min((currentMetrics['host.temp.cpu_c'] || 0) * 1.2, 100) },
     ];
   }, [telemetry]);
+
+  const allMetricsSelected = selectedMetricKeys.length === historyMetricConfigs.length;
+
+  const visibleMetricConfigs = useMemo(() => {
+    const selected = new Set(selectedMetricKeys);
+    return historyMetricConfigs.filter((metric) => selected.has(metric.key));
+  }, [selectedMetricKeys]);
+
+  const loadAxisMax = useMemo(() => {
+    const loadValues = history.flatMap((row) => [
+      row.load1,
+      row.load5,
+      row.load15,
+    ]).filter((value) => Number.isFinite(value));
+
+    const currentLoadValues = [
+      telemetry?.metrics?.['host.load.1m'],
+      telemetry?.metrics?.['host.load.5m'],
+      telemetry?.metrics?.['host.load.15m'],
+    ].filter((value) => Number.isFinite(value));
+
+    const peak = Math.max(0, ...loadValues, ...currentLoadValues);
+
+    // Keep a realistic lower bound so tiny loads (e.g. 0.08) don't look "full".
+    if (peak <= 1) return 1;
+    if (peak <= 2) return 2;
+    return Math.ceil(peak);
+  }, [history, telemetry]);
+
+  const toggleMetricSelection = (metricKey) => {
+    setSelectedMetricKeys((prev) => {
+      const isAllSelected = prev.length === historyMetricConfigs.length;
+
+      if (isAllSelected) {
+        // First click behaves like "focus this metric only".
+        return [metricKey];
+      }
+
+      if (prev.includes(metricKey)) {
+        // Keep at least one metric visible.
+        if (prev.length === 1) {
+          return prev;
+        }
+        return prev.filter((key) => key !== metricKey);
+      }
+
+      return [...prev, metricKey];
+    });
+  };
+
+  const clearMetricSelection = () => {
+    setSelectedMetricKeys(historyMetricConfigs.map((metric) => metric.key));
+  };
 
   const CustomTooltip = ({ active, payload }) => {
     if (!active || !payload?.length) {
@@ -272,18 +381,6 @@ export function TelemetryPage() {
       </div>
     );
   };
-
-  const legendItems = historyMetricConfigs.map((metric) => (
-    <div
-      key={metric.key}
-      className={`flex items-center gap-2 px-3 py-2 rounded-xl ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'} border`}
-    >
-      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: metric.color }} />
-      <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-        {metric.label}
-      </span>
-    </div>
-  ));
 
   return (
     <div className="animate-fade-in pb-12">
@@ -409,8 +506,49 @@ export function TelemetryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-            {legendItems}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-end">
+              <button
+                onClick={clearMetricSelection}
+                disabled={allMetricsSelected}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                  allMetricsSelected
+                    ? isDarkMode
+                      ? 'bg-white/5 border-white/10 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : isDarkMode
+                      ? 'bg-white/5 border-white/20 text-gray-200 hover:border-white/40'
+                      : 'bg-white border-gray-300 text-gray-700 hover:border-gray-400'
+                }`}
+              >
+                Tümünü Göster
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+              {historyMetricConfigs.map((metric) => {
+                const isSelected = selectedMetricKeys.includes(metric.key);
+                return (
+                  <button
+                    key={metric.key}
+                    onClick={() => toggleMetricSelection(metric.key)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all text-left ${
+                      isSelected
+                        ? isDarkMode
+                          ? 'bg-white/10 border-white/30'
+                          : 'bg-white border-gray-400'
+                        : isDarkMode
+                          ? 'bg-white/5 border-white/10 opacity-65 hover:opacity-100'
+                          : 'bg-gray-50 border-gray-200 opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: metric.color }} />
+                    <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                      {metric.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -448,11 +586,11 @@ export function TelemetryPage() {
                   width={46}
                 />
                 <YAxis yAxisId="temperature" hide domain={['auto', 'auto']} />
-                <YAxis yAxisId="load" hide domain={['auto', 'auto']} />
+                <YAxis yAxisId="load" hide domain={[0, loadAxisMax]} />
                 <YAxis yAxisId="network" hide domain={[0, 'auto']} />
                 <Tooltip content={<CustomTooltip />} />
 
-                {historyMetricConfigs.map((metric) => (
+                {visibleMetricConfigs.map((metric) => (
                   <Line
                     key={metric.key}
                     type="monotone"
@@ -463,7 +601,7 @@ export function TelemetryPage() {
                     strokeDasharray={metric.dash}
                     dot={false}
                     connectNulls
-                    isAnimationActive={activeRange === 'live'}
+                    isAnimationActive={false}
                   />
                 ))}
               </LineChart>

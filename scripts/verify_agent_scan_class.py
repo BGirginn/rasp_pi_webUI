@@ -3,6 +3,7 @@ import asyncio
 import logging
 import sys
 import os
+from pathlib import Path
 
 # Add agent directory to sys.path
 sys.path.append("/opt/pi-control/agent")
@@ -15,7 +16,8 @@ try:
     import structlog
 except ImportError as e:
     print(f"Import Error: {e}")
-    sys.path.append("/Users/bgirginn/Desktop/rasp_pi_webUI/agent") # Fallback for local testing if paths differ
+    local_agent_dir = Path(__file__).resolve().parents[1] / "agent"
+    sys.path.append(str(local_agent_dir))
     from providers.network_provider import NetworkProvider
     import structlog
 

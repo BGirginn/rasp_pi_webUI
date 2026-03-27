@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
-import { RefreshCw, Usb, Cpu, HardDrive, Keyboard, Link, Bluetooth, Wifi, MapPin, Send, Zap, MousePointer2, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { RefreshCw, Usb, Cpu, HardDrive, Keyboard, Link, Bluetooth, Wifi, Send, Zap, MousePointer2, AlertCircle } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
@@ -14,15 +14,74 @@ export function DevicesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
+  const hasLoadedDevicesRef = useRef(false);
+  const devicesHashRef = useRef('');
+  const gpioHashRef = useRef('');
   const { theme, isDarkMode } = useTheme();
   const { isOperator } = useAuth();
   const themeColors = getThemeColors(theme);
 
-  const loadDevices = async () => {
-    if (!loading) setRefreshing(true);
+  const getDeviceCategory = (deviceType) => {
+    if (['disk', 'storage'].includes(deviceType)) return 'storage';
+    if (['usb', 'camera', 'audio'].includes(deviceType)) return 'usb';
+    if (['keyboard', 'mouse'].includes(deviceType)) return 'input';
+    if (deviceType === 'serial') return 'serial';
+    if (deviceType === 'esp') return 'esp';
+    return 'default';
+  };
+
+  const categoryStyles = {
+    usb: {
+      icon: isDarkMode ? 'from-sky-500 to-blue-600' : 'from-sky-500 to-blue-500',
+      border: isDarkMode ? 'hover:border-sky-500/50' : 'hover:border-sky-400',
+      vendor: isDarkMode ? 'bg-sky-500/10 text-sky-300' : 'bg-sky-50 text-sky-700',
+    },
+    storage: {
+      icon: isDarkMode ? 'from-emerald-500 to-green-600' : 'from-emerald-500 to-green-500',
+      border: isDarkMode ? 'hover:border-emerald-500/50' : 'hover:border-emerald-400',
+      vendor: isDarkMode ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700',
+    },
+    input: {
+      icon: isDarkMode ? 'from-indigo-500 to-violet-600' : 'from-indigo-500 to-violet-500',
+      border: isDarkMode ? 'hover:border-indigo-500/50' : 'hover:border-indigo-400',
+      vendor: isDarkMode ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-50 text-indigo-700',
+    },
+    serial: {
+      icon: isDarkMode ? 'from-cyan-500 to-teal-600' : 'from-cyan-500 to-teal-500',
+      border: isDarkMode ? 'hover:border-cyan-500/50' : 'hover:border-cyan-400',
+      vendor: isDarkMode ? 'bg-cyan-500/10 text-cyan-300' : 'bg-cyan-50 text-cyan-700',
+    },
+    esp: {
+      icon: isDarkMode ? 'from-orange-500 to-amber-600' : 'from-orange-500 to-amber-500',
+      border: isDarkMode ? 'hover:border-orange-500/50' : 'hover:border-orange-400',
+      vendor: isDarkMode ? 'bg-orange-500/10 text-orange-300' : 'bg-orange-50 text-orange-700',
+    },
+    default: {
+      icon: isDarkMode ? themeColors.secondary : themeColors.lightSecondary,
+      border: isDarkMode ? 'hover:border-purple-500/50' : 'hover:border-purple-400',
+      vendor: isDarkMode ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-50 text-purple-600',
+    },
+  };
+
+  const dedupeDevices = (rawDevices) => {
+    const byId = new Map();
+    for (const device of rawDevices) {
+      if (!device?.id) continue;
+      if (!byId.has(device.id)) byId.set(device.id, device);
+    }
+    return Array.from(byId.values()).sort((left, right) => left.id.localeCompare(right.id));
+  };
+
+  const loadDevices = useCallback(async () => {
+    if (hasLoadedDevicesRef.current) setRefreshing(true);
     try {
       const response = await api.get('/devices');
-      setDevices(response.data || []);
+      const nextDevices = dedupeDevices(response.data || []);
+      const nextHash = JSON.stringify(nextDevices);
+      if (nextHash !== devicesHashRef.current) {
+        devicesHashRef.current = nextHash;
+        setDevices(nextDevices);
+      }
       setError(null);
     } catch (err) {
       console.error('Failed to load devices:', err);
@@ -30,20 +89,26 @@ export function DevicesPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedDevicesRef.current = true;
     }
-  };
+  }, []);
 
-  const loadGpio = async () => {
+  const loadGpio = useCallback(async () => {
     setGpioLoading(true);
     try {
       const response = await api.get('/devices/gpio/pins');
-      setGpioPins(response.data?.pins || []);
+      const nextPins = response.data?.pins || [];
+      const nextHash = JSON.stringify(nextPins);
+      if (nextHash !== gpioHashRef.current) {
+        gpioHashRef.current = nextHash;
+        setGpioPins(nextPins);
+      }
     } catch (err) {
       console.error('Failed to load GPIO:', err);
     } finally {
       setGpioLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDevices();
@@ -51,11 +116,12 @@ export function DevicesPage() {
 
     // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       loadDevices();
       if (showGpio) loadGpio();
     }, 30000);
     return () => clearInterval(interval);
-  }, [showGpio]);
+  }, [showGpio, loadDevices, loadGpio]);
 
   const toggleGpio = async (pin, currentVal) => {
     try {
@@ -207,6 +273,9 @@ export function DevicesPage() {
           <AnimatePresence mode="popLayout">
             {filteredDevices.map((device, index) => {
               const Icon = typeIcons[device.type] || Cpu;
+              const category = getDeviceCategory(device.type);
+              const style = categoryStyles[category] || categoryStyles.default;
+              const canSendCommand = device.type === 'esp';
               return (
                 <motion.div
                   key={device.id}
@@ -215,11 +284,11 @@ export function DevicesPage() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={{ duration: 0.2, delay: index * 0.05 }}
-                  className={`${isDarkMode ? 'bg-black/40' : 'bg-white'} backdrop-blur-xl rounded-2xl p-6 border ${isDarkMode ? 'border-white/10 hover:border-purple-500/50' : 'border-gray-200 hover:border-purple-400'} transition-all group`}
+                  className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-200'} backdrop-blur-xl rounded-2xl p-6 border ${style.border} transition-all group`}
                 >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${isDarkMode ? themeColors.secondary : themeColors.lightSecondary} flex items-center justify-center shadow-lg`}>
+                      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${style.icon} flex items-center justify-center shadow-lg`}>
                         <Icon size={24} className="text-white" />
                       </div>
                       <div>
@@ -244,7 +313,7 @@ export function DevicesPage() {
                       </span>
                     ))}
                     {device.vendor && (
-                      <span className={`px-2 py-1 rounded-md text-[10px] uppercase font-bold ${isDarkMode ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
+                      <span className={`px-2 py-1 rounded-md text-[10px] uppercase font-bold ${style.vendor}`}>
                         {device.vendor}
                       </span>
                     )}
@@ -265,7 +334,7 @@ export function DevicesPage() {
                   )}
 
                   {/* Actions */}
-                  {isOperator && (
+                  {isOperator && canSendCommand && (
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
@@ -279,10 +348,17 @@ export function DevicesPage() {
                       </button>
                       <button
                         onClick={() => handleCommand(device.id, 'ping')}
+                        title="Ping device"
                         className={`px-3 py-2 rounded-lg border transition-all ${isDarkMode ? 'bg-white/5 border-white/10 hover:bg-white/10 text-gray-400' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-600'}`}
                       >
-                        <MapPin size={16} />
+                        <Wifi size={16} />
                       </button>
+                    </div>
+                  )}
+
+                  {isOperator && !canSendCommand && (
+                    <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-500'} italic`}>
+                      This device type does not support remote command or ping.
                     </div>
                   )}
 

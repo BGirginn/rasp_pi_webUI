@@ -1,119 +1,231 @@
 #!/bin/bash
 # Pi Control Panel - Native Deployment Script
-# Usage: ./deploy-native.sh [user@host]
+#
+# Usage:
+#   ./deploy-native.sh user@host
 
-set -e
+set -euo pipefail
+
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly NC='\033[0m'
+
+readonly PROJECT_DIR="/opt/pi-control"
+readonly DATA_DIR="/var/lib/pi-control"
+readonly CONFIG_DIR="/etc/pi-control"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PI_HOST="${1:-}"
+SSH_PASSWORD="${SSH_PASS:-}"
 
-if [ -z "$PI_HOST" ]; then
-    echo "Usage: ./deploy-native.sh user@pi-ip-address"
-    echo "Example: ./deploy-native.sh pi@192.168.1.100"
-    exit 1
-fi
-PROJECT_DIR="/opt/pi-control"
-DATA_DIR="/var/lib/pi-control"
-CONFIG_DIR="/etc/pi-control"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SSH_OPTIONS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+SSH_BATCH_OPTIONS=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+INSTALL_FLAGS=(--skip-preflight --no-tailscale)
 
-echo "=========================================="
-echo "  Pi Control Panel - Native Deployment"
-echo "=========================================="
-echo ""
-echo "Target: $PI_HOST"
-echo "Install Dir: $PROJECT_DIR"
-echo ""
+SSH_CMD=()
+SSH_TTY_CMD=()
+RSYNC_CMD=()
+RSYNC_RSH=()
+RSYNC_RSH_STRING=""
 
-# Check if SSH_PASS is set for non-interactive login
-if [ -n "$SSH_PASS" ]; then
-    if ! command -v sshpass &> /dev/null; then
-        echo "Authentication with password requires 'sshpass' but it is not installed."
-        exit 1
-    fi
-    SSH_CMD="sshpass -p $SSH_PASS ssh"
-    SCP_CMD="sshpass -p $SSH_PASS scp"
-    RSYNC_CMD="sshpass -p $SSH_PASS rsync"
-else
-    SSH_CMD="ssh"
-    SCP_CMD="scp"
-    RSYNC_CMD="rsync"
-fi
+print_usage() {
+    cat <<'EOF'
+Usage: ./deploy-native.sh user@pi-ip-address
 
-# Test SSH connection
-echo "🔌 Testing SSH connection..."
-if ! $SSH_CMD -o ConnectTimeout=5 -o BatchMode=yes "$PI_HOST" "echo 'SSH OK'" 2>/dev/null; then
-    echo "⚠️  SSH key auth failed. You may need to enter password."
-    $SSH_CMD -o ConnectTimeout=10 "$PI_HOST" "echo 'SSH OK'" || {
-        echo "❌ SSH connection failed!"
-        exit 1
-    }
-fi
-echo "✅ SSH connection OK"
-echo ""
+Examples:
+  ./deploy-native.sh pi@192.168.1.100
+  SSH_PASS='secret' ./deploy-native.sh pi@100.x.y.z
+EOF
+}
 
-# Create directories on Pi
-echo "📁 Creating directories..."
-if [ -n "$SSH_PASS" ]; then
-    $SSH_CMD "$PI_HOST" "echo '$SSH_PASS' | sudo -S mkdir -p $PROJECT_DIR $DATA_DIR $CONFIG_DIR && echo '$SSH_PASS' | sudo -S chown -R \$(whoami):\$(whoami) $PROJECT_DIR $DATA_DIR"
-else
-    $SSH_CMD "$PI_HOST" "sudo mkdir -p $PROJECT_DIR $DATA_DIR $CONFIG_DIR && sudo chown -R \$(whoami):\$(whoami) $PROJECT_DIR $DATA_DIR"
-fi
+print_header() {
+    echo -e "${BLUE}==========================================${NC}"
+    echo -e "${BLUE}  Pi Control Panel - Remote Deploy${NC}"
+    echo -e "${BLUE}==========================================${NC}"
+    echo ""
+}
 
-# Sync files to Pi
-echo "📦 Syncing files..."
-$RSYNC_CMD -avz --progress \
-    --exclude 'node_modules' \
-    --exclude '__pycache__' \
-    --exclude '*.pyc' \
-    --exclude '.git' \
-    --exclude 'venv' \
-    --exclude '.env' \
-    --exclude '*.db' \
-    --exclude 'dist' \
-    "$SCRIPT_DIR/" "$PI_HOST:$PROJECT_DIR/"
+section() {
+    echo -e "${CYAN}$1${NC}"
+}
 
-echo "✅ Files synced"
-echo ""
+info() {
+    echo -e "  ${BLUE}->${NC} $1"
+}
 
-# Run installer on remote to build and configure
-echo "🚀 Running installer on remote..."
-if [ -n "$SSH_PASS" ]; then
-    # sshpass with -t can be tricky, so we use non-interactive mode with sudo -S
-    $SSH_CMD "$PI_HOST" "cd $PROJECT_DIR && chmod +x install.sh && echo '$SSH_PASS' | sudo -S ./install.sh --skip-preflight --no-tailscale"
-else
-    $SSH_CMD -t "$PI_HOST" "cd $PROJECT_DIR && chmod +x install.sh && sudo ./install.sh --skip-preflight --no-tailscale"
-fi
-echo "✅ Installation completed"
-echo ""
+success() {
+    echo -e "  ${GREEN}OK${NC} $1"
+}
 
-# Wait for startup
-echo "⏳ Waiting for service to start..."
-sleep 5
+warn() {
+    echo -e "  ${YELLOW}WARN${NC} $1"
+}
 
-# Health check
-echo "🏥 Health check..."
-if $SSH_CMD "$PI_HOST" "curl -sf http://localhost:8080/api/health > /dev/null"; then
-    echo "✅ API is healthy!"
-else
-    echo "⚠️  API not responding, checking logs..."
-    if [ -n "$SSH_PASS" ]; then
-        $SSH_CMD "$PI_HOST" "echo '$SSH_PASS' | sudo -S journalctl -u pi-control -n 20 --no-pager"
+fail() {
+    echo -e "  ${RED}ERR${NC} $1"
+}
+
+setup_transport() {
+    if [[ -n "$SSH_PASSWORD" ]]; then
+        if ! command -v sshpass >/dev/null 2>&1; then
+            fail "SSH_PASS is set but sshpass is not installed."
+            exit 1
+        fi
+
+        SSH_CMD=(sshpass -p "$SSH_PASSWORD" ssh)
+        SSH_TTY_CMD=(sshpass -p "$SSH_PASSWORD" ssh -tt)
+        RSYNC_CMD=(rsync)
+        RSYNC_RSH=(sshpass -p "$SSH_PASSWORD" ssh "${SSH_OPTIONS[@]}")
     else
-        $SSH_CMD "$PI_HOST" "sudo journalctl -u pi-control -n 20 --no-pager"
+        SSH_CMD=(ssh)
+        SSH_TTY_CMD=(ssh -tt)
+        RSYNC_CMD=(rsync)
+        RSYNC_RSH=(ssh "${SSH_OPTIONS[@]}")
     fi
-    exit 1
-fi
 
-echo ""
-echo "=========================================="
-echo "  ✅ Deployment Complete!"
-echo "=========================================="
-echo ""
-PI_IP=$($SSH_CMD "$PI_HOST" "hostname -I | awk '{print \$1}'" 2>/dev/null || echo "$PI_HOST")
-echo "Access: http://$PI_IP"
-echo ""
-echo "Useful commands:"
-echo "  sudo systemctl status pi-control   # Service status"
-echo "  sudo journalctl -u pi-control -f   # View logs"
-echo "  sudo systemctl restart pi-control  # Restart"
-echo ""
+    printf -v RSYNC_RSH_STRING '%q ' "${RSYNC_RSH[@]}"
+    RSYNC_RSH_STRING="${RSYNC_RSH_STRING% }"
+}
+
+run_remote() {
+    local command="$1"
+    "${SSH_CMD[@]}" "${SSH_OPTIONS[@]}" "$PI_HOST" "$command"
+}
+
+run_remote_tty() {
+    local command="$1"
+    "${SSH_TTY_CMD[@]}" "${SSH_OPTIONS[@]}" "$PI_HOST" "$command"
+}
+
+run_remote_batch() {
+    local command="$1"
+    "${SSH_CMD[@]}" "${SSH_BATCH_OPTIONS[@]}" "$PI_HOST" "$command"
+}
+
+run_remote_sudo() {
+    local command="$1"
+    local quoted_command=""
+
+    printf -v quoted_command '%q' "$command"
+
+    if [[ -n "$SSH_PASSWORD" ]]; then
+        local quoted_password=""
+        printf -v quoted_password '%q' "$SSH_PASSWORD"
+        run_remote "REMOTE_SUDO_PASS=${quoted_password}; printf '%s\n' \"\$REMOTE_SUDO_PASS\" | sudo -S -p '' bash -lc ${quoted_command}"
+    else
+        run_remote_tty "sudo bash -lc ${quoted_command}"
+    fi
+}
+
+test_ssh_connection() {
+    section "Testing SSH connection..."
+
+    if [[ -n "$SSH_PASSWORD" ]]; then
+        run_remote "echo SSH OK" >/dev/null
+    else
+        if run_remote_batch "echo SSH OK" >/dev/null 2>&1; then
+            :
+        else
+            warn "SSH key auth did not complete in batch mode. Falling back to interactive SSH."
+            run_remote_tty "echo SSH OK" >/dev/null
+        fi
+    fi
+
+    success "SSH connection established."
+}
+
+create_remote_directories() {
+    section "Preparing remote directories..."
+
+    run_remote_sudo "mkdir -p '$PROJECT_DIR' '$DATA_DIR' '$CONFIG_DIR' && chown -R \"\$SUDO_USER\":\"\$(id -gn \"\$SUDO_USER\")\" '$PROJECT_DIR' '$DATA_DIR'"
+
+    success "Remote directories are ready."
+}
+
+sync_project_files() {
+    section "Syncing project files..."
+
+    "${RSYNC_CMD[@]}" -avz --progress \
+        -e "$RSYNC_RSH_STRING" \
+        --exclude 'node_modules' \
+        --exclude '__pycache__' \
+        --exclude '*.pyc' \
+        --exclude '.git' \
+        --exclude 'venv' \
+        --exclude '.env' \
+        --exclude '*.db' \
+        --exclude 'dist' \
+        "$SCRIPT_DIR/" "$PI_HOST:$PROJECT_DIR/"
+
+    success "Project files synced to $PI_HOST."
+}
+
+run_remote_install() {
+    local installer_command=""
+
+    printf -v installer_command "cd '%s' && chmod +x install.sh && ./install.sh %s" "$PROJECT_DIR" "${INSTALL_FLAGS[*]}"
+
+    section "Running remote installer..."
+    run_remote_sudo "$installer_command"
+    success "Remote installation finished."
+}
+
+check_remote_health() {
+    section "Checking remote API health..."
+
+    if run_remote "curl -sf http://localhost:8080/api/health >/dev/null"; then
+        success "Remote API is healthy."
+        return
+    fi
+
+    warn "Remote API health check failed. Showing recent pi-control logs."
+    run_remote_sudo "journalctl -u pi-control -n 20 --no-pager"
+    exit 1
+}
+
+print_summary() {
+    local remote_ip=""
+
+    remote_ip="$(run_remote "hostname -I | awk '{print \$1}'" 2>/dev/null || true)"
+    remote_ip="${remote_ip:-$PI_HOST}"
+
+    echo ""
+    echo -e "${GREEN}==========================================${NC}"
+    echo -e "${GREEN}  Remote Deployment Complete${NC}"
+    echo -e "${GREEN}==========================================${NC}"
+    echo ""
+    echo -e "${BLUE}Access:${NC} http://$remote_ip"
+    echo -e "${BLUE}Useful commands:${NC}"
+    echo "  ssh $PI_HOST"
+    echo "  sudo systemctl status pi-control"
+    echo "  sudo journalctl -u pi-control -f"
+    echo "  sudo systemctl restart pi-control"
+    echo ""
+}
+
+main() {
+    if [[ -z "$PI_HOST" ]]; then
+        print_usage
+        exit 1
+    fi
+
+    setup_transport
+
+    print_header
+    info "Target host: $PI_HOST"
+    info "Install directory: $PROJECT_DIR"
+    info "Remote installer flags: ${INSTALL_FLAGS[*]}"
+    echo ""
+
+    test_ssh_connection
+    create_remote_directories
+    sync_project_files
+    run_remote_install
+    check_remote_health
+    print_summary
+}
+
+main "$@"

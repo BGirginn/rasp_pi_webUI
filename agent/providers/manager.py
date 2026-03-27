@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 from datetime import datetime
+from time import monotonic
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -26,6 +27,11 @@ class ProviderManager:
         self._resources: Dict[str, Resource] = {}
         self._last_snapshot_hash: Optional[str] = None
         self._lock = asyncio.Lock()
+        self._devices_cache: Optional[List[Dict]] = None
+        self._devices_cache_expires_at: float = 0.0
+        self._devices_cache_ttl: float = float(config.get("discovery", {}).get("devices_cache_ttl", 3))
+        self._devices_snapshot_ready: bool = False
+        self._devices_cache_lock = asyncio.Lock()
     
     @property
     def is_healthy(self) -> bool:
@@ -99,6 +105,8 @@ class ProviderManager:
             
             # Update resource cache
             self._resources = {r.id: r for r in all_resources}
+            self._refresh_devices_cache_from_resources()
+            self._devices_snapshot_ready = True
             
             return all_resources
     
@@ -188,7 +196,15 @@ class ProviderManager:
         
         # Execute action
         logger.info("Executing action", resource_id=resource_id, action=action)
-        return await provider.execute_action(resource_id, action, params)
+        result = await provider.execute_action(resource_id, action, params)
+
+        if resource.provider == "devices" and result.success:
+            self._invalidate_devices_cache()
+            invalidate = getattr(provider, "_invalidate_discovery_cache", None)
+            if callable(invalidate):
+                invalidate()
+
+        return result
     
     async def get_logs(
         self,
@@ -247,7 +263,12 @@ class ProviderManager:
         provider = self._providers.get("network")
         if not provider:
             return []
-        
+
+        # Fast path: use last discovery snapshot if available.
+        cached = [r.to_dict() for r in self._resources.values() if r.provider == "network"]
+        if cached:
+            return cached
+
         resources = await provider.discover()
         return [r.to_dict() for r in resources]
     
@@ -302,6 +323,36 @@ class ProviderManager:
         provider = self._providers.get("devices")
         if not provider:
             return []
-        
-        resources = await provider.discover()
-        return [r.to_dict() for r in resources]
+
+        now = monotonic()
+        if self._devices_cache is not None and now < self._devices_cache_expires_at:
+            return self._devices_cache
+
+        async with self._devices_cache_lock:
+            now = monotonic()
+            if self._devices_cache is not None and now < self._devices_cache_expires_at:
+                return self._devices_cache
+
+            # Prefer the latest global discovery snapshot before forcing new discovery.
+            snapshot_devices = [r.to_dict() for r in self._resources.values() if r.provider == "devices"]
+            if self._devices_snapshot_ready:
+                self._devices_cache = snapshot_devices
+                self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
+                return self._devices_cache
+
+            resources = await provider.discover()
+            self._devices_cache = [r.to_dict() for r in resources]
+            self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
+            self._devices_snapshot_ready = True
+            return self._devices_cache
+
+    def _refresh_devices_cache_from_resources(self) -> None:
+        """Keep device cache in sync with latest discovery snapshot."""
+        snapshot_devices = [r.to_dict() for r in self._resources.values() if r.provider == "devices"]
+        self._devices_cache = snapshot_devices
+        self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
+
+    def _invalidate_devices_cache(self) -> None:
+        """Force device list recomputation on the next request."""
+        self._devices_cache_expires_at = 0.0
+        self._devices_snapshot_ready = False

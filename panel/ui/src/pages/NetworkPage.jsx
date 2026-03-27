@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
-import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, AlertCircle, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Settings2, Power, RotateCcw } from "lucide-react";
+import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Settings2, Power, RotateCcw } from "lucide-react";
 import { useTheme, getThemeColors, } from "../contexts/ThemeContext";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
 import { formatBytes } from "../utils/format";
@@ -23,58 +23,82 @@ export function NetworkPage() {
   const [connectivity, setConnectivity] = useState({});
   const [wifiNetworks, setWifiNetworks] = useState([]);
   const [wifiStatus, setWifiStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
   const [connectModal, setConnectModal] = useState(null);
   const [wifiPassword, setWifiPassword] = useState('');
+  const hasLoadedNetworkRef = useRef(false);
+  const interfacesHashRef = useRef('');
+  const connectivityHashRef = useRef('');
+  const wifiNetworksHashRef = useRef('');
+  const wifiStatusHashRef = useRef('');
 
-  const loadNetworkData = async () => {
-    if (!loading) setRefreshing(true);
+  const loadNetworkData = useCallback(async () => {
+    if (hasLoadedNetworkRef.current) setRefreshing(true);
     try {
       const [ifaceRes, connRes] = await Promise.all([
         api.get('/network/interfaces'),
         api.get('/network/connectivity')
       ]);
-      setInterfaces(ifaceRes.data || []);
-      setConnectivity(connRes.data || {});
-      setError(null);
+      const nextInterfaces = ifaceRes.data || [];
+      const nextConnectivity = connRes.data || {};
+      const nextInterfacesHash = JSON.stringify(nextInterfaces);
+      const nextConnectivityHash = JSON.stringify(nextConnectivity);
+
+      if (nextInterfacesHash !== interfacesHashRef.current) {
+        interfacesHashRef.current = nextInterfacesHash;
+        setInterfaces(nextInterfaces);
+      }
+      if (nextConnectivityHash !== connectivityHashRef.current) {
+        connectivityHashRef.current = nextConnectivityHash;
+        setConnectivity(nextConnectivity);
+      }
     } catch (err) {
       console.error('Failed to load network data:', err);
-      setError('Connection refused or backend unavailable.');
     } finally {
-      setLoading(false);
       setRefreshing(false);
+      hasLoadedNetworkRef.current = true;
     }
-  };
+  }, []);
 
-  const scanWifi = async () => {
+  const scanWifi = useCallback(async () => {
     setScanning(true);
     try {
       const [networksRes, statusRes] = await Promise.all([
         api.get('/network/wifi/networks'),
         api.get('/network/wifi/status')
       ]);
-      setWifiNetworks(networksRes.data || []);
-      setWifiStatus(statusRes.data || null);
+      const nextNetworks = networksRes.data || [];
+      const nextStatus = statusRes.data || null;
+      const nextNetworksHash = JSON.stringify(nextNetworks);
+      const nextStatusHash = JSON.stringify(nextStatus);
+
+      if (nextNetworksHash !== wifiNetworksHashRef.current) {
+        wifiNetworksHashRef.current = nextNetworksHash;
+        setWifiNetworks(nextNetworks);
+      }
+      if (nextStatusHash !== wifiStatusHashRef.current) {
+        wifiStatusHashRef.current = nextStatusHash;
+        setWifiStatus(nextStatus);
+      }
     } catch (err) {
       console.error('WiFi scan failed:', err);
     } finally {
       setScanning(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadNetworkData();
     if (activeTab === 'wifi') scanWifi();
 
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       loadNetworkData();
       if (activeTab === 'wifi') scanWifi();
     }, 10000);
     return () => clearInterval(interval);
-  }, [activeTab]);
+  }, [activeTab, loadNetworkData, scanWifi]);
 
   const handleInterfaceAction = async (ifaceName, action) => {
     const rollback = action === 'disable' ? 120 : 0;

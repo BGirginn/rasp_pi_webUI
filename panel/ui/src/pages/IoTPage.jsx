@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Wifi, Activity, AlertCircle, Thermometer, Droplets, Sun, Zap, Volume2, Fingerprint, ChevronRight } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
@@ -12,14 +12,20 @@ export function IoTPage({ onDeviceClick }) {
     const [manualPort, setManualPort] = useState(80);
     const [manualName, setManualName] = useState('');
     const [manualLoading, setManualLoading] = useState(false);
+    const devicesHashRef = useRef('');
     const { theme, isDarkMode } = useTheme();
     const themeColors = getThemeColors(theme);
 
-    // Load initial devices
-    const loadDevices = async () => {
+    // Shared loader with change detection to avoid repainting the whole grid on identical payloads.
+    const loadDevices = useCallback(async () => {
         try {
             const response = await api.get('/iot/devices');
-            setDevices(response.data || []);
+            const nextDevices = response.data || [];
+            const nextHash = JSON.stringify(nextDevices);
+            if (nextHash !== devicesHashRef.current) {
+                devicesHashRef.current = nextHash;
+                setDevices(nextDevices);
+            }
             setError(null);
         } catch (err) {
             console.error('Failed to load IoT devices:', err);
@@ -27,16 +33,25 @@ export function IoTPage({ onDeviceClick }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         loadDevices();
 
         let pollInterval = null;
         let sseConnected = false;
+        let eventSource = null;
+
+        const startPolling = () => {
+            if (pollInterval) return;
+            pollInterval = setInterval(() => {
+                if (typeof document !== 'undefined' && document.hidden) return;
+                loadDevices();
+            }, 5000);
+        };
 
         // Try SSE first for real-time updates
-        const eventSource = api.createSSE('/sse/telemetry', (data, type) => {
+        eventSource = api.createSSE('/iot/stream', (data, type) => {
             if (type === 'iot_update') {
                 sseConnected = true;
                 // Cancel polling if SSE is delivering updates
@@ -44,22 +59,23 @@ export function IoTPage({ onDeviceClick }) {
                     clearInterval(pollInterval);
                     pollInterval = null;
                 }
-                setDevices(data);
+                const nextDevices = Array.isArray(data) ? data : [];
+                const nextHash = JSON.stringify(nextDevices);
+                if (nextHash !== devicesHashRef.current) {
+                    devicesHashRef.current = nextHash;
+                    setDevices(nextDevices);
+                }
             }
         }, () => {
             // SSE error - fall back to polling
             sseConnected = false;
-            if (!pollInterval) {
-                pollInterval = setInterval(loadDevices, 2000);
-            }
+            startPolling();
         });
 
-        // Start polling as fallback, stop if SSE delivers within 3s
-        pollInterval = setInterval(loadDevices, 2000);
+        // Only start polling if SSE never becomes active.
         const sseWaitTimeout = setTimeout(() => {
-            if (sseConnected && pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
+            if (!sseConnected) {
+                startPolling();
             }
         }, 3000);
 
@@ -68,7 +84,7 @@ export function IoTPage({ onDeviceClick }) {
             if (pollInterval) clearInterval(pollInterval);
             if (eventSource) eventSource.close();
         };
-    }, []);
+    }, [loadDevices]);
 
     // Sensor Icon Helper
     const getSensorIcon = (type) => {
@@ -101,6 +117,7 @@ export function IoTPage({ onDeviceClick }) {
         try {
             await api.post('/iot/devices/clear');
             setDevices([]);
+            devicesHashRef.current = JSON.stringify([]);
         } catch (err) {
             console.error('Failed to clear devices:', err);
         }

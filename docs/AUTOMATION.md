@@ -38,22 +38,31 @@ sudo ./install.sh
 
 # Options
 sudo ./install.sh --skip-preflight   # Skip system checks
-sudo ./install.sh --no-tailscale     # Skip Tailscale
-sudo ./install.sh --upgrade          # Upgrade existing
+sudo ./install.sh --no-tailscale     # Skip Tailscale install and prompts
+sudo ./install.sh --upgrade          # Run scripts/update.sh instead
 sudo ./install.sh --verbose          # Verbose output
+sudo DEFAULT_ADMIN_PASSWORD='strong-password' ./install.sh
 ```
 
 **What it does:**
 1. ✅ Validates system requirements
-2. ✅ Sets up swap for low-RAM devices
-3. ✅ Installs Python 3, Node.js 20, Caddy, SQLite
-4. ✅ Installs Tailscale VPN
+2. ✅ Installs Python 3, Node.js 20, Caddy, SQLite and installer prerequisites
+3. ✅ Optionally installs Tailscale
+4. ✅ Copies the project into `/opt/pi-control`
 5. ✅ Creates Python virtual environment
 6. ✅ Builds React frontend
 7. ✅ Configures systemd services
 8. ✅ Sets up Caddy reverse proxy
 9. ✅ Generates JWT secrets
-10. ✅ Runs health checks
+10. ✅ Seeds the initial admin password when no admin exists yet
+11. ✅ Runs health checks
+
+If the database is empty, the first boot creates:
+
+- username: `admin`
+- password: `admin123`
+
+Use `DEFAULT_ADMIN_PASSWORD` during install to override that first password.
 
 ---
 
@@ -184,8 +193,8 @@ ss -tlnp | grep 8080
 ```bash
 # Rebuild frontend
 cd /opt/pi-control/panel/ui
-sudo -u pi npm install
-sudo -u pi npm run build
+sudo -u <install-user> npm install
+sudo -u <install-user> npm run build
 
 # Restart Caddy
 sudo systemctl restart caddy

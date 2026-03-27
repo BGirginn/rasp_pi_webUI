@@ -4,8 +4,10 @@ Pi Control Panel - Devices Router
 Handles hardware device management (USB, serial, GPIO, ESP via MQTT).
 """
 
+import asyncio
 import json
 from datetime import datetime
+from time import monotonic
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -17,6 +19,11 @@ from services.sse import sse_manager, Channels
 from .auth import get_current_user, require_role
 
 router = APIRouter()
+
+_DEVICE_CACHE_TTL_SECONDS = 3.0
+_device_cache_expires_at = 0.0
+_device_cache_data: Optional[List[Dict]] = None
+_device_cache_lock = asyncio.Lock()
 
 
 class DeviceResponse(BaseModel):
@@ -52,22 +59,58 @@ async def list_devices(
     user: dict = Depends(get_current_user)
 ):
     """List all discovered devices."""
+    devices = await _get_cached_devices()
+
+    if type:
+        devices = [d for d in devices if d.get("type") == type]
+
+    return [DeviceResponse(**d) for d in devices]
+
+
+def _model_to_dict(model_obj) -> Dict:
+    if hasattr(model_obj, "model_dump"):
+        return model_obj.model_dump()
+    return model_obj.dict()
+
+
+async def _fetch_devices_uncached() -> List[Dict]:
+    """Fetch devices from agent with local fallback, no cache."""
     try:
-        # Try to get devices from agent
         devices = await agent_client.get_devices()
-        
-        if type:
-            devices = [d for d in devices if d.get("type") == type]
-        
-        return [DeviceResponse(**d) for d in devices]
+        return [dict(d) for d in devices]
     except Exception:
-        # When agent is unavailable, try local discovery
-        devices = await _local_device_discovery()
-        
-        if type:
-            devices = [d for d in devices if d.type == type]
-        
-        return devices
+        local_devices = await _local_device_discovery()
+        return [_model_to_dict(d) for d in local_devices]
+
+
+async def _get_cached_devices() -> List[Dict]:
+    """Short-lived in-memory cache to avoid expensive discovery on bursts."""
+    global _device_cache_expires_at, _device_cache_data
+
+    now = monotonic()
+    if _device_cache_data is not None and now < _device_cache_expires_at:
+        return _device_cache_data
+
+    async with _device_cache_lock:
+        now = monotonic()
+        if _device_cache_data is not None and now < _device_cache_expires_at:
+            return _device_cache_data
+
+        try:
+            fresh_devices = await _fetch_devices_uncached()
+            _device_cache_data = fresh_devices
+            _device_cache_expires_at = monotonic() + _DEVICE_CACHE_TTL_SECONDS
+            return _device_cache_data
+        except Exception:
+            # If refresh fails but we have stale data, serve stale instead of failing hard.
+            if _device_cache_data is not None:
+                return _device_cache_data
+            raise
+
+
+def _invalidate_device_cache() -> None:
+    global _device_cache_expires_at
+    _device_cache_expires_at = 0.0
 
 
 async def _local_device_discovery() -> List[DeviceResponse]:
@@ -78,7 +121,7 @@ async def _local_device_discovery() -> List[DeviceResponse]:
     devices = []
     
     # Single SSH command to get all device info at once (much faster!)
-    combined_cmd = "echo '===USB==='; lsusb 2>/dev/null; echo '===BLK==='; lsblk -J -o NAME,SIZE,TYPE,MODEL 2>/dev/null; echo '===SER==='; ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true; echo '===END==='"
+    combined_cmd = "echo '===USB==='; lsusb 2>/dev/null; echo '===BLK==='; lsblk -J -o NAME,SIZE,TYPE,MODEL,TRAN 2>/dev/null; echo '===SER==='; ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true; echo '===END==='"
     
     try:
         output = run_host_command_simple(combined_cmd, timeout=10)
@@ -144,6 +187,11 @@ async def _local_device_discovery() -> List[DeviceResponse]:
                 data = json_lib.loads(blk_section[json_start:])
                 for dev in data.get("blockdevices", []):
                     if dev.get("type") == "disk":
+                        # Avoid double-listing the same physical USB drive both as
+                        # a USB device and as a block device.
+                        transport = str(dev.get("tran", "")).lower()
+                        if transport == "usb":
+                            continue
                         name = dev.get("name", "")
                         if name.startswith("loop") or name.startswith("zram"):
                             continue
@@ -222,7 +270,7 @@ def _parse_macos_usb(node: dict, devices: list, depth: int = 0):
 async def get_device(device_id: str, user: dict = Depends(get_current_user)):
     """Get details for a specific device."""
     try:
-        devices = await agent_client.get_devices()
+        devices = await _get_cached_devices()
         for device in devices:
             if device.get("id") == device_id:
                 return DeviceResponse(**device)
@@ -231,6 +279,60 @@ async def get_device(device_id: str, user: dict = Depends(get_current_user)):
         raise
     except Exception:
         raise HTTPException(status_code=503, detail="Agent unavailable")
+
+
+@router.post("/{device_id}/command")
+async def send_device_command(
+    device_id: str,
+    command: DeviceCommand,
+    user: dict = Depends(require_role("admin", "operator"))
+):
+    """
+    Send command to a device.
+
+    Currently only ESP/MQTT-style devices are commandable through this route.
+    """
+    db = await get_control_db()
+
+    await db.execute(
+        """INSERT INTO audit_log (user_id, action, resource_id, details)
+           VALUES (?, ?, ?, ?)""",
+        (user["id"], "device.command", device_id, command.command)
+    )
+    await db.commit()
+
+    try:
+        devices = await _get_cached_devices()
+        target = next((d for d in devices if d.get("id") == device_id), None)
+
+        if not target:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        if target.get("type") != "esp":
+            raise HTTPException(
+                status_code=400,
+                detail="Direct command is supported only for ESP devices"
+            )
+
+        result = await agent_client.send_device_command(
+            device_id, command.command, command.payload
+        )
+
+        if isinstance(result, dict) and result.get("error"):
+            raise HTTPException(status_code=503, detail=result["error"])
+
+        await sse_manager.broadcast(Channels.resource(device_id), "command_sent", {
+            "device_id": device_id,
+            "command": command.command
+        })
+
+        _invalidate_device_cache()
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Command failed: {str(e)}")
 
 
 # === USB Devices ===
