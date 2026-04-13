@@ -271,6 +271,7 @@ create_directories() {
 
     mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
     chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR"
+    chmod 755 "$PROJECT_DIR"
 
     success "Application directories are ready."
 }
@@ -290,6 +291,11 @@ copy_project_files() {
         "$SCRIPT_DIR/" "$PROJECT_DIR/"
 
     chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR"
+
+    # Caddy runs as its own user and must be able to traverse the app tree
+    # to serve the built UI from /opt/pi-control/panel/ui/dist.
+    find "$PROJECT_DIR/panel" -type d -exec chmod 755 {} \;
+    find "$PROJECT_DIR/panel/ui/dist" -type f -exec chmod 644 {} \; 2>/dev/null || true
 
     success "Project files copied to $PROJECT_DIR."
 }

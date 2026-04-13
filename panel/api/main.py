@@ -18,9 +18,10 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests, appstore
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
+from services.appstore_service import appstore_service
 from services.telemetry_collector import telemetry_collector
 from services.discovery import discovery_service
 from services.gdrive_backup import backup_service
@@ -74,6 +75,10 @@ async def lifespan(app: FastAPI):
     await telemetry_collector.start()
     await discovery_service.start()
     await backup_service.start_scheduler()
+    try:
+        await appstore_service.initialize()
+    except Exception as e:
+        logger.warning("App Store service initialization failed", error=str(e))
 
     yield
 
@@ -170,6 +175,7 @@ app.include_router(manifests.router, prefix="/api/manifests", tags=["Manifests"]
 app.include_router(iot.router, prefix="/api/iot", tags=["IoT"])
 app.include_router(archive.router, prefix="/api/archive", tags=["Archive"])
 app.include_router(backup.router, prefix="/api/backup", tags=["Backup"])
+app.include_router(appstore.router, prefix="/api", tags=["App Store"])
 
 
 # Health check endpoint
