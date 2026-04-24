@@ -2,6 +2,9 @@ import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 
 const DashboardContext = createContext(undefined);
+const TELEMETRY_POLL_MS = 5000;
+const OTHER_DATA_POLL_MS = 15000;
+const PROCESSES_POLL_MS = 30000;
 
 const defaultWidgets = [
     { id: 'cpu-1', type: 'cpu', width: 1, height: 1, variant: 'graphic', position: { row: 0, col: 0 } },
@@ -48,6 +51,7 @@ export function DashboardProvider({ children }) {
     const processesHashRef = useRef('');
     const dashboardLoadInFlightRef = useRef(false);
     const otherLoadInFlightRef = useRef(false);
+    const processesLoadInFlightRef = useRef(false);
 
     // Process telemetry data from SSE or polling
     const processTelemetryData = (telemetryData) => {
@@ -170,21 +174,26 @@ export function DashboardProvider({ children }) {
                         eventSource = null;
                     }
                     if (!pollingInterval) {
-                        pollingInterval = setInterval(pollDashboard, 2000);
+                        pollingInterval = setInterval(pollDashboard, TELEMETRY_POLL_MS);
                     }
                 };
             } catch (err) {
                 if (import.meta.env.DEV) {
                     console.warn('SSE not available, using polling');
                 }
-                pollingInterval = setInterval(pollDashboard, 2000);
+                pollingInterval = setInterval(pollDashboard, TELEMETRY_POLL_MS);
             }
         } else {
-            pollingInterval = setInterval(pollDashboard, 2000);
+            pollingInterval = setInterval(pollDashboard, TELEMETRY_POLL_MS);
         }
 
-        // Refresh resources/alerts every 5 seconds
-        const otherDataInterval = setInterval(pollOtherData, 5000);
+        // Refresh resources/alerts less aggressively; telemetry has its own live path.
+        const otherDataInterval = setInterval(pollOtherData, OTHER_DATA_POLL_MS);
+        const processesTimeout = setTimeout(loadProcesses, 1500);
+        const processesInterval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.hidden) return;
+            loadProcesses();
+        }, PROCESSES_POLL_MS);
 
         if (typeof document !== 'undefined') {
             document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -200,6 +209,8 @@ export function DashboardProvider({ children }) {
                 pollingInterval = null;
             }
             clearInterval(otherDataInterval);
+            clearTimeout(processesTimeout);
+            clearInterval(processesInterval);
             if (typeof document !== 'undefined') {
                 document.removeEventListener('visibilitychange', handleVisibilityChange);
             }
@@ -231,20 +242,31 @@ export function DashboardProvider({ children }) {
                 setAlerts(nextAlerts);
             }
 
-            api.get('/system/processes')
-                .then(res => {
-                    const nextProcesses = Array.isArray(res.data) ? res.data : [];
-                    const nextProcessesHash = JSON.stringify(nextProcesses);
-                    if (nextProcessesHash !== processesHashRef.current) {
-                        processesHashRef.current = nextProcessesHash;
-                        setProcesses(nextProcesses);
-                    }
-                })
-                .catch(() => { });
         } catch (err) {
             console.warn('Failed to load other data:', err);
         } finally {
             otherLoadInFlightRef.current = false;
+        }
+    };
+
+    const loadProcesses = async () => {
+        if (processesLoadInFlightRef.current) {
+            return;
+        }
+
+        processesLoadInFlightRef.current = true;
+        try {
+            const res = await api.get('/system/processes');
+            const nextProcesses = Array.isArray(res.data) ? res.data : [];
+            const nextProcessesHash = JSON.stringify(nextProcesses);
+            if (nextProcessesHash !== processesHashRef.current) {
+                processesHashRef.current = nextProcessesHash;
+                setProcesses(nextProcesses);
+            }
+        } catch {
+            // Keep the previous process list if this optional widget request fails.
+        } finally {
+            processesLoadInFlightRef.current = false;
         }
     };
 

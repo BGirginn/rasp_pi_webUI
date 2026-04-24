@@ -8,6 +8,8 @@
 
 # Python
 __pycache__/
+.mypy_cache/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -51,6 +53,8 @@ panel/ui/build/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # Logs

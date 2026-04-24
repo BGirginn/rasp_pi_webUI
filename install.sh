@@ -282,11 +282,17 @@ copy_project_files() {
     run_cmd rsync -a \
         --exclude 'node_modules' \
         --exclude '__pycache__' \
+        --exclude '.mypy_cache' \
+        --exclude '.pytest_cache' \
         --exclude '*.pyc' \
+        --exclude '.DS_Store' \
         --exclude '.git' \
+        --exclude '.venv' \
         --exclude 'venv' \
         --exclude '.env' \
         --exclude '*.db' \
+        --exclude '*.db-shm' \
+        --exclude '*.db-wal' \
         --exclude 'dist' \
         "$SCRIPT_DIR/" "$PROJECT_DIR/"
 
@@ -316,10 +322,10 @@ build_ui() {
 
     cd "$PROJECT_DIR/panel/ui"
     if [[ "$VERBOSE" == true ]]; then
-        sudo -u "$INSTALL_USER" npm install
+        sudo -u "$INSTALL_USER" npm install --no-audit --no-fund
         sudo -u "$INSTALL_USER" npm run build
     else
-        sudo -u "$INSTALL_USER" npm install --silent >/dev/null 2>&1
+        sudo -u "$INSTALL_USER" npm install --no-audit --no-fund --silent >/dev/null 2>&1
         sudo -u "$INSTALL_USER" npm run build >/dev/null 2>&1
     fi
 
@@ -418,11 +424,13 @@ start_services() {
 health_check() {
     section "Running health check..."
 
-    sleep 5
-    if curl -sf http://localhost:8080/api/health >/dev/null; then
-        success "API health check passed."
-        return 0
-    fi
+    for _ in {1..30}; do
+        if curl -sf http://localhost:8080/api/health >/dev/null; then
+            success "API health check passed."
+            return 0
+        fi
+        sleep 2
+    done
 
     fail "API is not responding on http://localhost:8080/api/health"
     echo "  Recent pi-control logs:"

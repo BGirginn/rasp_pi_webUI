@@ -16,6 +16,8 @@ from services.agent_client import agent_client
 from .auth import get_current_user
 
 router = APIRouter()
+_current_metrics_cache: Dict[str, object] = {"data": None, "expires_at": 0.0}
+_CURRENT_METRICS_TTL_SECONDS = 1.0
 
 
 class MetricPoint(BaseModel):
@@ -63,12 +65,21 @@ class DashboardData(BaseModel):
 @router.get("/current", response_model=Dict)
 async def get_current_metrics(user: dict = Depends(get_current_user)):
     """Get current metrics snapshot from agent or local system."""
+    now = time.monotonic()
+    if _current_metrics_cache["data"] and now < _current_metrics_cache["expires_at"]:
+        return _current_metrics_cache["data"]
+
     try:
         telemetry = await agent_client.get_current_telemetry()
+        _current_metrics_cache["data"] = telemetry
+        _current_metrics_cache["expires_at"] = time.monotonic() + _CURRENT_METRICS_TTL_SECONDS
         return telemetry
     except Exception:
         # Fallback: Get real metrics from local system
-        return await _get_local_system_metrics()
+        telemetry = await _get_local_system_metrics()
+        _current_metrics_cache["data"] = telemetry
+        _current_metrics_cache["expires_at"] = time.monotonic() + _CURRENT_METRICS_TTL_SECONDS
+        return telemetry
 
 
 async def _get_local_system_metrics() -> Dict:

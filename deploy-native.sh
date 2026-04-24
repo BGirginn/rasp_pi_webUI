@@ -152,11 +152,17 @@ sync_project_files() {
         -e "$RSYNC_RSH_STRING" \
         --exclude 'node_modules' \
         --exclude '__pycache__' \
+        --exclude '.mypy_cache' \
+        --exclude '.pytest_cache' \
         --exclude '*.pyc' \
+        --exclude '.DS_Store' \
         --exclude '.git' \
+        --exclude '.venv' \
         --exclude 'venv' \
         --exclude '.env' \
         --exclude '*.db' \
+        --exclude '*.db-shm' \
+        --exclude '*.db-wal' \
         --exclude 'dist' \
         "$SCRIPT_DIR/" "$PI_HOST:$PROJECT_DIR/"
 
@@ -176,10 +182,13 @@ run_remote_install() {
 check_remote_health() {
     section "Checking remote API health..."
 
-    if run_remote "curl -sf http://localhost:8080/api/health >/dev/null"; then
-        success "Remote API is healthy."
-        return
-    fi
+    for _ in {1..30}; do
+        if run_remote "curl -sf http://localhost:8080/api/health >/dev/null"; then
+            success "Remote API is healthy."
+            return
+        fi
+        sleep 2
+    done
 
     warn "Remote API health check failed. Showing recent pi-control logs."
     run_remote_sudo "journalctl -u pi-control -n 20 --no-pager"

@@ -1,25 +1,27 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { ThemeSelector } from './ThemeSelector';
 import { EditModeToggle } from './EditModeToggle';
 import { DashboardGrid } from './DashboardGrid';
-import { ServicesPage } from '../pages/ServicesPage';
-import { DevicesPage } from '../pages/DevicesPage';
-import { TelemetryPage } from '../pages/TelemetryPage';
-import { NetworkPage } from '../pages/NetworkPage';
-import { TerminalPage } from '../pages/TerminalPage';
-import { AlertsPage } from '../pages/AlertsPage';
-import { SettingsPage } from '../pages/SettingsPage';
-import { IoTPage } from '../pages/IoTPage';
-import { IoTDeviceDetail } from '../pages/IoTDeviceDetail';
-import { ArchivePage } from '../pages/ArchivePage';
-import { AppStorePage } from '../pages/AppStorePage';
-import { ProjectsPage } from '../pages/ProjectsPage';
-import FilesPage from '../pages/FilesPage';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useAuth } from '../hooks/useAuth';
 import { TopBarActions } from './TopBarActions';
+import Loader from './common/Loader';
+
+const ServicesPage = lazy(() => import('../pages/ServicesPage').then(mod => ({ default: mod.ServicesPage })));
+const DevicesPage = lazy(() => import('../pages/DevicesPage').then(mod => ({ default: mod.DevicesPage })));
+const TelemetryPage = lazy(() => import('../pages/TelemetryPage').then(mod => ({ default: mod.TelemetryPage })));
+const NetworkPage = lazy(() => import('../pages/NetworkPage').then(mod => ({ default: mod.NetworkPage })));
+const TerminalPage = lazy(() => import('../pages/TerminalPage').then(mod => ({ default: mod.TerminalPage })));
+const AlertsPage = lazy(() => import('../pages/AlertsPage').then(mod => ({ default: mod.AlertsPage })));
+const SettingsPage = lazy(() => import('../pages/SettingsPage').then(mod => ({ default: mod.SettingsPage })));
+const IoTPage = lazy(() => import('../pages/IoTPage').then(mod => ({ default: mod.IoTPage })));
+const IoTDeviceDetail = lazy(() => import('../pages/IoTDeviceDetail').then(mod => ({ default: mod.IoTDeviceDetail })));
+const ArchivePage = lazy(() => import('../pages/ArchivePage').then(mod => ({ default: mod.ArchivePage })));
+const AppStorePage = lazy(() => import('../pages/AppStorePage').then(mod => ({ default: mod.AppStorePage })));
+const ProjectsPage = lazy(() => import('../pages/ProjectsPage').then(mod => ({ default: mod.ProjectsPage })));
+const FilesPage = lazy(() => import('../pages/FilesPage'));
 
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
@@ -120,7 +122,9 @@ export function Dashboard() {
         </div>
       </div>)}
 
-      {renderPage()}
+      <Suspense fallback={<Loader fullScreen={false} />}>
+        {renderPage()}
+      </Suspense>
     </main>
   </div>);
 }

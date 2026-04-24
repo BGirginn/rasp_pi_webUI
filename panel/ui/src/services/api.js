@@ -10,9 +10,59 @@ class ApiService {
     constructor() {
         this.baseUrl = BASE_URL
         this._refreshPromise = null
+        this._getCache = new Map()
+        this._inflightGet = new Map()
+        this._cacheTtls = new Map([
+            ['/alerts', 3000],
+            ['/resources', 5000],
+            ['/system/info', 10000],
+            ['/system/processes', 10000],
+            ['/telemetry/current', 1000],
+        ])
     }
 
     async request(method, path, data = null, options = {}) {
+        if (method === 'GET' && options.cache !== false && options.responseType !== 'blob' && options.responseType !== 'text') {
+            const cacheKey = this._cacheKey(path, options)
+            const ttlMs = this._resolveCacheTtl(path, options)
+            const now = Date.now()
+            const cached = this._getCache.get(cacheKey)
+
+            if (ttlMs > 0 && cached && cached.expiresAt > now) {
+                return cached.response
+            }
+
+            const inflight = this._inflightGet.get(cacheKey)
+            if (inflight) {
+                return inflight
+            }
+
+            const requestPromise = this._request(method, path, data, options)
+                .then(response => {
+                    if (ttlMs > 0) {
+                        this._getCache.set(cacheKey, {
+                            response,
+                            expiresAt: Date.now() + ttlMs,
+                        })
+                    }
+                    return response
+                })
+                .finally(() => {
+                    this._inflightGet.delete(cacheKey)
+                })
+
+            this._inflightGet.set(cacheKey, requestPromise)
+            return requestPromise
+        }
+
+        if (method !== 'GET') {
+            this._getCache.clear()
+        }
+
+        return this._request(method, path, data, options)
+    }
+
+    async _request(method, path, data = null, options = {}) {
         const url = `${this.baseUrl}${path}`
         const token = localStorage.getItem('access_token')
 
@@ -67,6 +117,17 @@ class ApiService {
         }
 
         return this.handleResponse(response, options.responseType)
+    }
+
+    _resolveCacheTtl(path, options) {
+        if (typeof options.cacheTtlMs === 'number') {
+            return options.cacheTtlMs
+        }
+        return this._cacheTtls.get(path) ?? 0
+    }
+
+    _cacheKey(path, options) {
+        return `${path}:${options.responseType || 'json'}`
     }
 
     async handleResponse(response, responseType = 'json') {

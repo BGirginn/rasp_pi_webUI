@@ -5,6 +5,7 @@ Handles system-level operations like reboot, shutdown, and updates.
 """
 
 import asyncio
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
@@ -14,6 +15,8 @@ from db import get_control_db
 from .auth import require_role, get_current_user
 
 router = APIRouter()
+_system_info_cache = {"data": None, "expires_at": 0.0}
+_processes_cache = {"data": None, "expires_at": 0.0}
 
 class SystemInfo(BaseModel):
     hostname: str
@@ -45,6 +48,9 @@ async def execute_power_command(command_args: list):
 async def get_system_info(user: dict = Depends(get_current_user)):
     """Get detailed system information."""
     import platform
+    now = time.monotonic()
+    if _system_info_cache["data"] and now < _system_info_cache["expires_at"]:
+        return _system_info_cache["data"]
     
     # Get hostname
     try:
@@ -82,7 +88,7 @@ async def get_system_info(user: dict = Depends(get_current_user)):
     except:
         pass
 
-    return SystemInfo(
+    info = SystemInfo(
         hostname=hostname,
         os_info=os_info,
         kernel=platform.release(),
@@ -91,6 +97,9 @@ async def get_system_info(user: dict = Depends(get_current_user)):
         time=datetime.now().isoformat(),
         uptime_seconds=uptime
     )
+    _system_info_cache["data"] = info
+    _system_info_cache["expires_at"] = time.monotonic() + 10
+    return info
 
 @router.post("/reboot")
 async def reboot_system(
@@ -133,6 +142,9 @@ async def shutdown_system(
 async def get_processes(user: dict = Depends(get_current_user)):
     """Get top running processes."""
     import psutil
+    now = time.monotonic()
+    if _processes_cache["data"] and now < _processes_cache["expires_at"]:
+        return _processes_cache["data"]
     
     procs = []
     for p in psutil.process_iter(['pid', 'name', 'username']):
@@ -159,7 +171,9 @@ async def get_processes(user: dict = Depends(get_current_user)):
     # Or sort by CPU if non-zero
     procs.sort(key=lambda x: x['memory'], reverse=True)
     
-    return procs[:10] # Return top 10
+    _processes_cache["data"] = procs[:10]
+    _processes_cache["expires_at"] = time.monotonic() + 10
+    return _processes_cache["data"] # Return top 10
 
 @router.post("/update")
 async def update_system(
