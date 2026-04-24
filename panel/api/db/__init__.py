@@ -6,6 +6,7 @@ SQLite database initialization and utilities.
 
 import aiosqlite
 import structlog
+import os
 
 from config import settings
 
@@ -19,6 +20,17 @@ _telemetry_db = None
 async def init_db():
     """Initialize database connections and schema."""
     global _control_db, _telemetry_db
+
+    settings.database_path = os.getenv("DATABASE_PATH", settings.database_path)
+    settings.telemetry_db_path = os.getenv("TELEMETRY_DB_PATH", settings.telemetry_db_path)
+
+    if _control_db:
+        await _control_db.close()
+        _control_db = None
+
+    if _telemetry_db:
+        await _telemetry_db.close()
+        _telemetry_db = None
     
     # Initialize control database
     _control_db = await aiosqlite.connect(settings.database_path)

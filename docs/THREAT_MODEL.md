@@ -124,7 +124,7 @@ This document outlines the security threats, attack vectors, and mitigations for
 ### Network
 - [x] TLS termination at Caddy
 - [x] Tailscale for secure remote access
-- [x] No external ports exposed (Docker internal network)
+- [x] No external ports exposed (internal service network)
 - [x] Unix socket for Agent-Panel communication
 
 ### Audit

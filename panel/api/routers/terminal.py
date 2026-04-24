@@ -10,7 +10,7 @@ Security features:
 - Short-lived elevation tokens (10 min default)
 - Comprehensive audit logging
 - Idle timeout enforcement
-- Docker SSH disabled by default
+- Host SSH fallback disabled by default
 """
 
 import asyncio
@@ -335,7 +335,6 @@ async def stop_breakglass(
 # Command validation patterns
 BLOCKED_PATTERNS = [";", "|", "&", "`", "$(", ">", "<", ">>", "<<", "\n", "\r"]
 SERVICE_REGEX = re.compile(r'^[a-zA-Z0-9_.-]+$')
-CONTAINER_REGEX = re.compile(r'^[a-zA-Z0-9_.-]+$')
 
 
 def validate_restricted_command(command: str) -> tuple[bool, str]:
@@ -354,7 +353,7 @@ def validate_restricted_command(command: str) -> tuple[bool, str]:
         # Default allowlist
         allowed = [
             "whoami", "uptime", "uname -a", "df -h", "free -h",
-            "ip a", "ip r", "docker ps"
+            "ip a", "ip r"
         ]
     
     # Check exact matches first
@@ -374,7 +373,7 @@ def validate_restricted_command(command: str) -> tuple[bool, str]:
             if SERVICE_REGEX.match(service):
                 return True, ""
             return False, f"Invalid service name: {service}"
-        return False, f"Only systemctl status/restart allowed"
+        return False, "Only systemctl status/restart allowed"
     
     # journalctl -u <service>
     if len(parts) >= 3 and parts[0] == "journalctl" and parts[1] == "-u":
@@ -382,13 +381,6 @@ def validate_restricted_command(command: str) -> tuple[bool, str]:
         if SERVICE_REGEX.match(service):
             return True, ""
         return False, f"Invalid service name: {service}"
-    
-    # docker logs <container>
-    if len(parts) >= 3 and parts[0] == "docker" and parts[1] == "logs":
-        container = parts[2]
-        if CONTAINER_REGEX.match(container):
-            return True, ""
-        return False, f"Invalid container name: {container}"
     
     return False, f"Command not in allowlist: {cmd_base}"
 
@@ -476,28 +468,28 @@ class TerminalSession:
         self.last_activity = time.time()
         self.idle_timeout = settings.terminal_idle_timeout_sec
     
-    def _is_running_in_docker(self) -> bool:
-        """Check if running inside a Docker container."""
-        if os.path.exists("/.dockerenv"):
+    def _is_running_in_container(self) -> bool:
+        """Check if running inside a container."""
+        if os.path.exists("/run/.containerenv"):
             return True
         try:
             with open("/proc/1/cgroup", "r") as f:
-                return "docker" in f.read()
-        except:
+                return "container" in f.read()
+        except Exception:
             return False
     
     async def start(self, cols: int = 80, rows: int = 24):
-        """Start a new terminal session - native bash only (Docker SSH disabled by default)."""
+        """Start a new terminal session - native bash only (SSH fallback disabled by default)."""
         if self.running:
             return
 
-        # Check if Docker SSH is enabled
-        in_docker = self._is_running_in_docker()
+        # Check if host SSH fallback is enabled
+        in_container = self._is_running_in_container()
         
-        if in_docker and not settings.terminal_docker_ssh_enabled:
+        if in_container and not settings.terminal_host_ssh_enabled:
             raise RuntimeError(
-                "Terminal not available in Docker mode. "
-                "Set TERMINAL_DOCKER_SSH_ENABLED=true and configure SSH key auth."
+                "Terminal not available in container mode. "
+                "Set TERMINAL_HOST_SSH_ENABLED=true and configure SSH key auth."
             )
 
         # Fork a pseudo-terminal
@@ -508,17 +500,17 @@ class TerminalSession:
             os.environ["TERM"] = "xterm-256color"
             os.environ["COLORTERM"] = "truecolor"
             
-            if in_docker and settings.terminal_docker_ssh_enabled:
-                # Docker mode: SSH to host (SSH key auth required)
+            if in_container and settings.terminal_host_ssh_enabled:
+                # Container mode: SSH to host (SSH key auth required)
                 import subprocess
                 try:
                     result = subprocess.run(
                         ["ip", "route", "show", "default"],
                         capture_output=True, text=True
                     )
-                    gateway = result.stdout.split()[2] if result.stdout else "host.docker.internal"
-                except:
-                    gateway = "host.docker.internal"
+                    gateway = result.stdout.split()[2] if result.stdout else "host.internal"
+                except Exception:
+                    gateway = "host.internal"
                 
                 # Get SSH credentials from environment - NO DEFAULTS
                 ssh_user = os.environ.get("SSH_HOST_USER")

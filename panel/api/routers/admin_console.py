@@ -4,10 +4,8 @@ Pi Control Panel - Admin Console Router
 Handles safe and risky mode command execution with comprehensive security.
 """
 
-import json
 import re
 import time
-import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 
@@ -16,7 +14,7 @@ from pydantic import BaseModel, validator
 
 from db import get_control_db
 from services.agent_client import agent_client
-from .auth import get_current_user, require_role
+from .auth import require_role
 
 router = APIRouter()
 
@@ -29,16 +27,6 @@ SAFE_COMMANDS = {
     "systemctl is-active": {"description": "Check if service is active"},
     "systemctl show": {"description": "Show service properties"},
     "journalctl": {"description": "View logs"},
-    
-    # Docker (read-only)
-    "docker ps": {"description": "List containers"},
-    "docker logs": {"description": "View container logs"},
-    "docker images": {"description": "List images"},
-    "docker stats": {"description": "View container stats"},
-    "docker top": {"description": "View container processes"},
-    "docker inspect": {"description": "Inspect container/image"},
-    "docker version": {"description": "Show Docker version"},
-    "docker info": {"description": "Show Docker info"},
     
     # System monitoring
     "df": {"description": "Disk usage"},
@@ -166,7 +154,7 @@ async def execute_command(
             await _log_command(db, user, command, "blocked", req)
             raise HTTPException(
                 status_code=403,
-                detail=f"Command blocked: matches security blacklist pattern"
+                detail="Command blocked: matches security blacklist pattern"
             )
     
     # Check mode
@@ -389,19 +377,6 @@ async def quick_disk_usage(user: dict = Depends(require_role("admin"))):
     try:
         result = await agent_client.call("system.execute", {
             "command": "df -h --output=source,size,used,avail,pcent,target",
-            "timeout": 10
-        })
-        return {"output": result.get("output", ""), "exit_code": result.get("exit_code", 0)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@router.get("/quick/docker-status")
-async def quick_docker_status(user: dict = Depends(require_role("admin"))):
-    """Quick command: Get Docker container status."""
-    try:
-        result = await agent_client.call("system.execute", {
-            "command": "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'",
             "timeout": 10
         })
         return {"output": result.get("output", ""), "exit_code": result.get("exit_code", 0)}

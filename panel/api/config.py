@@ -6,7 +6,7 @@ Loads configuration from environment variables and files.
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -46,9 +46,9 @@ class Settings(BaseSettings):
     terminal_mode_default: str = Field(default="restricted", alias="TERMINAL_MODE_DEFAULT")
     terminal_breakglass_ttl_min: int = Field(default=10, alias="TERMINAL_BREAKGLASS_TTL_MIN")
     terminal_idle_timeout_sec: int = Field(default=90, alias="TERMINAL_IDLE_TIMEOUT_SEC")
-    terminal_docker_ssh_enabled: bool = Field(default=False, alias="TERMINAL_DOCKER_SSH_ENABLED")
+    terminal_host_ssh_enabled: bool = Field(default=False, alias="TERMINAL_HOST_SSH_ENABLED")
     terminal_max_message_size: int = Field(default=4096, alias="TERMINAL_MAX_MESSAGE_SIZE")
-    terminal_allowed_commands: str = Field(default="whoami,uptime,uname -a,df -h,free -h,ip a,ip r,docker ps", alias="TERMINAL_ALLOWED_COMMANDS")
+    terminal_allowed_commands: str = Field(default="whoami,uptime,uname -a,df -h,free -h,ip a,ip r", alias="TERMINAL_ALLOWED_COMMANDS")
     
     @property
     def terminal_allowed_commands_list(self) -> List[str]:

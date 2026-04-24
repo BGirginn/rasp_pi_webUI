@@ -8,7 +8,7 @@ Full implementation in Sprint 7.
 import asyncio
 import json
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import structlog
 

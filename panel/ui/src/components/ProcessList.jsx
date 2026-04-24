@@ -5,7 +5,6 @@ const processes = [
     { name: 'systemd', cpu: '0.1%', mem: '1.2%', color: 'from-cyan-500 to-blue-500' },
     { name: 'nginx', cpu: '2.3%', mem: '3.1%', color: 'from-green-500 to-emerald-500' },
     { name: 'python3', cpu: '5.7%', mem: '8.4%', color: 'from-purple-500 to-pink-500' },
-    { name: 'docker', cpu: '1.2%', mem: '12.3%', color: 'from-orange-500 to-red-500' },
     { name: 'node', cpu: '3.4%', mem: '6.7%', color: 'from-pink-500 to-purple-500' },
 ];
 export function ProcessList() {

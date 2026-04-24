@@ -124,7 +124,7 @@ JOB_TYPES = {
         "name": "System Backup",
         "description": "Backup configuration and data files",
         "config_schema": {
-            "include_docker_volumes": {"type": "boolean", "default": True},
+            "include_service_data": {"type": "boolean", "default": True},
             "include_databases": {"type": "boolean", "default": True},
             "destination": {"type": "string", "default": "/backups"},
             "compression": {"type": "string", "default": "gzip", "enum": ["none", "gzip", "zstd"]},
@@ -151,8 +151,8 @@ JOB_TYPES = {
         "name": "Disk Cleanup",
         "description": "Clean up old logs, images, and temporary files",
         "config_schema": {
-            "prune_docker_images": {"type": "boolean", "default": True},
-            "prune_docker_volumes": {"type": "boolean", "default": False},
+            "prune_unused_images": {"type": "boolean", "default": True},
+            "prune_unused_volumes": {"type": "boolean", "default": False},
             "clean_old_logs": {"type": "boolean", "default": True},
             "log_retention_days": {"type": "integer", "default": 30},
         }
@@ -301,7 +301,7 @@ async def create_job(
             (job_id,)
         )
         await db.commit()
-    except Exception as e:
+    except Exception:
         pass  # Job will remain pending
     
     # Broadcast job creation

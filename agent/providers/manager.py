@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from .base import BaseProvider, Resource, ActionResult, ResourceClass
+from .base import BaseProvider, Resource, ActionResult
 
 logger = structlog.get_logger(__name__)
 
@@ -74,10 +74,7 @@ class ProviderManager:
     def _create_provider(self, name: str) -> Optional[BaseProvider]:
         """Create a provider instance by name."""
         # Import providers dynamically to avoid circular imports
-        if name == "docker":
-            from .docker_provider import DockerProvider
-            return DockerProvider(self.config)
-        elif name == "systemd":
+        if name == "systemd":
             from .systemd_provider import SystemdProvider
             return SystemdProvider(self.config)
         elif name == "network":

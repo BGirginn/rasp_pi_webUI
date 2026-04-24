@@ -161,7 +161,6 @@ export default function Services() {
     // Filter resources
     const filteredResources = resources.filter((r) => {
         if (filter !== 'all') {
-            if (filter === 'docker' && r.provider !== 'docker') return false
             if (filter === 'systemd' && r.provider !== 'systemd') return false
             if (filter === 'running' && r.state !== 'running') return false
             if (filter === 'stopped' && r.state !== 'stopped') return false
@@ -175,7 +174,6 @@ export default function Services() {
     // Calculate counts
     const counts = {
         all: resources.length,
-        docker: resources.filter((r) => r.provider === 'docker').length,
         systemd: resources.filter((r) => r.provider === 'systemd').length,
         running: resources.filter((r) => r.state === 'running').length,
         stopped: resources.filter((r) => r.state === 'stopped').length,
@@ -183,7 +181,6 @@ export default function Services() {
 
     const filters = [
         { value: 'all', label: 'All', count: counts.all },
-        { value: 'docker', label: '🐳 Docker', count: counts.docker },
         { value: 'systemd', label: '⚙️ Systemd', count: counts.systemd },
         { value: 'running', label: '🟢 Running', count: counts.running },
         { value: 'stopped', label: '⚫ Stopped', count: counts.stopped },

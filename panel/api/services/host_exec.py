@@ -2,7 +2,7 @@
 Host Command Execution Helper
 
 Native mode: Executes commands directly on the system.
-Docker mode: Uses SSH to connect to the host via the gateway IP.
+Container mode: Uses SSH to connect to the host via the gateway IP.
 """
 
 import asyncio
@@ -11,16 +11,14 @@ import os
 from typing import Tuple
 
 
-def is_running_in_docker() -> bool:
-    """Check if running inside a Docker container."""
-    # Check for Docker-specific files
-    if os.path.exists("/.dockerenv"):
+def is_running_in_container() -> bool:
+    """Check if running inside a container."""
+    if os.path.exists("/run/.containerenv"):
         return True
-    # Check cgroup
     try:
         with open("/proc/1/cgroup", "r") as f:
-            return "docker" in f.read()
-    except:
+            return "container" in f.read()
+    except Exception:
         return False
 
 
@@ -42,51 +40,57 @@ def run_native_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
 
 
 def get_host_gateway() -> str:
-    """Get the Docker host gateway IP."""
+    """Get the host gateway IP."""
     try:
         result = subprocess.run(
             ["ip", "route", "show", "default"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout:
-            # Parse: default via 172.19.0.1 dev eth0
             parts = result.stdout.split()
             if len(parts) >= 3:
                 return parts[2]
-    except:
+    except Exception:
         pass
-    return "host.docker.internal"
+    return "host.internal"
 
 
-def run_docker_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
+def run_container_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
     """
-    Execute a command on the host system via SSH (for Docker mode).
-    
+    Execute a command on the host system via SSH (for container mode).
+
     Returns:
         Tuple of (stdout, stderr, returncode)
     """
     gateway = get_host_gateway()
     ssh_password = os.environ.get("SSH_HOST_PASSWORD", "1")
-    # Get SSH user from environment or detect current user
     ssh_user = os.environ.get("SSH_HOST_USER") or subprocess.run(
         ["whoami"], capture_output=True, text=True
     ).stdout.strip() or "pi"
-    
+
     try:
         result = subprocess.run(
             [
-                "sshpass", "-p", ssh_password,
+                "sshpass",
+                "-p",
+                ssh_password,
                 "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                "-o", f"ConnectTimeout={min(timeout, 10)}",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+                "-o",
+                f"ConnectTimeout={min(timeout, 10)}",
                 f"{ssh_user}@{gateway}",
-                command
+                command,
             ],
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
         return result.stdout, result.stderr, result.returncode
     except subprocess.TimeoutExpired:
@@ -98,13 +102,12 @@ def run_docker_host_command(command: str, timeout: int = 30) -> Tuple[str, str, 
 def run_host_command(command: str, timeout: int = 30) -> Tuple[str, str, int]:
     """
     Execute a command on the host system.
-    
-    Automatically detects if running in Docker or native mode.
+
+    Automatically detects if running in container or native mode.
     """
-    if is_running_in_docker():
-        return run_docker_host_command(command, timeout)
-    else:
-        return run_native_command(command, timeout)
+    if is_running_in_container():
+        return run_container_host_command(command, timeout)
+    return run_native_command(command, timeout)
 
 
 def run_host_command_simple(command: str, timeout: int = 30) -> str:

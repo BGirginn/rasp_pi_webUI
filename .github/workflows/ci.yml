@@ -182,27 +182,6 @@ jobs:
           name: ui-dist
           path: panel/ui/dist
 
-  build-docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: [test-api, build-ui]
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Build Panel Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./panel
-          push: false
-          tags: pi-control-panel:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest

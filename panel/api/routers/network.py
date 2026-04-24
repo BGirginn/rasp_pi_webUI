@@ -4,9 +4,7 @@ Pi Control Panel - Network Router
 Handles network interface management, WiFi configuration, and connectivity.
 """
 
-import json
-from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
@@ -113,7 +111,7 @@ async def _get_local_interfaces() -> List[InterfaceResponse]:
             iface_type = "wifi"
         elif iface_name.startswith("tailscale") or iface_name.startswith("ts"):
             iface_type = "vpn"
-        elif iface_name.startswith("docker") or iface_name.startswith("br-"):
+        elif iface_name.startswith("br-"):
             iface_type = "bridge"
         elif iface_name.startswith("veth"):
             iface_type = "virtual"

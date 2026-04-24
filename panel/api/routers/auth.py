@@ -9,13 +9,12 @@ from typing import List, Optional
 import uuid
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
 import pyotp
 import subprocess
-import shlex
 
 from config import settings
 from db import get_control_db

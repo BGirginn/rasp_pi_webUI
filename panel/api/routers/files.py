@@ -8,11 +8,10 @@ import os
 import shutil
 import mimetypes
 from datetime import datetime
-from typing import List, Optional, Union
-from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .auth import get_current_user

@@ -91,7 +91,7 @@ GET /api/resources
 **Query Parameters:**
 | Param | Type | Description |
 |-------|------|-------------|
-| provider | string | Filter by provider (docker, systemd) |
+| provider | string | Filter by provider (systemd) |
 | resource_class | string | Filter by class (CORE, SYSTEM, APP, DEVICE) |
 | managed | boolean | Filter by managed status |
 
@@ -99,11 +99,11 @@ GET /api/resources
 ```json
 [
   {
-    "id": "docker_nginx",
+    "id": "systemd_nginx",
     "name": "nginx",
-    "type": "container",
+    "type": "service",
     "resource_class": "APP",
-    "provider": "docker",
+    "provider": "systemd",
     "state": "running",
     "health_score": 95,
     "managed": true,
@@ -135,7 +135,6 @@ POST /api/resources/{resource_id}/action
 **Available Actions:**
 | Provider | Action | Roles |
 |----------|--------|-------|
-| docker | start, stop, restart, pause, unpause | admin, operator |
 | systemd | restart, reload | admin (SYSTEM), admin/operator (APP) |
 
 ### Manage Resource
@@ -259,7 +258,7 @@ POST /api/jobs
   "name": "Daily Backup",
   "type": "backup",
   "config": {
-    "include_docker_volumes": true,
+    "include_service_state": true,
     "destination": "/backups"
   }
 }
@@ -438,7 +437,7 @@ POST /api/admin/console
 **Request Body:**
 ```json
 {
-  "command": "docker ps",
+  "command": "systemctl list-units --type=service",
   "mode": "safe",
   "timeout": 30
 }
@@ -448,7 +447,7 @@ POST /api/admin/console
 ```json
 {
   "success": true,
-  "command": "docker ps",
+  "command": "systemctl list-units --type=service",
   "output": "CONTAINER ID   IMAGE...",
   "exit_code": 0,
   "execution_time_ms": 125
@@ -478,7 +477,6 @@ GET /api/admin/history?limit=50
 ```http
 GET /api/admin/quick/system-info
 GET /api/admin/quick/disk-usage
-GET /api/admin/quick/docker-status
 GET /api/admin/quick/service-status?service=nginx
 ```
 

@@ -5,12 +5,11 @@ Discovers and manages network interfaces (eth, wifi, bluetooth).
 """
 
 import asyncio
-from datetime import datetime
 from typing import Dict, List, Optional
 
 import structlog
 
-from .base import BaseProvider, Resource, ResourceClass, ResourceState, ActionResult
+from .base import BaseProvider, Resource, ActionResult
 
 logger = structlog.get_logger(__name__)
 

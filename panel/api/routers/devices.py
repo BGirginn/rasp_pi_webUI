@@ -6,7 +6,6 @@ Handles hardware device management (USB, serial, GPIO, ESP via MQTT).
 
 import asyncio
 import json
-from datetime import datetime
 from time import monotonic
 from typing import List, Optional, Dict
 

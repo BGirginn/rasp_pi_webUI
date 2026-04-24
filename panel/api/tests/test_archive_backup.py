@@ -23,6 +23,7 @@ os.environ["DATABASE_PATH"] = str(CONTROL_DB)
 os.environ["TELEMETRY_DB_PATH"] = str(TELEMETRY_DB)
 os.environ["BACKUP_LOCAL_DIR"] = str(BACKUP_DIR)
 os.environ["BACKUP_CREDENTIALS_DIR"] = str(CREDENTIALS_DIR)
+os.environ["BACKUP_DAILY_EXPORT_ENABLED"] = "false"
 os.environ["API_DEBUG"] = "true"
 
 
@@ -71,8 +72,19 @@ def admin_client():
     _reset_databases()
 
     from main import app
+    from config import settings
     from routers.auth import get_current_user
     from services.gdrive_backup import backup_service
+
+    os.environ["DATABASE_PATH"] = str(CONTROL_DB)
+    os.environ["TELEMETRY_DB_PATH"] = str(TELEMETRY_DB)
+    os.environ["BACKUP_LOCAL_DIR"] = str(BACKUP_DIR)
+    os.environ["BACKUP_CREDENTIALS_DIR"] = str(CREDENTIALS_DIR)
+    os.environ["BACKUP_DAILY_EXPORT_ENABLED"] = "false"
+
+    settings.database_path = str(CONTROL_DB)
+    settings.telemetry_db_path = str(TELEMETRY_DB)
+    settings.backup_local_dir = str(BACKUP_DIR)
 
     backup_service.backup_dir = BACKUP_DIR
     backup_service.credentials_file = CREDENTIALS_DIR / "gdrive_credentials.json"

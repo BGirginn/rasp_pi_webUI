@@ -178,13 +178,38 @@ class AgentClient:
         return await self.call("discovery.refresh")
     
     # Resource methods
-    async def resource_action(self, resource_id: str, action: str, params: Dict = None) -> Dict:
+    async def resource_action(
+        self,
+        resource_id: str,
+        action: str,
+        params: Dict = None,
+        timeout: float = 90.0,
+    ) -> Dict:
         """Execute action on a resource."""
-        return await self.call("resource.action", {
-            "resource_id": resource_id,
-            "action": action,
-            "params": params or {}
-        })
+        return await self.call(
+            "resource.action",
+            {
+                "resource_id": resource_id,
+                "action": action,
+                "params": params or {},
+            },
+            timeout=timeout,
+        )
+
+    async def execute_action(
+        self,
+        resource_id: str,
+        action: str,
+        params: Dict = None,
+        timeout: float = 90.0,
+    ) -> Dict:
+        """Backward-compatible alias for resource actions."""
+        return await self.resource_action(
+            resource_id=resource_id,
+            action=action,
+            params=params,
+            timeout=timeout,
+        )
     
     async def get_resource_logs(self, resource_id: str, tail: int = 100) -> list:
         """Get logs for a resource."""

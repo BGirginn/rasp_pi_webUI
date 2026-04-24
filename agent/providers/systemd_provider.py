@@ -5,7 +5,6 @@ Discovers and manages systemd services.
 """
 
 import asyncio
-import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional
 

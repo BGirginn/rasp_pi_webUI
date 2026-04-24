@@ -6,8 +6,6 @@ Handles schema migrations and initial data setup.
 
 import asyncio
 import os
-import secrets
-from datetime import datetime
 
 import aiosqlite
 import bcrypt
@@ -243,9 +241,9 @@ async def migrate_002_default_admin(db):
             ("admin", password_hash, "admin", "admin@localhost")
         )
         
-        print(f"  Created default admin user: admin")
+        print("  Created default admin user: admin")
         print(f"  Default password: {default_password}")
-        print(f"  ⚠️  CHANGE THIS PASSWORD IMMEDIATELY!")
+        print("  ⚠️  CHANGE THIS PASSWORD IMMEDIATELY!")
 
 
 async def migrate_003_ignored_resources(db):
@@ -299,8 +297,8 @@ async def migrate_005_standard_user(db):
             ("user", password_hash, "viewer")
         )
         
-        print(f"  Created default standard user: user")
-        print(f"  Role: viewer")
+        print("  Created default standard user: user")
+        print("  Role: viewer")
 
 
 if __name__ == "__main__":

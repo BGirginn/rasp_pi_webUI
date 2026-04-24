@@ -9,8 +9,8 @@ Resources are classified into four tiers with different protection levels:
 | Class | Description | Allowed Actions | Protected |
 |-------|-------------|-----------------|-----------|
 | **CORE** | Critical system services (sshd, network, kernel) | View only | ✅ Immutable |
-| **SYSTEM** | Important services (docker, mosquitto, panel) | Restart only | ✅ Limited |
-| **APP** | User applications and containers | Full control | ❌ Standard |
+| **SYSTEM** | Important services (mosquitto, panel) | Restart only | ✅ Limited |
+| **APP** | User applications and services | Full control | ❌ Standard |
 | **DEVICE** | ESP/IoT devices | Send commands | ❌ Standard |
 
 ### CORE Services (Never Modifiable)
@@ -35,8 +35,6 @@ These services can only be restarted by administrators:
 
 ```yaml
 system_services:
-  - docker           # Container runtime
-  - containerd       # Container daemon
   - mosquitto        # MQTT broker
   - caddy            # Reverse proxy
   - pi-agent         # Control agent
@@ -109,8 +107,8 @@ allowed_patterns:
   # Read-only system info
   - "systemctl status"
   - "journalctl"
-  - "docker ps"
-  - "docker logs"
+  - "systemctl status"
+  - "journalctl -u"
   - "df"
   - "free"
   - "uptime"
@@ -245,7 +243,7 @@ panel:
 ### Container Limits
 
 ```yaml
-docker:
+services:
   caddy:
     memory: 128 MB
     cpus: 0.5

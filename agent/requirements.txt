@@ -10,8 +10,6 @@ aiohttp>=3.9.0
 # System metrics
 psutil>=5.9.0
 
-# Docker integration
-docker>=7.0.0
 httpx>=0.27.0
 
 # D-Bus for systemd

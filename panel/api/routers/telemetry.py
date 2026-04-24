@@ -5,15 +5,13 @@ Handles metrics queries, live telemetry streaming, and dashboard data.
 """
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
-from sse_starlette.sse import EventSourceResponse
 
 from db import get_telemetry_db
-from services.sse import sse_manager, Channels
 from services.agent_client import agent_client
 from .auth import get_current_user
 
@@ -76,7 +74,6 @@ async def get_current_metrics(user: dict = Depends(get_current_user)):
 async def _get_local_system_metrics() -> Dict:
     """Get real HOST system metrics by reading from mounted /host filesystem."""
     import asyncio
-    import platform
     import subprocess
     import os
     

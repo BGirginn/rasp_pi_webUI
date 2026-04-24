@@ -4,12 +4,11 @@ Pi Control Panel - Logs Router
 Handles log retrieval, search, and streaming.
 """
 
-import asyncio
 from datetime import datetime
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -52,12 +51,12 @@ async def get_logs(
     """Get logs for a resource."""
     try:
         raw_logs = await agent_client.get_resource_logs(resource_id, tail)
-    except Exception as e:
+    except Exception:
         # Return mock data if agent unavailable
         raw_logs = [
-            f"2024-01-15T10:30:00Z [INFO] Container started",
-            f"2024-01-15T10:30:05Z [INFO] Health check passed",
-            f"2024-01-15T10:30:10Z [DEBUG] Processing request",
+            "2024-01-15T10:30:00Z [INFO] Container started",
+            "2024-01-15T10:30:05Z [INFO] Health check passed",
+            "2024-01-15T10:30:10Z [DEBUG] Processing request",
         ]
     
     # Parse log lines
@@ -132,7 +131,6 @@ async def stream_logs(
     user: dict = Depends(get_current_user)
 ):
     """Stream logs via SSE."""
-    from fastapi import Request
     
     client_id = str(uuid.uuid4())
     
@@ -148,7 +146,7 @@ async def stream_logs(
                     parsed = _parse_log_line(log_line)
                     yield f"event: log\ndata: {{\"timestamp\": \"{parsed.timestamp}\", \"level\": \"{parsed.level}\", \"message\": \"{parsed.message}\"}}\n\n"
             except Exception:
-                yield f"event: error\ndata: {{\"message\": \"Could not fetch initial logs\"}}\n\n"
+                yield "event: error\ndata: {\"message\": \"Could not fetch initial logs\"}\n\n"
             
             # Stream new logs
             async for event in sse_manager.event_generator(client):
@@ -211,7 +209,7 @@ def _parse_log_line(raw_line: str) -> LogLine:
     """Parse a raw log line into structured format."""
     # Try common log formats
     
-    # Docker/systemd format: timestamp [LEVEL] message
+    # Common format: timestamp [LEVEL] message
     import re
     
     # ISO timestamp with level in brackets

@@ -5,7 +5,6 @@ Server-Sent Events endpoints for real-time updates.
 """
 
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse

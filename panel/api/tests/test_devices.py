@@ -5,7 +5,7 @@ Unit tests for device models and endpoint logic.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
@@ -151,7 +151,7 @@ class TestMacOSUSBParsing:
     """Test macOS USB tree parsing."""
 
     def test_parse_usb_devices(self):
-        from routers.devices import _parse_macos_usb, DeviceResponse
+        from routers.devices import _parse_macos_usb
         devices = []
         node = {
             "_items": [

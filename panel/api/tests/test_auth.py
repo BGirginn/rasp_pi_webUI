@@ -6,17 +6,13 @@ Pytest tests for authentication functionality.
 
 import pytest
 import jwt
+import bcrypt
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
-from passlib.context import CryptContext
 
 # Set up test environment
 import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
 os.environ["DATABASE_PATH"] = ":memory:"
-
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TestPasswordHashing:
@@ -25,17 +21,17 @@ class TestPasswordHashing:
     def test_password_hash(self):
         """Test password hashing works correctly."""
         password = "testpassword123"
-        hashed = pwd_context.hash(password)
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         
-        assert hashed != password
-        assert pwd_context.verify(password, hashed)
+        assert hashed != password.encode()
+        assert bcrypt.checkpw(password.encode(), hashed)
     
     def test_wrong_password_fails(self):
         """Test wrong password verification fails."""
         password = "testpassword123"
-        hashed = pwd_context.hash(password)
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         
-        assert not pwd_context.verify("wrongpassword", hashed)
+        assert not bcrypt.checkpw("wrongpassword".encode(), hashed)
 
 
 class TestJWTTokens:

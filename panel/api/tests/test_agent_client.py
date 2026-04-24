@@ -5,9 +5,8 @@ Tests for AgentClient circuit breaker, connection handling, and RPC protocol.
 """
 
 import pytest
-import asyncio
 import time
-from unittest.mock import patch, AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
@@ -212,6 +211,22 @@ class TestAgentClientMethods:
         client = AgentClient(socket_path="/tmp/test.sock")
         assert hasattr(client, "get_devices")
         assert hasattr(client, "send_device_command")
+
+    @pytest.mark.asyncio
+    async def test_execute_action_alias_forwards_to_resource_action(self):
+        """Test execute_action alias delegates to resource_action."""
+        client = AgentClient(socket_path="/tmp/test.sock")
+        client.resource_action = AsyncMock(return_value={"success": True})
+
+        result = await client.execute_action("demo.service", "restart", {"force": True}, timeout=45.0)
+
+        assert result == {"success": True}
+        client.resource_action.assert_awaited_once_with(
+            resource_id="demo.service",
+            action="restart",
+            params={"force": True},
+            timeout=45.0,
+        )
 
 
 if __name__ == "__main__":

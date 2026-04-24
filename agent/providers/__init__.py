@@ -2,7 +2,6 @@
 Pi Agent - Providers Package
 
 Providers are responsible for discovering and managing different types of resources:
-- DockerProvider: Docker containers, images, volumes, networks
 - SystemdProvider: systemd services
 - NetworkProvider: Network interfaces (eth, wifi, bluetooth)
 - DevicesProvider: Hardware devices (USB, serial, GPIO)

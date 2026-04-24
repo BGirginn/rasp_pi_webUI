@@ -6,6 +6,7 @@ Stores sensor readings to database for historical analysis.
 """
 
 import asyncio
+import json
 import socket
 import logging
 from typing import Dict, List, Optional

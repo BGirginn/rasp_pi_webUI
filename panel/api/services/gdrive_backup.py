@@ -8,6 +8,7 @@ Google Drive integration is temporarily disabled.
 import asyncio
 import csv
 import json
+import os
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -54,6 +55,7 @@ class GDriveBackupService:
 
     async def initialize(self) -> bool:
         """Prepare directories and load runtime markers."""
+        self.backup_dir = Path(os.getenv("BACKUP_LOCAL_DIR", settings.backup_local_dir))
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         await self._ensure_settings_table()
         await self._load_runtime_settings()
@@ -108,6 +110,11 @@ class GDriveBackupService:
 
     async def start_scheduler(self):
         """Start scheduled daily export and retention maintenance."""
+        enabled = os.getenv("BACKUP_DAILY_EXPORT_ENABLED", str(settings.backup_daily_export_enabled))
+        if enabled.lower() in {"0", "false", "no", "off"}:
+            logger.info("Backup scheduler disabled by configuration")
+            return
+
         await self._ensure_ready()
         if self._running:
             return

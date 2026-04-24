@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 class ResourceClass(str, Enum):
     """Resource classification for access control."""
-    CORE = "CORE"       # Read-only, cannot be stopped (docker, tailscale, etc.)
+    CORE = "CORE"       # Read-only, cannot be stopped (tailscale, etc.)
     SYSTEM = "SYSTEM"   # Can restart, cannot stop (ssh, nginx, etc.)
     APP = "APP"         # Full control (user containers, apps)
     DEVICE = "DEVICE"   # Hardware devices (ESP, USB, GPIO)
@@ -39,14 +39,14 @@ class Resource:
     id: str
     name: str
     type: str                   # container, service, interface, device
-    provider: str               # docker, systemd, network, devices, mqtt
+    provider: str               # systemd, network, devices, mqtt
     resource_class: ResourceClass
     state: ResourceState
     
     # Optional metadata
-    image: Optional[str] = None           # Docker image
+    image: Optional[str] = None           # Container image
     ports: Optional[List[Dict]] = None    # Exposed ports
-    labels: Optional[Dict] = None         # Docker/systemd labels
+    labels: Optional[Dict] = None         # Provider labels
     capabilities: Optional[List[str]] = None  # Device capabilities
     
     # Telemetry references
@@ -68,6 +68,7 @@ class Resource:
             "type": self.type,
             "provider": self.provider,
             "class": self.resource_class.value,
+            "resource_class": self.resource_class.value,
             "state": self.state.value,
             "image": self.image,
             "ports": self.ports,
@@ -99,6 +100,20 @@ class ActionResult:
         }
 
 
+def _action_success(cls, data: Optional[Dict] = None, message: str = "Success") -> ActionResult:
+    """Create a successful action result."""
+    return cls(success=True, message=message, data=data)
+
+
+def _action_failure(cls, error: str, data: Optional[Dict] = None) -> ActionResult:
+    """Create a failed action result."""
+    return cls(success=False, message=error, data=data, error=error)
+
+
+ActionResult.success = classmethod(_action_success)
+ActionResult.failure = classmethod(_action_failure)
+
+
 class BaseProvider(ABC):
     """Base class for all resource providers."""
     
@@ -110,7 +125,7 @@ class BaseProvider(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Provider name (e.g., 'docker', 'systemd')."""
+        """Provider name (e.g., 'systemd')."""
         pass
     
     @property

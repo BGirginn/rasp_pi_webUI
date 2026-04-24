@@ -7,9 +7,6 @@ and security controls.
 
 import pytest
 import hashlib
-import secrets
-from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
 import sys
 import os
 
@@ -20,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
 os.environ["DATABASE_PATH"] = ":memory:"
 os.environ["TERMINAL_MODE_DEFAULT"] = "restricted"
-os.environ["TERMINAL_DOCKER_SSH_ENABLED"] = "false"
+os.environ["TERMINAL_HOST_SSH_ENABLED"] = "false"
 
 
 class TestBreakGlassTokens:
@@ -71,7 +68,7 @@ class TestRestrictedCommandValidation:
         """Test that simple allowed commands pass."""
         from routers.terminal import validate_restricted_command
         
-        allowed = ["whoami", "uptime", "df -h", "free -h", "ip a", "docker ps"]
+        allowed = ["whoami", "uptime", "df -h", "free -h", "ip a", "ip r"]
         
         for cmd in allowed:
             is_valid, error = validate_restricted_command(cmd)
@@ -124,21 +121,6 @@ class TestRestrictedCommandValidation:
             is_valid, error = validate_restricted_command(cmd)
             assert not is_valid, f"Command '{cmd}' should be blocked"
     
-    def test_docker_logs_validation(self):
-        """Test docker logs command validation."""
-        from routers.terminal import validate_restricted_command
-        
-        # Valid
-        is_valid, _ = validate_restricted_command("docker logs nginx")
-        assert is_valid
-        
-        is_valid, _ = validate_restricted_command("docker logs my-container-123")
-        assert is_valid
-        
-        # Invalid
-        is_valid, _ = validate_restricted_command("docker logs $(cat /etc/passwd)")
-        assert not is_valid
-    
     def test_command_not_in_allowlist(self):
         """Test that arbitrary commands are rejected."""
         from routers.terminal import validate_restricted_command
@@ -173,11 +155,11 @@ class TestModeEnforcement:
         
         assert settings.terminal_mode_default == "restricted"
     
-    def test_docker_ssh_disabled_by_default(self):
-        """Test that Docker SSH is disabled by default."""
+    def test_host_ssh_disabled_by_default(self):
+        """Test that host SSH fallback is disabled by default."""
         from config import settings
         
-        assert settings.terminal_docker_ssh_enabled == False
+        assert settings.terminal_host_ssh_enabled == False
 
 
 class TestSecurityConfiguration:

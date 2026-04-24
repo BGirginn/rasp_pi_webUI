@@ -6,7 +6,6 @@ Unit tests for telemetry models, query params, and mocked endpoint behavior.
 
 import pytest
 import time
-from unittest.mock import patch, AsyncMock
 
 import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
@@ -128,11 +127,11 @@ class TestDashboardDataModel:
                 load_5m=0.8, load_15m=0.5, network_rx_bytes=1000,
                 network_tx_bytes=2000, uptime_seconds=86400,
             ),
-            resource_counts={"docker": 3, "systemd": 5},
+            resource_counts={"systemd": 5, "devices": 3},
             alert_counts={"warning": 1, "critical": 0},
             timestamp="2025-01-01T00:00:00",
         )
-        assert d.resource_counts["docker"] == 3
+        assert d.resource_counts["devices"] == 3
         assert d.alert_counts["warning"] == 1
 
 

@@ -24,7 +24,6 @@ discovery:
   
   # Providers to enable
   providers:
-    - docker
     - systemd
     - network
     - devices
@@ -114,7 +113,6 @@ logging:
 classification:
   # CORE services (read-only, cannot be stopped)
   core:
-    - "docker.service"
     - "tailscaled.service"
     - "pi-agent.service"
     - "systemd-journald.service"

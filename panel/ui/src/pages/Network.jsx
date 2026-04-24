@@ -410,7 +410,7 @@ export default function Network() {
                         <div className="glass-card rounded-xl p-8 text-center">
                             <span className="text-5xl mb-4 block">📶</span>
                             <h3 className="text-xl font-semibold text-gray-100 mb-2">No networks found</h3>
-                            <p className="text-gray-500">Click "Scan Networks" to search for WiFi</p>
+                            <p className="text-gray-500">Click &quot;Scan Networks&quot; to search for WiFi</p>
                         </div>
                     )}
                 </div>

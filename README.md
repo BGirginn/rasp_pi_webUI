@@ -69,7 +69,7 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 |---|---|
 | UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
 | API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
-| Agent | Python-based system agent, Unix socket RPC, psutil, docker, MQTT |
+| Agent | Python-based system agent, Unix socket RPC, psutil, systemd, MQTT |
 | Data | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Testing & Quality | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
@@ -87,7 +87,7 @@ flowchart TD
     C --> E[(telemetry.db)]
     C --> F[Pi Agent via Unix Socket]
     C --> G[SSE Stream]
-    F --> H[System / Devices / Docker / MQTT]
+    F --> H[System / Devices / Services / MQTT]
 ```
 
 Core flow:
@@ -362,7 +362,7 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 |---|---|
 | UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
 | API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
-| Agent | Python tabanli sistem agenti, Unix socket RPC, psutil, docker, MQTT |
+| Agent | Python tabanli sistem agenti, Unix socket RPC, psutil, systemd, MQTT |
 | Veri | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Test ve Kalite | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
@@ -380,7 +380,7 @@ flowchart TD
     C --> E[(telemetry.db)]
     C --> F[Pi Agent via Unix Socket]
     C --> G[SSE Stream]
-    F --> H[System / Devices / Docker / MQTT]
+    F --> H[System / Devices / Services / MQTT]
 ```
 
 Temel calisma modeli:

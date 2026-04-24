@@ -7,15 +7,13 @@ Supports filtering by date range and exporting to JSON/CSV.
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
-from datetime import datetime, timedelta
+from typing import Optional
+from datetime import datetime
 from .auth import get_current_user
-from db import get_telemetry_db, get_control_db
-from config import settings
+from db import get_telemetry_db
 import json
 import csv
 import io
-import time
 
 router = APIRouter()
 

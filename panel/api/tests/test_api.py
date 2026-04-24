@@ -5,15 +5,20 @@ Pytest tests for the Panel API.
 """
 
 import pytest
-import asyncio
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock, AsyncMock
 
 # Set up test environment before imports
 import os
+import tempfile
+from pathlib import Path
+
+TEST_ROOT = Path(tempfile.mkdtemp(prefix="pi-control-api-tests-"))
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing"
 os.environ["DATABASE_PATH"] = ":memory:"
 os.environ["TELEMETRY_DB_PATH"] = ":memory:"
+os.environ["BACKUP_LOCAL_DIR"] = str(TEST_ROOT / "backups")
+os.environ["BACKUP_CREDENTIALS_DIR"] = str(TEST_ROOT / "credentials")
+os.environ["BACKUP_DAILY_EXPORT_ENABLED"] = "false"
 os.environ["API_DEBUG"] = "true"
 
 
@@ -21,7 +26,8 @@ os.environ["API_DEBUG"] = "true"
 def client():
     """Create test client."""
     from main import app
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture
@@ -194,7 +200,6 @@ class TestAuthenticatedEndpoints:
     @pytest.fixture
     def mock_auth(self):
         """Mock authentication dependency."""
-        from routers.auth import get_current_user
         
         async def mock_get_current_user():
             return {

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from db import get_control_db
-from .auth import get_current_user, require_role
+from .auth import require_role
 
 router = APIRouter()
 

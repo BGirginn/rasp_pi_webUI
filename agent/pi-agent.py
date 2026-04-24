@@ -3,7 +3,7 @@
 Pi Control Panel - Agent
 
 The Pi Agent runs as a systemd service on the Raspberry Pi and provides:
-- Resource discovery (Docker, systemd, network, devices)
+- Resource discovery (systemd, network, devices)
 - Telemetry collection (CPU, memory, disk, network, temperature)
 - Job execution (backup, restore, update, cleanup)
 - MQTT bridge for ESP devices
@@ -92,7 +92,7 @@ class PiAgent:
         return {
             "agent": {"name": "pi-agent", "version": "1.0.0"},
             "socket": {"path": "/run/pi-agent/agent.sock", "permissions": "0660"},
-            "discovery": {"interval": 30, "providers": ["docker", "systemd"]},
+            "discovery": {"interval": 30, "providers": ["systemd"]},
             "telemetry": {"interval": 2, "db_path": "/var/lib/pi-control/telemetry.db"},
             "health": {"interval": 10},
             "jobs": {"max_concurrent": 2, "default_timeout": 600},
@@ -153,6 +153,8 @@ class PiAgent:
         
         try:
             result = await handler(**params) if params else await handler()
+            if hasattr(result, "to_dict") and callable(result.to_dict):
+                result = result.to_dict()
             return {"result": result}
         except Exception as e:
             logger.exception("RPC handler error", method=method, error=str(e))

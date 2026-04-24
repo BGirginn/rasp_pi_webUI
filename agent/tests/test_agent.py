@@ -5,8 +5,6 @@ Pytest tests for the Pi Agent.
 """
 
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestResourceDataclass:
@@ -17,15 +15,15 @@ class TestResourceDataclass:
         from providers.base import Resource, ResourceClass, ResourceState
         
         resource = Resource(
-            id="docker_nginx",
+            id="systemd_nginx",
             name="nginx",
-            type="container",
+            type="service",
             resource_class=ResourceClass.APP,
-            provider="docker",
+            provider="systemd",
             state=ResourceState.RUNNING,
         )
         
-        assert resource.id == "docker_nginx"
+        assert resource.id == "systemd_nginx"
         assert resource.name == "nginx"
         assert resource.resource_class == ResourceClass.APP
         assert resource.state == ResourceState.RUNNING
@@ -99,15 +97,15 @@ class TestActionResult:
         assert result.error == "Something went wrong"
 
 
-class TestDockerProvider:
-    """Test Docker provider."""
+class TestProviderIdFormat:
+    """Test provider resource ID formatting."""
     
-    def test_container_id_generation(self):
-        """Test container resource ID generation."""
-        container_name = "nginx-proxy"
-        resource_id = f"docker_{container_name}"
+    def test_service_id_generation(self):
+        """Test service resource ID generation."""
+        service_name = "nginx-proxy"
+        resource_id = f"systemd_{service_name}"
         
-        assert resource_id == "docker_nginx-proxy"
+        assert resource_id == "systemd_nginx-proxy"
 
 
 class TestSystemdProvider:
@@ -116,7 +114,7 @@ class TestSystemdProvider:
     def test_service_classification(self):
         """Test service classification logic."""
         core_services = ["sshd", "systemd-journald", "dbus"]
-        system_services = ["docker", "mosquitto", "caddy"]
+        system_services = ["mosquitto", "caddy", "nginx"]
         
         for service in core_services:
             # These should be classified as CORE

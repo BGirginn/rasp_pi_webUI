@@ -6,7 +6,7 @@ Collects system metrics at configured intervals and stores them in SQLite.
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import structlog

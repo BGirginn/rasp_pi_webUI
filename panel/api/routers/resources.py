@@ -10,11 +10,10 @@ from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sse_starlette.sse import EventSourceResponse
 
 from db import get_control_db
 from services.agent_client import agent_client
-from services.host_exec import run_host_command_simple, run_host_command, is_running_in_docker
+from services.host_exec import run_host_command_simple, run_host_command, is_running_in_container
 from .auth import get_current_user, require_role
 
 router = APIRouter()
@@ -137,7 +136,7 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
     
     # === APP Services ===
     app_services = [
-        "tailscaled", "docker", "minecraft-server", "minecraft", "home-assistant", 
+        "tailscaled", "minecraft-server", "minecraft", "home-assistant",
         "zigbee2mqtt", "node-red", "grafana-server", "grafana", "prometheus", 
         "influxdb", "mosquitto", "nginx", "apache2", "httpd", "postgresql", 
         "postgres", "mysql", "mariadb", "redis-server", "redis", "pihole-FTL", 
@@ -188,21 +187,31 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
              # If not in lists but starts with systemd-, classify as SYSTEM or CORE
              elif name.startswith("systemd-"): r_class = "SYSTEM"
              
-             # Filter noisy kernel/system ones if needed. 
-             # If it's not in our lists and it's NOT running, we probably don't care about it (clutter).
-             # If it IS running, we show it (discovery).
              active_state = parts[2] if len(parts) > 2 else "unknown"
-             sub_state = parts[3] if len(parts) > 3 else "unknown"
-             
-             is_running = active_state == "active"
-             
-             if not is_running and name not in app_services and name not in system_services and name not in core_services:
+             # Keep transitional states visible in the UI for live action feedback.
+             if active_state == "activating":
+                 state = "starting"
+             elif active_state == "deactivating":
+                 state = "stopping"
+             elif active_state == "reloading":
+                 state = "restarting"
+             elif active_state == "failed":
+                 state = "failed"
+             elif active_state == "active":
+                 state = "running"
+             else:
+                 state = "stopped"
+
+             # Filter noisy kernel/system units unless they are important or actively transitioning.
+             if (
+                 state in {"stopped"}
+                 and name not in app_services
+                 and name not in system_services
+                 and name not in core_services
+             ):
                  continue
 
              use_data = usage_map.get(unit_name, {"cpu": 0.0, "mem": 0.0})
-             
-             state = "running" if is_running else "stopped"
-             if active_state == "failed": state = "failed"
              
              services.append(ResourceResponse(
                  id=f"systemd-{name}",
@@ -211,7 +220,12 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                  resource_class=r_class,
                  provider="systemd",
                  state=state,
-                 health_score=100 if state == "running" else (0 if state == "failed" else 50),
+                 health_score=(
+                     100 if state == "running"
+                     else 70 if state in {"starting", "stopping", "restarting"}
+                     else 0 if state == "failed"
+                     else 50
+                 ),
                  managed=True,
                  updated_at=now,
                  cpu_usage=use_data["cpu"],
@@ -325,6 +339,8 @@ async def execute_action(
     user: dict = Depends(require_role("admin", "operator"))
 ):
     """Execute an action on a resource."""
+    global _services_cache
+
     db = await get_control_db()
     
     # Get resource from DB
@@ -401,8 +417,20 @@ async def execute_action(
     )
     await db.commit()
     
-    if action_result and not action_result.get("success", True):
-        raise HTTPException(status_code=500, detail=action_result.get("message", "Action failed"))
+    if not action_result:
+        raise HTTPException(status_code=500, detail="Action failed: no result returned")
+
+    if not action_result.get("success", True):
+        error_code = action_result.get("error")
+        status_code = 500
+        if error_code in {"ACTION_NOT_ALLOWED", "PROTECTED_RESOURCE"}:
+            status_code = 403
+        elif error_code == "NOT_FOUND":
+            status_code = 404
+        raise HTTPException(status_code=status_code, detail=action_result.get("message", "Action failed"))
+
+    # Invalidate live services cache so UI sees the latest state immediately.
+    _services_cache = ([], 0)
     
     return ActionResponse(
         success=True,
@@ -414,7 +442,7 @@ async def execute_action(
 async def _execute_systemd_action(service_name: str, action: str) -> dict:
     """Execute a systemctl action on a service via host_exec."""
     import os
-
+    
     
     # Allowed actions
     allowed = ["start", "stop", "restart", "status"]
@@ -427,19 +455,22 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
         return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
     
     try:
-        # Determine command strategy
-        command = f"sudo systemctl {action} {service_name}.service"
-        
-        # If running native (not Docker) and we might need a password for sudo
-        if not is_running_in_docker():
-            # Try to get password from env
-            password = os.environ.get("SUDO_PASSWORD") or os.environ.get("SSH_HOST_PASSWORD")
-            if password:
-                # Use sudo -S to accept password from stdin
-                # We pipe via shell: echo 'pass' | sudo -S command
-                command = f"echo '{password}' | sudo -S systemctl {action} {service_name}.service"
+        base_command = f"systemctl {action} {service_name}.service"
+        password = os.environ.get("SUDO_PASSWORD") or os.environ.get("SSH_HOST_PASSWORD")
 
-        print(f"Executing systemd action: {command.replace(os.environ.get('SUDO_PASSWORD', 'checking-vars'), '***')}")
+        if password:
+            safe_password = password.replace("'", "'\"'\"'")
+            command = f"printf '%s\\n' '{safe_password}' | sudo -S -p '' {base_command}"
+        elif not is_running_in_container() and os.geteuid() == 0:
+            command = base_command
+        else:
+            # Use non-interactive sudo so we fail fast instead of hanging for a password prompt.
+            command = f"sudo -n {base_command}"
+
+        masked_command = command
+        if password:
+            masked_command = masked_command.replace(password, "***")
+        print(f"Executing systemd action: {masked_command}")
         
         stdout, stderr, returncode = run_host_command(command, timeout=30)
         
@@ -451,6 +482,12 @@ async def _execute_systemd_action(service_name: str, action: str) -> dict:
             }
         else:
             print(f"Systemd action failed: {stderr}")
+            if "password is required" in (stderr or "").lower() or "a password is required" in (stderr or "").lower():
+                return {
+                    "success": False,
+                    "message": "Insufficient sudo permissions for service control. Configure sudoers or run via agent.",
+                    "error": "SUDO_PERMISSION_REQUIRED"
+                }
             return {
                 "success": False,
                 "message": f"Failed to {action} {service_name}. Error: {stderr.strip() or 'Exit code ' + str(returncode)}",

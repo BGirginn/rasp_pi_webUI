@@ -1,9 +1,8 @@
 
 import asyncio
-import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from db import get_control_db
 from services.agent_client import agent_client

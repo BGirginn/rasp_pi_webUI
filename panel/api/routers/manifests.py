@@ -44,25 +44,6 @@ class ManifestDiff(BaseModel):
 
 # Provider-specific manifest templates
 MANIFEST_TEMPLATES = {
-    "docker": {
-        "container": {
-            "image": "",
-            "ports": [],
-            "volumes": [],
-            "environment": {},
-            "restart_policy": "unless-stopped",
-            "memory_limit": "512m",
-            "cpu_limit": "1.0",
-            "healthcheck": {
-                "test": [],
-                "interval": "30s",
-                "timeout": "10s",
-                "retries": 3
-            },
-            "labels": {},
-            "networks": []
-        }
-    },
     "systemd": {
         "service": {
             "description": "",

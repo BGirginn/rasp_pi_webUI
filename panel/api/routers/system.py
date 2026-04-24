@@ -5,11 +5,9 @@ Handles system-level operations like reboot, shutdown, and updates.
 """
 
 import asyncio
-import subprocess
 from datetime import datetime
-from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 
 from db import get_control_db
@@ -47,7 +45,6 @@ async def execute_power_command(command_args: list):
 async def get_system_info(user: dict = Depends(get_current_user)):
     """Get detailed system information."""
     import platform
-    import time
     
     # Get hostname
     try:
