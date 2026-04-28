@@ -119,69 +119,75 @@ Core flow:
 
 ## Installation
 
-### Installation Profiles
+### Local Installation (LAN only, no Tailscale)
+
+Use this profile when the panel should run only inside the same local network. It installs the full Pi Control Panel stack, but it does not install, check, or prompt for Tailscale.
+
+Direct install on a fresh Pi:
 
 ```bash
-# Full profile: full system plus Tailscale setup for private remote access
-sudo ./install.sh --profile full
+sudo apt update
+sudo apt install -y git
 
-# Local profile: same system on the LAN, with no Tailscale install or prompts
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+
+chmod +x install.sh
 sudo ./install.sh --profile local
 ```
 
-`sudo ./install.sh` defaults to the `full` profile. `sudo ./install.sh --no-tailscale` is kept as a backwards-compatible alias for `--profile local`.
-
-### 1) Remote Deployment (Mac/Linux -> Pi)
+Remote deploy from Mac/Linux over LAN:
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
 ./deploy-native.sh --profile local pi@<lan-ip>
-./deploy-native.sh --profile full pi@<tailscale-ip-or-lan-ip>
-```
-
-In this flow, the script:
-
-- Tests SSH connection
-- Syncs project files to target via rsync
-- Runs `install.sh` on target
-- Performs API health check
-
-### 2) Direct Installation on Pi
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-chmod +x install.sh
-sudo ./install.sh --profile full
-# or
-sudo ./install.sh --profile local
-```
-
-Common options:
-
-```bash
-sudo ./install.sh --profile full
-sudo ./install.sh --profile full --web-port 8088
-sudo ./install.sh --profile local
-sudo ./install.sh --profile local --web-port 8088
-sudo ./install.sh --skip-preflight
-sudo ./install.sh --no-tailscale
-sudo ./install.sh --upgrade
 ```
 
 After installation:
 
 - UI: `http://<pi-ip>:8088`
 - API health: `http://<pi-ip>:8088/api/health`
-- API docs (if debug enabled): `http://<pi-ip>:8088/api/docs`
-- The installer prints the connection link and initial login:
-  - `Open this link from a device on the same network: http://<pi-ip>:8088`
-  - `Username: admin`
-  - `Password: admin`
-- Full profile: run `sudo tailscale up` if the installer reports that Tailscale is not connected yet.
-- Local profile: open `http://<pi-ip>:8088` from a device on the same LAN.
-- Change the exposed web port with `sudo ./install.sh --profile local --web-port <port>`.
+- Initial username: `admin`
+- Initial password: `admin`
+- Custom web port: `sudo ./install.sh --profile local --web-port <port>`
+
+### Full Installation (Tailscale remote access)
+
+Use this profile when the panel should also support private remote access through Tailscale. It installs the same application stack as local mode and includes the Tailscale setup flow.
+
+Direct install on a Pi:
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+
+chmod +x install.sh
+sudo ./install.sh --profile full
+```
+
+Remote deploy from Mac/Linux:
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+./deploy-native.sh --profile full pi@<tailscale-ip-or-lan-ip>
+```
+
+After installation:
+
+- UI: `http://<pi-ip>:8088`
+- API health: `http://<pi-ip>:8088/api/health`
+- Initial username: `admin`
+- Initial password: `admin`
+- If Tailscale is not connected yet, run `sudo tailscale up`
+- Custom web port: `sudo ./install.sh --profile full --web-port <port>`
+
+Notes:
+
+- `sudo ./install.sh` defaults to the `full` profile.
+- `sudo ./install.sh --no-tailscale` is kept as a backwards-compatible alias for `--profile local`.
+- The installer prints the exact connection link and initial login after a successful install.
 
 ---
 
@@ -439,69 +445,75 @@ Temel calisma modeli:
 
 ## Kurulum
 
-### Kurulum Profilleri
+### Local Kurulum (sadece LAN, Tailscale yok)
+
+Panel sadece ayni yerel ag icinde calisacaksa bu profili kullanin. Tum Pi Control Panel stack'i kurulur, ancak Tailscale kurulmaz, kontrol edilmez ve Tailscale icin prompt verilmez.
+
+Sifir Pi uzerinde dogrudan kurulum:
 
 ```bash
-# Full profil: tum sistem ve ozel uzak erisim icin Tailscale kurulumu
-sudo ./install.sh --profile full
+sudo apt update
+sudo apt install -y git
 
-# Local profil: ayni sistem LAN uzerinde calisir, Tailscale kurulmaz ve sorulmaz
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+
+chmod +x install.sh
 sudo ./install.sh --profile local
 ```
 
-`sudo ./install.sh` varsayilan olarak `full` profilini kullanir. `sudo ./install.sh --no-tailscale`, geriye uyumluluk icin `--profile local` alias'i olarak kalir.
-
-### 1) Uzak Deployment (Mac/Linux -> Pi)
+Mac/Linux uzerinden LAN ile uzak deploy:
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
 ./deploy-native.sh --profile local pi@<lan-ip>
-./deploy-native.sh --profile full pi@<tailscale-ip-veya-lan-ip>
-```
-
-Bu akista script:
-
-- SSH baglantisini test eder
-- proje dosyalarini rsync ile hedefe tasir
-- hedefte `install.sh` calistirir
-- API health kontrolu yapar
-
-### 2) Pi Uzerinde Dogrudan Kurulum
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-chmod +x install.sh
-sudo ./install.sh --profile full
-# veya
-sudo ./install.sh --profile local
-```
-
-Sik kullanilan opsiyonlar:
-
-```bash
-sudo ./install.sh --profile full
-sudo ./install.sh --profile full --web-port 8088
-sudo ./install.sh --profile local
-sudo ./install.sh --profile local --web-port 8088
-sudo ./install.sh --skip-preflight
-sudo ./install.sh --no-tailscale
-sudo ./install.sh --upgrade
 ```
 
 Kurulum sonrasi:
 
 - UI: `http://<pi-ip>:8088`
 - API health: `http://<pi-ip>:8088/api/health`
-- API docs (debug aciksa): `http://<pi-ip>:8088/api/docs`
-- Installer terminalde baglanti linkini ve ilk giris bilgisini yazar:
-  - `Open this link from a device on the same network: http://<pi-ip>:8088`
-  - `Username: admin`
-  - `Password: admin`
-- Full profil: kurulum Tailscale bagli degil derse `sudo tailscale up` calistirin.
-- Local profil: ayni LAN'daki bir cihazdan `http://<pi-ip>:8088` adresini acin.
-- Disaridan gorunen web portunu `sudo ./install.sh --profile local --web-port <port>` ile degistirebilirsiniz.
+- Ilk kullanici adi: `admin`
+- Ilk sifre: `admin`
+- Ozel web portu: `sudo ./install.sh --profile local --web-port <port>`
+
+### Full Kurulum (Tailscale ile uzak erisim)
+
+Panel Tailscale uzerinden ozel uzak erisim de desteklesin istiyorsaniz bu profili kullanin. Local profil ile ayni uygulama stack'i kurulur ve ek olarak Tailscale kurulum akisi dahil edilir.
+
+Pi uzerinde dogrudan kurulum:
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+
+chmod +x install.sh
+sudo ./install.sh --profile full
+```
+
+Mac/Linux uzerinden uzak deploy:
+
+```bash
+git clone https://github.com/BGirginn/rasp_pi_webUI.git
+cd rasp_pi_webUI
+./deploy-native.sh --profile full pi@<tailscale-ip-veya-lan-ip>
+```
+
+Kurulum sonrasi:
+
+- UI: `http://<pi-ip>:8088`
+- API health: `http://<pi-ip>:8088/api/health`
+- Ilk kullanici adi: `admin`
+- Ilk sifre: `admin`
+- Tailscale bagli degilse `sudo tailscale up` calistirin
+- Ozel web portu: `sudo ./install.sh --profile full --web-port <port>`
+
+Notlar:
+
+- `sudo ./install.sh` varsayilan olarak `full` profilini kullanir.
+- `sudo ./install.sh --no-tailscale`, geriye uyumluluk icin `--profile local` alias'i olarak kalir.
+- Basarili kurulumdan sonra installer terminalde net baglanti linkini ve ilk giris bilgisini yazar.
 
 ---
 
