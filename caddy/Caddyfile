@@ -1,7 +1,7 @@
 # Pi Control Panel - Caddy Configuration (Native)
 
 # Main site
-:80 {
+:8088 {
 	# Compress responses to reduce transfer size.
 	encode zstd gzip
 

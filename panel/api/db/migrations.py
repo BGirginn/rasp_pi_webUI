@@ -232,7 +232,7 @@ async def migrate_002_default_admin(db):
     
     if count == 0:
         # Generate random password
-        default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
+        default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin")
         password_hash = hash_password(default_password)
         
         await db.execute(

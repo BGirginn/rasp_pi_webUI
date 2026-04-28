@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
-  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
+  <img src="https://img.shields.io/badge/access-Full%20or%20Local-0A66C2" alt="Access profiles">
   <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
 </p>
 
@@ -34,7 +34,7 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 - Alert rules, audit logs, archiving, and backups
 - Local daily export and retention archiving flow
 
-> Security model: Tailscale-first by default and not directly exposed to the public internet.
+> Access model: `full` profile includes Tailscale setup for private remote access; `local` profile skips Tailscale entirely and serves the same panel on the LAN. Neither profile is intended for direct public internet exposure.
 
 ---
 
@@ -73,7 +73,7 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 | Data | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Testing & Quality | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
-| Infrastructure | systemd services, Tailscale access, script-based deployment |
+| Infrastructure | systemd services, full/local access profiles, script-based deployment |
 
 ---
 
@@ -81,7 +81,7 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 
 ```mermaid
 flowchart TD
-    A[Client Browser] --> B[Caddy :80]
+    A[Client Browser] --> B[Caddy :8088]
     B --> C[FastAPI API :8080]
     C --> D[(control.db)]
     C --> E[(telemetry.db)]
@@ -119,12 +119,25 @@ Core flow:
 
 ## Installation
 
+### Installation Profiles
+
+```bash
+# Full profile: full system plus Tailscale setup for private remote access
+sudo ./install.sh --profile full
+
+# Local profile: same system on the LAN, with no Tailscale install or prompts
+sudo ./install.sh --profile local
+```
+
+`sudo ./install.sh` defaults to the `full` profile. `sudo ./install.sh --no-tailscale` is kept as a backwards-compatible alias for `--profile local`.
+
 ### 1) Remote Deployment (Mac/Linux -> Pi)
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-./deploy-native.sh pi@<tailscale-ip-or-lan-ip>
+./deploy-native.sh --profile local pi@<lan-ip>
+./deploy-native.sh --profile full pi@<tailscale-ip-or-lan-ip>
 ```
 
 In this flow, the script:
@@ -140,12 +153,18 @@ In this flow, the script:
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
 chmod +x install.sh
-sudo ./install.sh
+sudo ./install.sh --profile full
+# or
+sudo ./install.sh --profile local
 ```
 
 Common options:
 
 ```bash
+sudo ./install.sh --profile full
+sudo ./install.sh --profile full --web-port 8088
+sudo ./install.sh --profile local
+sudo ./install.sh --profile local --web-port 8088
 sudo ./install.sh --skip-preflight
 sudo ./install.sh --no-tailscale
 sudo ./install.sh --upgrade
@@ -153,9 +172,16 @@ sudo ./install.sh --upgrade
 
 After installation:
 
-- UI: `http://<pi-ip>`
-- API health: `http://<pi-ip>/api/health`
-- API docs (if debug enabled): `http://<pi-ip>/api/docs`
+- UI: `http://<pi-ip>:8088`
+- API health: `http://<pi-ip>:8088/api/health`
+- API docs (if debug enabled): `http://<pi-ip>:8088/api/docs`
+- The installer prints the connection link and initial login:
+  - `Open this link from a device on the same network: http://<pi-ip>:8088`
+  - `Username: admin`
+  - `Password: admin`
+- Full profile: run `sudo tailscale up` if the installer reports that Tailscale is not connected yet.
+- Local profile: open `http://<pi-ip>:8088` from a device on the same LAN.
+- Change the exposed web port with `sudo ./install.sh --profile local --web-port <port>`.
 
 ---
 
@@ -204,6 +230,7 @@ Common variables:
 | `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket path |
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret file |
 | `API_DEBUG` | `false` | Enables debug and docs |
+| `WEB_PORT` | `8088` | Caddy web UI port used by install/check scripts |
 | `PANEL_ALLOW_LAN` | `false` | LAN access mode |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour |
 | `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute |
@@ -211,12 +238,12 @@ Common variables:
 Default admin at first startup:
 
 - username: `admin`
-- password: `admin123`
+- password: `admin`
 
 Override default password during install:
 
 ```bash
-sudo DEFAULT_ADMIN_PASSWORD='a-strong-password' ./install.sh
+sudo DEFAULT_ADMIN_PASSWORD='a-strong-password' ./install.sh --profile local
 ```
 
 ---
@@ -281,9 +308,9 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 
 If dashboard is not accessible:
 
-1. Check connection with `tailscale status`.
-2. Verify services with `sudo systemctl status pi-control caddy`.
-3. Test `http://<pi-ip>/api/health`.
+1. Verify services with `sudo systemctl status pi-control caddy`.
+2. Test `http://<pi-ip>:8088/api/health`.
+3. For full profile, check `tailscale status`; for local profile, confirm your browser is on the same LAN as the Pi.
 
 ---
 
@@ -310,7 +337,7 @@ MIT License - see [LICENSE](./LICENSE) for details.
   <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
-  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
+  <img src="https://img.shields.io/badge/access-Full%20or%20Local-0A66C2" alt="Access profiles">
   <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
 </p>
 
@@ -327,7 +354,7 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 - Alarm kurallari, audit izleri, arsiv ve yedekleme
 - Lokal gunluk export ve retention arsivleme akisi
 
-> Guvenlik modeli: varsayilan olarak Tailscale-first ve internete dogrudan acik degil.
+> Erisim modeli: `full` profili ozel uzak erisim icin Tailscale kurulumunu dahil eder; `local` profili Tailscale'i tamamen atlar ve ayni paneli LAN uzerinde servis eder. Iki profil de dogrudan public internet acilimi icin tasarlanmamistir.
 
 ---
 
@@ -366,7 +393,7 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 | Veri | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Test ve Kalite | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
-| Altyapi | systemd servisleri, Tailscale erisimi, script tabanli deployment |
+| Altyapi | systemd servisleri, full/local erisim profilleri, script tabanli deployment |
 
 ---
 
@@ -374,7 +401,7 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 
 ```mermaid
 flowchart TD
-    A[Client Browser] --> B[Caddy :80]
+    A[Client Browser] --> B[Caddy :8088]
     B --> C[FastAPI API :8080]
     C --> D[(control.db)]
     C --> E[(telemetry.db)]
@@ -412,12 +439,25 @@ Temel calisma modeli:
 
 ## Kurulum
 
+### Kurulum Profilleri
+
+```bash
+# Full profil: tum sistem ve ozel uzak erisim icin Tailscale kurulumu
+sudo ./install.sh --profile full
+
+# Local profil: ayni sistem LAN uzerinde calisir, Tailscale kurulmaz ve sorulmaz
+sudo ./install.sh --profile local
+```
+
+`sudo ./install.sh` varsayilan olarak `full` profilini kullanir. `sudo ./install.sh --no-tailscale`, geriye uyumluluk icin `--profile local` alias'i olarak kalir.
+
 ### 1) Uzak Deployment (Mac/Linux -> Pi)
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-./deploy-native.sh pi@<tailscale-ip-veya-lan-ip>
+./deploy-native.sh --profile local pi@<lan-ip>
+./deploy-native.sh --profile full pi@<tailscale-ip-veya-lan-ip>
 ```
 
 Bu akista script:
@@ -433,12 +473,18 @@ Bu akista script:
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
 chmod +x install.sh
-sudo ./install.sh
+sudo ./install.sh --profile full
+# veya
+sudo ./install.sh --profile local
 ```
 
 Sik kullanilan opsiyonlar:
 
 ```bash
+sudo ./install.sh --profile full
+sudo ./install.sh --profile full --web-port 8088
+sudo ./install.sh --profile local
+sudo ./install.sh --profile local --web-port 8088
 sudo ./install.sh --skip-preflight
 sudo ./install.sh --no-tailscale
 sudo ./install.sh --upgrade
@@ -446,9 +492,16 @@ sudo ./install.sh --upgrade
 
 Kurulum sonrasi:
 
-- UI: `http://<pi-ip>`
-- API health: `http://<pi-ip>/api/health`
-- API docs (debug aciksa): `http://<pi-ip>/api/docs`
+- UI: `http://<pi-ip>:8088`
+- API health: `http://<pi-ip>:8088/api/health`
+- API docs (debug aciksa): `http://<pi-ip>:8088/api/docs`
+- Installer terminalde baglanti linkini ve ilk giris bilgisini yazar:
+  - `Open this link from a device on the same network: http://<pi-ip>:8088`
+  - `Username: admin`
+  - `Password: admin`
+- Full profil: kurulum Tailscale bagli degil derse `sudo tailscale up` calistirin.
+- Local profil: ayni LAN'daki bir cihazdan `http://<pi-ip>:8088` adresini acin.
+- Disaridan gorunen web portunu `sudo ./install.sh --profile local --web-port <port>` ile degistirebilirsiniz.
 
 ---
 
@@ -497,6 +550,7 @@ Sik kullanilan degiskenler:
 | `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket yolu |
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret dosyasi |
 | `API_DEBUG` | `false` | Debug ve docs aktivasyonu |
+| `WEB_PORT` | `8088` | Install/check scriptlerinin kullandigi Caddy web UI portu |
 | `PANEL_ALLOW_LAN` | `false` | LAN erisim modu |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Gunluk export saati |
 | `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Gunluk export dakikasi |
@@ -504,12 +558,12 @@ Sik kullanilan degiskenler:
 Ilk acilista varsayilan admin:
 
 - kullanici: `admin`
-- sifre: `admin123`
+- sifre: `admin`
 
 Kurulumda sifre override:
 
 ```bash
-sudo DEFAULT_ADMIN_PASSWORD='guclu-bir-sifre' ./install.sh
+sudo DEFAULT_ADMIN_PASSWORD='guclu-bir-sifre' ./install.sh --profile local
 ```
 
 ---
@@ -574,9 +628,9 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 
 Dashboard acilmiyorsa:
 
-1. `tailscale status` ile baglantiyi kontrol edin.
-2. `sudo systemctl status pi-control caddy` ile servis durumlarini dogrulayin.
-3. `http://<pi-ip>/api/health` yanitini test edin.
+1. `sudo systemctl status pi-control caddy` ile servis durumlarini dogrulayin.
+2. `http://<pi-ip>:8088/api/health` yanitini test edin.
+3. Full profilde `tailscale status` kontrol edin; local profilde tarayicinin Pi ile ayni LAN'da oldugunu dogrulayin.
 
 ---
 

@@ -2,7 +2,7 @@
 # Pi Control Panel - Native Deployment Script
 #
 # Usage:
-#   ./deploy-native.sh user@host
+#   ./deploy-native.sh [--profile full|local] user@host
 
 set -euo pipefail
 
@@ -18,12 +18,14 @@ readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PI_HOST="${1:-}"
+PI_HOST=""
 SSH_PASSWORD="${SSH_PASS:-}"
+INSTALL_PROFILE="local"
+WEB_PORT="${WEB_PORT:-8088}"
 
 SSH_OPTIONS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 SSH_BATCH_OPTIONS=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-INSTALL_FLAGS=(--skip-preflight --no-tailscale)
+INSTALL_FLAGS=()
 
 SSH_CMD=()
 SSH_TTY_CMD=()
@@ -33,11 +35,18 @@ RSYNC_RSH_STRING=""
 
 print_usage() {
     cat <<'EOF'
-Usage: ./deploy-native.sh user@pi-ip-address
+Usage: ./deploy-native.sh [OPTIONS] user@pi-ip-address
+
+Options:
+  --profile MODE    Installation profile: full or local (default: local)
+  --web-port PORT   Web UI port exposed by Caddy (default: 8088)
+  --no-tailscale    Alias for --profile local
+  -h, --help        Show this help text
 
 Examples:
-  ./deploy-native.sh pi@192.168.1.100
-  SSH_PASS='secret' ./deploy-native.sh pi@100.x.y.z
+  ./deploy-native.sh --profile local pi@192.168.1.100
+  ./deploy-native.sh --profile full pi@100.x.y.z
+  SSH_PASS='secret' ./deploy-native.sh --profile local pi@192.168.1.100
 EOF
 }
 
@@ -66,6 +75,85 @@ warn() {
 
 fail() {
     echo -e "  ${RED}ERR${NC} $1"
+}
+
+set_install_profile() {
+    local profile="$1"
+
+    case "$profile" in
+        full|local)
+            INSTALL_PROFILE="$profile"
+            ;;
+        *)
+            fail "Invalid profile: $profile"
+            echo "  Valid profiles: full, local"
+            exit 1
+            ;;
+    esac
+}
+
+set_web_port() {
+    local port="$1"
+
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        fail "Invalid web port: $port"
+        echo "  Use a port number between 1 and 65535."
+        exit 1
+    fi
+
+    WEB_PORT="$port"
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile)
+                if [[ $# -lt 2 ]]; then
+                    fail "--profile requires a value: full or local"
+                    exit 1
+                fi
+                set_install_profile "$2"
+                shift
+                ;;
+            --profile=*)
+                set_install_profile "${1#*=}"
+                ;;
+            --web-port)
+                if [[ $# -lt 2 ]]; then
+                    fail "--web-port requires a numeric value"
+                    exit 1
+                fi
+                set_web_port "$2"
+                shift
+                ;;
+            --web-port=*)
+                set_web_port "${1#*=}"
+                ;;
+            --no-tailscale)
+                set_install_profile "local"
+                ;;
+            -h|--help)
+                print_usage
+                exit 0
+                ;;
+            -*)
+                fail "Unknown option: $1"
+                echo ""
+                print_usage
+                exit 1
+                ;;
+            *)
+                if [[ -n "$PI_HOST" ]]; then
+                    fail "Multiple target hosts provided: $PI_HOST and $1"
+                    exit 1
+                fi
+                PI_HOST="$1"
+                ;;
+        esac
+        shift
+    done
+
+    INSTALL_FLAGS=(--skip-preflight --profile "$INSTALL_PROFILE" --web-port "$WEB_PORT")
 }
 
 setup_transport() {
@@ -206,7 +294,15 @@ print_summary() {
     echo -e "${GREEN}  Remote Deployment Complete${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo ""
-    echo -e "${BLUE}Access:${NC} http://$remote_ip"
+    echo -e "${BLUE}Connection:${NC}"
+    echo "  Open this link from a device on the same network:"
+    echo "  http://$remote_ip:$WEB_PORT"
+    echo ""
+    echo -e "${BLUE}Initial admin login:${NC}"
+    echo "  This is used only when the database does not already contain an admin user."
+    echo "  Username: admin"
+    echo "  Password: admin"
+    echo ""
     echo -e "${BLUE}Useful commands:${NC}"
     echo "  ssh $PI_HOST"
     echo "  sudo systemctl status pi-control"
@@ -216,6 +312,8 @@ print_summary() {
 }
 
 main() {
+    parse_args "$@"
+
     if [[ -z "$PI_HOST" ]]; then
         print_usage
         exit 1
@@ -225,6 +323,8 @@ main() {
 
     print_header
     info "Target host: $PI_HOST"
+    info "Install profile: $INSTALL_PROFILE"
+    info "Web port: $WEB_PORT"
     info "Install directory: $PROJECT_DIR"
     info "Remote installer flags: ${INSTALL_FLAGS[*]}"
     echo ""

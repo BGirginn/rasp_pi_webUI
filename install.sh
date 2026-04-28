@@ -26,21 +26,29 @@ SKIP_PREFLIGHT=false
 SKIP_TAILSCALE=false
 UPGRADE_MODE=false
 VERBOSE=false
+INSTALL_PROFILE="full"
+WEB_PORT="${WEB_PORT:-8088}"
 
 INSTALL_USER="${SUDO_USER:-}"
 INSTALL_GROUP=""
-DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin123}"
+DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin}"
 
 print_usage() {
     cat <<'EOF'
 Usage: sudo ./install.sh [OPTIONS]
 
 Options:
+  --profile MODE      Installation profile: full or local (default: full)
+  --web-port PORT     Web UI port exposed by Caddy (default: 8088)
   --skip-preflight   Skip scripts/pre-flight-check.sh
-  --no-tailscale     Skip Tailscale installation and next-step prompts
+  --no-tailscale     Alias for --profile local
   --upgrade          Run scripts/update.sh instead of a full install
   --verbose          Show full apt/pip/npm output
   -h, --help         Show this help text
+
+Profiles:
+  full               Install the full system and include Tailscale setup
+  local              Install the same system for LAN access only, without Tailscale
 EOF
 }
 
@@ -89,14 +97,68 @@ run_shell() {
     fi
 }
 
+set_install_profile() {
+    local profile="$1"
+
+    case "$profile" in
+        full)
+            INSTALL_PROFILE="full"
+            SKIP_TAILSCALE=false
+            ;;
+        local)
+            INSTALL_PROFILE="local"
+            SKIP_TAILSCALE=true
+            ;;
+        *)
+            fail "Invalid profile: $profile"
+            echo "  Valid profiles: full, local"
+            exit 1
+            ;;
+    esac
+}
+
+set_web_port() {
+    local port="$1"
+
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        fail "Invalid web port: $port"
+        echo "  Use a port number between 1 and 65535."
+        exit 1
+    fi
+
+    WEB_PORT="$port"
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --profile)
+                if [[ $# -lt 2 ]]; then
+                    fail "--profile requires a value: full or local"
+                    exit 1
+                fi
+                set_install_profile "$2"
+                shift
+                ;;
+            --profile=*)
+                set_install_profile "${1#*=}"
+                ;;
+            --web-port)
+                if [[ $# -lt 2 ]]; then
+                    fail "--web-port requires a numeric value"
+                    exit 1
+                fi
+                set_web_port "$2"
+                shift
+                ;;
+            --web-port=*)
+                set_web_port "${1#*=}"
+                ;;
             --skip-preflight)
                 SKIP_PREFLIGHT=true
                 ;;
             --no-tailscale)
-                SKIP_TAILSCALE=true
+                set_install_profile "local"
                 ;;
             --upgrade)
                 UPGRADE_MODE=true
@@ -152,7 +214,7 @@ run_preflight_check() {
         exit 1
     fi
 
-    if bash "$preflight_script"; then
+    if bash "$preflight_script" --profile "$INSTALL_PROFILE" --web-port "$WEB_PORT"; then
         success "Pre-flight checks passed."
         return
     fi
@@ -233,7 +295,7 @@ install_tailscale() {
     local ts_ip=""
 
     if [[ "$SKIP_TAILSCALE" == true ]]; then
-        warn "Skipping Tailscale installation."
+        info "Local profile selected; skipping remote access setup."
         return
     fi
 
@@ -335,8 +397,8 @@ build_ui() {
 write_service_env_file() {
     local escaped_password=""
 
-    if [[ -n "${DEFAULT_ADMIN_PASSWORD:-}" ]]; then
-        escaped_password="${DEFAULT_ADMIN_PASSWORD//\\/\\\\}"
+    if [[ -n "$DEFAULT_ADMIN_PASSWORD_VALUE" ]]; then
+        escaped_password="${DEFAULT_ADMIN_PASSWORD_VALUE//\\/\\\\}"
         escaped_password="${escaped_password//\"/\\\"}"
         printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" > "$SERVICE_ENV_FILE"
         chmod 600 "$SERVICE_ENV_FILE"
@@ -404,7 +466,7 @@ EOF
 configure_caddy() {
     section "Configuring Caddy..."
 
-    cp "$PROJECT_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
+    sed "0,/^:[0-9][0-9]* {/s//:${WEB_PORT} {/" "$PROJECT_DIR/caddy/Caddyfile" > /etc/caddy/Caddyfile
 
     success "Caddy configuration updated."
 }
@@ -450,12 +512,18 @@ print_summary() {
     echo -e "${GREEN}  Installation Complete${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo ""
-    echo -e "${BLUE}Access:${NC} http://$pi_ip"
+    echo -e "${BLUE}Profile:${NC} $INSTALL_PROFILE"
+    echo ""
+    echo -e "${BLUE}Connection:${NC}"
+    echo "  Open this link from a device on the same network:"
+    echo "  http://$pi_ip:$WEB_PORT"
     echo ""
     echo -e "${BLUE}Initial admin login:${NC}"
     echo "  This is used only when the database does not already contain an admin user."
     echo "  Username: admin"
     echo "  Password: $DEFAULT_ADMIN_PASSWORD_VALUE"
+    echo ""
+    echo "  You can sign in with the username and password above."
     echo ""
     echo -e "${YELLOW}Change the admin password after the first login.${NC}"
     if [[ "$SKIP_TAILSCALE" == false ]]; then
@@ -480,6 +548,8 @@ main() {
 
     print_header
     info "Installation user: $INSTALL_USER"
+    info "Install profile: $INSTALL_PROFILE"
+    info "Web port: $WEB_PORT"
     info "Install directory: $PROJECT_DIR"
     echo ""
 

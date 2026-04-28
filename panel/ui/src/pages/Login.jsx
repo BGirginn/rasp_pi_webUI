@@ -162,7 +162,7 @@ export default function Login() {
 
                         <div className="login-hint">
                             <span aria-hidden="true">🔒</span>
-                            Secure access via Tailscale VPN
+                            Secure local and remote access
                         </div>
                     </form>
 

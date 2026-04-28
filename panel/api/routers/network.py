@@ -381,7 +381,7 @@ async def check_connectivity(user: dict = Depends(get_current_user)):
             "lan": True,
             "internet": True,
             "dns": True,
-            "tailscale": True,
+            "tailscale": False,
             "latency_ms": 15,
         }
 

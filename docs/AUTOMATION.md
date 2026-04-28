@@ -7,10 +7,14 @@ Complete guide for automated deployment and management of Pi Control Panel.
 ### One-Line Installation
 
 ```bash
-# Clone and install
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-sudo ./install.sh
+
+# Full profile: full system plus Tailscale setup for private remote access
+sudo ./install.sh --profile full
+
+# Local profile: same system on the LAN, with no Tailscale install or prompts
+sudo ./install.sh --profile local
 ```
 
 ### Remote Deployment (from Mac/Linux)
@@ -21,7 +25,8 @@ git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
 
 # Deploy to Pi
-./deploy-native.sh pi@<raspberry-pi-ip>
+./deploy-native.sh --profile local pi@<lan-ip>
+./deploy-native.sh --profile full pi@<tailscale-ip-or-lan-ip>
 ```
 
 ---
@@ -30,24 +35,33 @@ cd rasp_pi_webUI
 
 ### `install.sh` - Main Installer
 
-Full automated installation with all dependencies.
+Automated installation with two access profiles.
 
 ```bash
-# Basic installation
-sudo ./install.sh
+# Full profile is the default
+sudo ./install.sh --profile full
+
+# Local LAN-only profile
+sudo ./install.sh --profile local
 
 # Options
+sudo ./install.sh --profile full     # Full install with Tailscale setup
+sudo ./install.sh --profile local    # Same app without Tailscale setup
+sudo ./install.sh --profile local --web-port 8088
 sudo ./install.sh --skip-preflight   # Skip system checks
-sudo ./install.sh --no-tailscale     # Skip Tailscale install and prompts
+sudo ./install.sh --no-tailscale     # Alias for --profile local
 sudo ./install.sh --upgrade          # Run scripts/update.sh instead
 sudo ./install.sh --verbose          # Verbose output
-sudo DEFAULT_ADMIN_PASSWORD='strong-password' ./install.sh
+sudo DEFAULT_ADMIN_PASSWORD='strong-password' ./install.sh --profile local
 ```
+
+`sudo ./install.sh` defaults to `--profile full`. Use `--profile local` when the panel only needs to run on the same LAN and should not install or invoke Tailscale.
+The web UI is exposed on port `8088` by default, so the LAN URL is `http://<pi-ip>:8088`. Use `--web-port <port>` to change it.
 
 **What it does:**
 1. ✅ Validates system requirements
 2. ✅ Installs Python 3, Node.js 20, Caddy, SQLite and installer prerequisites
-3. ✅ Optionally installs Tailscale
+3. ✅ Installs Tailscale only in the `full` profile
 4. ✅ Copies the project into `/opt/pi-control`
 5. ✅ Creates Python virtual environment
 6. ✅ Builds React frontend
@@ -60,7 +74,7 @@ sudo DEFAULT_ADMIN_PASSWORD='strong-password' ./install.sh
 If the database is empty, the first boot creates:
 
 - username: `admin`
-- password: `admin123`
+- password: `admin`
 
 Use `DEFAULT_ADMIN_PASSWORD` during install to override that first password.
 
@@ -71,7 +85,8 @@ Use `DEFAULT_ADMIN_PASSWORD` during install to override that first password.
 Run before installation to check requirements.
 
 ```bash
-./scripts/pre-flight-check.sh
+./scripts/pre-flight-check.sh --profile full
+./scripts/pre-flight-check.sh --profile local
 ```
 
 **Checks:**
@@ -80,6 +95,7 @@ Run before installation to check requirements.
 - Disk: Free space
 - OS: Version compatibility
 - Network: Internet connectivity
+- Tailscale: only checked in `full` profile
 - Ports: 80, 8080, 8081 availability
 - Existing installation detection
 
@@ -124,7 +140,8 @@ sudo ./scripts/uninstall.sh --yes        # Skip prompts
 ### `scripts/health-check.sh` - Validation
 
 ```bash
-./scripts/health-check.sh
+./scripts/health-check.sh --profile full
+./scripts/health-check.sh --profile local
 ```
 
 **Checks:**
@@ -133,7 +150,7 @@ sudo ./scripts/uninstall.sh --yes        # Skip prompts
 - Web interface
 - Database integrity
 - Configuration files
-- Network/Tailscale
+- Network and profile-specific remote access
 - System resources
 
 ---
@@ -212,7 +229,7 @@ rm /var/lib/pi-control/*.db
 sudo systemctl start pi-control
 ```
 
-### Tailscale not connected
+### Tailscale not connected (`full` profile only)
 
 ```bash
 # Check status
@@ -224,6 +241,8 @@ sudo tailscale up
 # Get IP
 tailscale ip -4
 ```
+
+The `local` profile does not install, check, or require Tailscale. Use `http://<pi-ip>:8088` from a device on the same LAN.
 
 ---
 
@@ -255,7 +274,7 @@ sudo journalctl -u pi-control -n 100   # Last 100 lines
 sudo systemctl status caddy
 sudo systemctl reload caddy
 
-# Tailscale
+# Tailscale (full profile only)
 tailscale status
 tailscale ip -4
 ```
@@ -264,10 +283,11 @@ tailscale ip -4
 
 ## Security Notes
 
-- Change default password (`admin`/`admin123`) immediately
+- Change default password (`admin`/`admin`) immediately
 - JWT secret is unique per installation
 - Services run as non-root user
-- Tailscale provides encrypted remote access
+- `full` profile uses Tailscale for encrypted private remote access
+- `local` profile skips Tailscale and is intended for same-LAN access
 - Consider enabling UFW firewall
 
 ---
