@@ -22,8 +22,24 @@ readonly CONFIG_DIR="/etc/pi-control"
 readonly SERVICE_ENV_FILE="$CONFIG_DIR/pi-control.env"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+readonly PROJECT_RSYNC_EXCLUDES=(
+    --exclude 'node_modules'
+    --exclude '__pycache__'
+    --exclude '.mypy_cache'
+    --exclude '.pytest_cache'
+    --exclude '*.pyc'
+    --exclude '.DS_Store'
+    --exclude '.git'
+    --exclude '.venv'
+    --exclude 'venv'
+    --exclude '.env'
+    --exclude '*.db'
+    --exclude '*.db-shm'
+    --exclude '*.db-wal'
+    --exclude 'dist'
+)
+
 SKIP_PREFLIGHT=false
-SKIP_TAILSCALE=false
 UPGRADE_MODE=false
 VERBOSE=false
 INSTALL_PROFILE="full"
@@ -49,6 +65,10 @@ Options:
 Profiles:
   full               Install the full system and include Tailscale setup
   local              Install the same system for LAN access only, without Tailscale
+
+Environment:
+  DEFAULT_ADMIN_PASSWORD    Initial admin password (default: admin)
+  WEB_PORT                  Default value for --web-port
 EOF
 }
 
@@ -103,11 +123,9 @@ set_install_profile() {
     case "$profile" in
         full)
             INSTALL_PROFILE="full"
-            SKIP_TAILSCALE=false
             ;;
         local)
             INSTALL_PROFILE="local"
-            SKIP_TAILSCALE=true
             ;;
         *)
             fail "Invalid profile: $profile"
@@ -294,7 +312,7 @@ install_dependencies() {
 install_tailscale() {
     local ts_ip=""
 
-    if [[ "$SKIP_TAILSCALE" == true ]]; then
+    if [[ "$INSTALL_PROFILE" == "local" ]]; then
         info "Local profile selected; skipping remote access setup."
         return
     fi
@@ -341,22 +359,7 @@ create_directories() {
 copy_project_files() {
     section "Copying project files..."
 
-    run_cmd rsync -a \
-        --exclude 'node_modules' \
-        --exclude '__pycache__' \
-        --exclude '.mypy_cache' \
-        --exclude '.pytest_cache' \
-        --exclude '*.pyc' \
-        --exclude '.DS_Store' \
-        --exclude '.git' \
-        --exclude '.venv' \
-        --exclude 'venv' \
-        --exclude '.env' \
-        --exclude '*.db' \
-        --exclude '*.db-shm' \
-        --exclude '*.db-wal' \
-        --exclude 'dist' \
-        "$SCRIPT_DIR/" "$PROJECT_DIR/"
+    run_cmd rsync -a "${PROJECT_RSYNC_EXCLUDES[@]}" "$SCRIPT_DIR/" "$PROJECT_DIR/"
 
     chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR"
 
@@ -526,7 +529,7 @@ print_summary() {
     echo "  You can sign in with the username and password above."
     echo ""
     echo -e "${YELLOW}Change the admin password after the first login.${NC}"
-    if [[ "$SKIP_TAILSCALE" == false ]]; then
+    if [[ "$INSTALL_PROFILE" == "full" ]]; then
         echo -e "${BLUE}Tailscale:${NC}"
         echo "  If the device is not connected yet, run: sudo tailscale up"
         echo ""

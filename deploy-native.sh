@@ -18,10 +18,28 @@ readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+readonly PROJECT_RSYNC_EXCLUDES=(
+    --exclude 'node_modules'
+    --exclude '__pycache__'
+    --exclude '.mypy_cache'
+    --exclude '.pytest_cache'
+    --exclude '*.pyc'
+    --exclude '.DS_Store'
+    --exclude '.git'
+    --exclude '.venv'
+    --exclude 'venv'
+    --exclude '.env'
+    --exclude '*.db'
+    --exclude '*.db-shm'
+    --exclude '*.db-wal'
+    --exclude 'dist'
+)
+
 PI_HOST=""
 SSH_PASSWORD="${SSH_PASS:-}"
 INSTALL_PROFILE="local"
 WEB_PORT="${WEB_PORT:-8088}"
+DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin}"
 
 SSH_OPTIONS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 SSH_BATCH_OPTIONS=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
@@ -42,6 +60,11 @@ Options:
   --web-port PORT   Web UI port exposed by Caddy (default: 8088)
   --no-tailscale    Alias for --profile local
   -h, --help        Show this help text
+
+Environment:
+  SSH_PASS                  Optional SSH password when sshpass is installed
+  DEFAULT_ADMIN_PASSWORD    Initial admin password passed to the remote install
+  WEB_PORT                  Default value for --web-port
 
 Examples:
   ./deploy-native.sh --profile local pi@192.168.1.100
@@ -238,29 +261,21 @@ sync_project_files() {
 
     "${RSYNC_CMD[@]}" -avz --progress \
         -e "$RSYNC_RSH_STRING" \
-        --exclude 'node_modules' \
-        --exclude '__pycache__' \
-        --exclude '.mypy_cache' \
-        --exclude '.pytest_cache' \
-        --exclude '*.pyc' \
-        --exclude '.DS_Store' \
-        --exclude '.git' \
-        --exclude '.venv' \
-        --exclude 'venv' \
-        --exclude '.env' \
-        --exclude '*.db' \
-        --exclude '*.db-shm' \
-        --exclude '*.db-wal' \
-        --exclude 'dist' \
+        "${PROJECT_RSYNC_EXCLUDES[@]}" \
         "$SCRIPT_DIR/" "$PI_HOST:$PROJECT_DIR/"
 
     success "Project files synced to $PI_HOST."
 }
 
 run_remote_install() {
+    local flags_string=""
     local installer_command=""
+    local quoted_password=""
 
-    printf -v installer_command "cd '%s' && chmod +x install.sh && ./install.sh %s" "$PROJECT_DIR" "${INSTALL_FLAGS[*]}"
+    printf -v flags_string '%q ' "${INSTALL_FLAGS[@]}"
+    flags_string="${flags_string% }"
+    printf -v quoted_password '%q' "$DEFAULT_ADMIN_PASSWORD_VALUE"
+    printf -v installer_command "cd '%s' && chmod +x install.sh && DEFAULT_ADMIN_PASSWORD=%s ./install.sh %s" "$PROJECT_DIR" "$quoted_password" "$flags_string"
 
     section "Running remote installer..."
     run_remote_sudo "$installer_command"
@@ -301,7 +316,7 @@ print_summary() {
     echo -e "${BLUE}Initial admin login:${NC}"
     echo "  This is used only when the database does not already contain an admin user."
     echo "  Username: admin"
-    echo "  Password: admin"
+    echo "  Password: $DEFAULT_ADMIN_PASSWORD_VALUE"
     echo ""
     echo -e "${BLUE}Useful commands:${NC}"
     echo "  ssh $PI_HOST"
