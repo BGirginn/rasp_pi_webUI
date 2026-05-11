@@ -64,6 +64,9 @@ This document outlines the security threats, attack vectors, and mitigations for
 | Man-in-the-middle | CRITICAL | TLS everywhere, Tailscale for access |
 | Unauthorized network access | HIGH | LAN-only by default, Tailscale ACLs |
 | DNS spoofing | MEDIUM | DNSSEC, hardcoded IP fallbacks |
+| DNS filter bypass | MEDIUM | Router DNS is manual, AdGuard managed locally, limitations documented |
+| DNS query history exposure | HIGH | Query logs are admin-only and treated as browsing metadata |
+| DNS service disruption | HIGH | Port 53 conflict checks, no automatic router/DHCP mutation |
 | WiFi credential theft | HIGH | Encrypted storage, memory-only passwords |
 
 ### 5. MQTT/IoT Security
@@ -98,6 +101,21 @@ This document outlines the security threats, attack vectors, and mitigations for
 - **Entry Point**: Network broadcast, HTTP redirect
 - **Mitigations**: HTTPS only, no HTTP on port 80, LAN isolation
 
+### A3b: DNS Filtering Bypass
+- **Entry Point**: Client uses hardcoded DNS, DoH/DoT, VPN, or first-party ad delivery
+- **Mitigations**: Router/DHCP DNS points to the Pi, native AdGuard UI remains localhost-only, bypass limits are documented
+- **Out of scope v1**: DHCP server replacement, firewall DNS hijacking, per-device parental profiles
+
+### A3c: DNS Query Privacy Leak
+- **Entry Point**: Authenticated user inspects LAN DNS query history
+- **Mitigations**: Query log API and UI are admin-only, mutations are audit logged, native AdGuard UI is localhost-only
+- **Residual Risk**: Admin users can still inspect DNS metadata by design; this must be treated like browsing history
+
+### A3d: DNS Outage From Misconfiguration
+- **Entry Point**: Port 53 conflict, broken upstream, or router DNS pointed to an unhealthy Pi
+- **Mitigations**: Installer fails fast on port 53 conflicts, AdGuard upstream defaults to Cloudflare security DoH with bootstrap DNS, router DNS change remains manual
+- **Residual Risk**: If the Pi is offline and the router only advertises the Pi as DNS, clients may lose DNS resolution until router DNS is changed or the Pi recovers
+
 ### A4: Insider Threat (Operator)
 - **Entry Point**: Authenticated API access
 - **Mitigations**: RBAC, audit logging, CORE resource protection
@@ -126,6 +144,8 @@ This document outlines the security threats, attack vectors, and mitigations for
 - [x] Tailscale for secure remote access
 - [x] No external ports exposed (internal service network)
 - [x] Unix socket for Agent-Panel communication
+- [x] Optional AdGuard Home DNS filtering with local-only management API
+- [x] DNS query logs restricted to administrators
 
 ### Audit
 - [x] All actions logged with user, IP, timestamp

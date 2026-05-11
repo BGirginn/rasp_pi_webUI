@@ -173,6 +173,27 @@ wifi_toggle:
   auto_rollback_on_disconnect: true
 ```
 
+### DNS Filtering Safeguards
+
+```yaml
+dns_filter:
+  engine: AdGuard Home
+  install_mode: opt-in (--with-adguard)
+  dns_listener: "0.0.0.0:53"
+  admin_ui_listener: "127.0.0.1:3000"
+  credentials_file: "/etc/pi-control/pi-control.env"
+  credentials_mode: "0600"
+  router_dns_changes: manual_only
+  port_53_conflict_policy: fail_fast
+  dhcp_server_mode: out_of_scope_v1
+  dns_hijack: out_of_scope_v1
+  per_device_parental_profiles: out_of_scope_v1
+```
+
+Only administrators can change protection toggles, managed block/allow rules, view DNS query logs, or clear the DNS cache. DNS query logs are treated as browsing metadata. Viewers and operators can view service status and run single-domain checks, but cannot inspect recent LAN DNS history. Native AdGuard Home web/API access is not exposed on LAN by Caddy; the panel talks to the local API with credentials stored in `/etc/pi-control/pi-control.env`.
+
+The installer refuses `--with-adguard` when port 53 is already owned by another process. Common conflicts include `systemd-resolved`, `dnsmasq`, and `pihole-FTL`.
+
 ### CORS Configuration
 
 ```yaml

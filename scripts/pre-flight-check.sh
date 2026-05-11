@@ -28,6 +28,7 @@ ERRORS=0
 WARNINGS=0
 INSTALL_PROFILE="full"
 WEB_PORT="${WEB_PORT:-8088}"
+WITH_ADGUARD=false
 
 # Minimum requirements
 readonly MIN_RAM_MB=900        # ~1GB with some tolerance
@@ -78,6 +79,7 @@ Usage: ./scripts/pre-flight-check.sh [OPTIONS]
 Options:
   --profile MODE    Installation profile: full or local (default: full)
   --web-port PORT   Web UI port exposed by Caddy (default: 8088)
+  --with-adguard    Check AdGuard Home DNS filtering requirements
   --no-tailscale    Alias for --profile local
   -h, --help        Show this help text
 EOF
@@ -134,6 +136,9 @@ parse_args() {
                 ;;
             --web-port=*)
                 set_web_port "${1#*=}"
+                ;;
+            --with-adguard)
+                WITH_ADGUARD=true
                 ;;
             --no-tailscale)
                 set_install_profile "local"
@@ -461,6 +466,21 @@ check_ports() {
             check_pass "Port $port ($name): Available"
         fi
     done
+
+    if [[ "$WITH_ADGUARD" == true ]]; then
+        if ss -tulnp 2>/dev/null | grep -q ':53 ' || netstat -tulnp 2>/dev/null | grep -q ':53 '; then
+            local dns_process
+            dns_process=$(ss -tulnp 2>/dev/null | grep ':53 ' | awk '{print $NF}' | head -1 || echo "unknown")
+            if [[ "$dns_process" == *"AdGuardHome"* ]]; then
+                check_pass "Port 53 (DNS): In use by AdGuard Home"
+            else
+                check_fail "Port 53 (DNS): In use by $dns_process"
+                check_info "Common conflicts: systemd-resolved, dnsmasq, pihole-FTL. Free port 53 before using --with-adguard."
+            fi
+        else
+            check_pass "Port 53 (DNS): Available"
+        fi
+    fi
 }
 
 # ============================================================================
@@ -528,7 +548,11 @@ print_summary() {
     
     if [[ $ERRORS -eq 0 ]]; then
         echo -e "  ${CYAN}To install, run:${NC}"
-        echo -e "  ${BOLD}sudo ./install.sh --profile $INSTALL_PROFILE --web-port $WEB_PORT${NC}"
+        local adguard_flag=""
+        if [[ "$WITH_ADGUARD" == true ]]; then
+            adguard_flag=" --with-adguard"
+        fi
+        echo -e "  ${BOLD}sudo ./install.sh --profile $INSTALL_PROFILE --web-port $WEB_PORT$adguard_flag${NC}"
         echo ""
     fi
 }
@@ -543,6 +567,7 @@ main() {
     print_header
     check_info "Profile: $INSTALL_PROFILE"
     check_info "Web port: $WEB_PORT"
+    check_info "AdGuard Home: $WITH_ADGUARD"
     
     # Run all checks
     check_raspberry_pi

@@ -20,7 +20,7 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests, dns_filter
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
@@ -194,6 +194,7 @@ app.include_router(logs.router, prefix="/api/logs", tags=["Logs"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(network.router, prefix="/api/network", tags=["Network"])
+app.include_router(dns_filter.router, prefix="/api/dns-filter", tags=["DNS Filter"])
 app.include_router(devices.router, prefix="/api/devices", tags=["Devices"])
 app.include_router(admin_console.router, prefix="/api/admin", tags=["Admin Console"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["Terminal"])

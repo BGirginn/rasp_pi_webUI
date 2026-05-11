@@ -39,6 +39,7 @@ PI_HOST=""
 SSH_PASSWORD="${SSH_PASS:-}"
 INSTALL_PROFILE="local"
 WEB_PORT="${WEB_PORT:-8088}"
+WITH_ADGUARD=false
 DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin}"
 
 SSH_OPTIONS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
@@ -58,6 +59,7 @@ Usage: ./deploy-native.sh [OPTIONS] user@pi-ip-address
 Options:
   --profile MODE    Installation profile: full or local (default: local)
   --web-port PORT   Web UI port exposed by Caddy (default: 8088)
+  --with-adguard    Install and configure AdGuard Home DNS filtering
   --no-tailscale    Alias for --profile local
   -h, --help        Show this help text
 
@@ -152,6 +154,9 @@ parse_args() {
             --web-port=*)
                 set_web_port "${1#*=}"
                 ;;
+            --with-adguard)
+                WITH_ADGUARD=true
+                ;;
             --no-tailscale)
                 set_install_profile "local"
                 ;;
@@ -177,6 +182,9 @@ parse_args() {
     done
 
     INSTALL_FLAGS=(--skip-preflight --profile "$INSTALL_PROFILE" --web-port "$WEB_PORT")
+    if [[ "$WITH_ADGUARD" == true ]]; then
+        INSTALL_FLAGS+=(--with-adguard)
+    fi
 }
 
 setup_transport() {
@@ -340,6 +348,7 @@ main() {
     info "Target host: $PI_HOST"
     info "Install profile: $INSTALL_PROFILE"
     info "Web port: $WEB_PORT"
+    info "AdGuard Home: $WITH_ADGUARD"
     info "Install directory: $PROJECT_DIR"
     info "Remote installer flags: ${INSTALL_FLAGS[*]}"
     echo ""

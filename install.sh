@@ -44,6 +44,7 @@ UPGRADE_MODE=false
 VERBOSE=false
 INSTALL_PROFILE="full"
 WEB_PORT="${WEB_PORT:-8088}"
+WITH_ADGUARD=false
 
 INSTALL_USER="${SUDO_USER:-}"
 INSTALL_GROUP=""
@@ -56,6 +57,7 @@ Usage: sudo ./install.sh [OPTIONS]
 Options:
   --profile MODE      Installation profile: full or local (default: full)
   --web-port PORT     Web UI port exposed by Caddy (default: 8088)
+  --with-adguard     Install and configure AdGuard Home DNS filtering
   --skip-preflight   Skip scripts/pre-flight-check.sh
   --no-tailscale     Alias for --profile local
   --upgrade          Run scripts/update.sh instead of a full install
@@ -172,6 +174,9 @@ parse_args() {
             --web-port=*)
                 set_web_port "${1#*=}"
                 ;;
+            --with-adguard)
+                WITH_ADGUARD=true
+                ;;
             --skip-preflight)
                 SKIP_PREFLIGHT=true
                 ;;
@@ -218,6 +223,7 @@ ensure_sudo_context() {
 
 run_preflight_check() {
     local preflight_script="$SCRIPT_DIR/scripts/pre-flight-check.sh"
+    local preflight_args=(--profile "$INSTALL_PROFILE" --web-port "$WEB_PORT")
     local status=0
 
     if [[ "$SKIP_PREFLIGHT" == true ]]; then
@@ -232,7 +238,11 @@ run_preflight_check() {
         exit 1
     fi
 
-    if bash "$preflight_script" --profile "$INSTALL_PROFILE" --web-port "$WEB_PORT"; then
+    if [[ "$WITH_ADGUARD" == true ]]; then
+        preflight_args+=(--with-adguard)
+    fi
+
+    if bash "$preflight_script" "${preflight_args[@]}"; then
         success "Pre-flight checks passed."
         return
     fi
@@ -399,15 +409,25 @@ build_ui() {
 
 write_service_env_file() {
     local escaped_password=""
+    local tmp_env=""
+
+    tmp_env="$(mktemp)"
+    if [[ -f "$SERVICE_ENV_FILE" ]]; then
+        grep -v '^DEFAULT_ADMIN_PASSWORD=' "$SERVICE_ENV_FILE" > "$tmp_env" || true
+    fi
 
     if [[ -n "$DEFAULT_ADMIN_PASSWORD_VALUE" ]]; then
         escaped_password="${DEFAULT_ADMIN_PASSWORD_VALUE//\\/\\\\}"
         escaped_password="${escaped_password//\"/\\\"}"
-        printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" > "$SERVICE_ENV_FILE"
-        chmod 600 "$SERVICE_ENV_FILE"
+        printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" >> "$tmp_env"
         info "Using DEFAULT_ADMIN_PASSWORD for the initial admin seed."
+    fi
+
+    if [[ -s "$tmp_env" ]]; then
+        mv "$tmp_env" "$SERVICE_ENV_FILE"
+        chmod 600 "$SERVICE_ENV_FILE"
     else
-        rm -f "$SERVICE_ENV_FILE"
+        rm -f "$tmp_env" "$SERVICE_ENV_FILE"
     fi
 }
 
@@ -474,6 +494,25 @@ configure_caddy() {
     success "Caddy configuration updated."
 }
 
+install_adguard_home() {
+    local adguard_script="$PROJECT_DIR/scripts/adguard-home.sh"
+
+    if [[ "$WITH_ADGUARD" != true ]]; then
+        info "AdGuard Home DNS filtering not requested; skipping."
+        return
+    fi
+
+    section "Installing AdGuard Home DNS filtering..."
+
+    if [[ ! -f "$adguard_script" ]]; then
+        fail "Missing AdGuard installer helper: $adguard_script"
+        exit 1
+    fi
+
+    bash "$adguard_script" install
+    success "AdGuard Home DNS filtering is ready."
+}
+
 start_services() {
     section "Starting services..."
 
@@ -516,6 +555,7 @@ print_summary() {
     echo -e "${GREEN}==========================================${NC}"
     echo ""
     echo -e "${BLUE}Profile:${NC} $INSTALL_PROFILE"
+    echo -e "${BLUE}AdGuard Home:${NC} $WITH_ADGUARD"
     echo ""
     echo -e "${BLUE}Connection:${NC}"
     echo "  Open this link from a device on the same network:"
@@ -532,6 +572,13 @@ print_summary() {
     if [[ "$INSTALL_PROFILE" == "full" ]]; then
         echo -e "${BLUE}Tailscale:${NC}"
         echo "  If the device is not connected yet, run: sudo tailscale up"
+        echo ""
+    fi
+    if [[ "$WITH_ADGUARD" == true ]]; then
+        echo -e "${BLUE}DNS filtering:${NC}"
+        echo "  Set your router DHCP DNS server to this Pi IP to protect the whole LAN:"
+        echo "  $pi_ip"
+        echo "  AdGuard Home web/API listens locally on 127.0.0.1:3000."
         echo ""
     fi
     echo -e "${BLUE}Useful commands:${NC}"
@@ -553,6 +600,7 @@ main() {
     info "Installation user: $INSTALL_USER"
     info "Install profile: $INSTALL_PROFILE"
     info "Web port: $WEB_PORT"
+    info "AdGuard Home: $WITH_ADGUARD"
     info "Install directory: $PROJECT_DIR"
     echo ""
 
@@ -564,6 +612,7 @@ main() {
     setup_python
     build_ui
     generate_secrets
+    install_adguard_home
     create_systemd_service
     configure_caddy
     start_services

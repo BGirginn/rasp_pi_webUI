@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     
     # Agent
     agent_socket: str = Field(default="/run/pi-agent/agent.sock", alias="AGENT_SOCKET")
+
+    # DNS filtering / AdGuard Home
+    adguard_base_url: str = Field(default="http://127.0.0.1:3000/control", alias="ADGUARD_BASE_URL")
+    adguard_admin_user: str = Field(default="pi-control", alias="ADGUARD_ADMIN_USER")
+    adguard_admin_password: str = Field(default="", alias="ADGUARD_ADMIN_PASSWORD")
     
     # Security
     panel_allow_lan: bool = Field(default=False, alias="PANEL_ALLOW_LAN")
