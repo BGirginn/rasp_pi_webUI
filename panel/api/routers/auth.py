@@ -21,6 +21,9 @@ from db import get_control_db
 
 router = APIRouter()
 security = HTTPBearer()
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+TOTP_ISSUER = "Pi Control"
 
 
 # Pydantic models
@@ -51,6 +54,16 @@ class UserCreate(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class TOTPVerifyRequest(BaseModel):
+    code: str
+
+
+class TOTPSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    qr_code: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -101,6 +114,44 @@ async def hash_password_async(password: str) -> str:
     """Hash password (async - runs in thread pool)."""
     import asyncio
     return await asyncio.to_thread(lambda: bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+async def _record_failed_login(db, user_id: int, current_count: int, reason: str, req: Request) -> None:
+    failed_count = current_count + 1
+    locked_until = None
+    if failed_count >= MAX_FAILED_LOGIN_ATTEMPTS:
+        locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+
+    await db.execute(
+        "UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?",
+        (failed_count, locked_until.isoformat() if locked_until else None, user_id)
+    )
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)",
+        (
+            user_id,
+            "login_failed",
+            reason if not locked_until else f"{reason}; locked for {LOCKOUT_MINUTES} minutes",
+            req.client.host if req.client else None,
+        )
+    )
+    await db.commit()
+
+
+async def _reset_login_failures(db, user_id: int) -> None:
+    await db.execute(
+        "UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = ?",
+        (user_id,)
+    )
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
@@ -184,7 +235,9 @@ async def login(request: LoginRequest, response: Response, req: Request):
     
     # Find user
     cursor = await db.execute(
-        "SELECT id, username, password_hash, role, totp_secret FROM users WHERE username = ?",
+        """SELECT id, username, password_hash, role, totp_secret,
+                  COALESCE(failed_login_count, 0), locked_until
+           FROM users WHERE username = ?""",
         (request.username,)
     )
     row = await cursor.fetchone()
@@ -192,10 +245,15 @@ async def login(request: LoginRequest, response: Response, req: Request):
     if not row:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    user_id, username, password_hash, role, totp_secret = row
+    user_id, username, password_hash, role, totp_secret, failed_login_count, locked_until = row
+
+    locked_until_dt = _parse_datetime(locked_until)
+    if locked_until_dt and datetime.utcnow() < locked_until_dt:
+        raise HTTPException(status_code=423, detail="Account temporarily locked")
     
     # Verify password (using async version to avoid blocking)
     if not await verify_password_async(request.password, password_hash):
+        await _record_failed_login(db, user_id, failed_login_count, "Invalid password", req)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     # Verify TOTP if enabled
@@ -205,6 +263,7 @@ async def login(request: LoginRequest, response: Response, req: Request):
         
         totp = pyotp.TOTP(totp_secret)
         if not totp.verify(request.totp_code):
+            await _record_failed_login(db, user_id, failed_login_count, "Invalid TOTP code", req)
             raise HTTPException(status_code=401, detail="Invalid TOTP code")
     
     # Create tokens
@@ -220,6 +279,7 @@ async def login(request: LoginRequest, response: Response, req: Request):
            VALUES (?, ?, ?, ?, ?)""",
         (session_id, user_id, hash_password(refresh_token), req.headers.get("User-Agent", ""), expires_at)
     )
+    await _reset_login_failures(db, user_id)
     await db.commit()
     
     # Set refresh token as HttpOnly cookie
@@ -447,6 +507,72 @@ async def change_password(request: ChangePasswordRequest, user: dict = Depends(g
     return {"message": "Password updated successfully"}
 
 
+@router.post("/totp/setup", response_model=TOTPSetupResponse)
+async def setup_totp(user: dict = Depends(get_current_user)):
+    """Start TOTP setup by creating a pending secret for the current user."""
+    db = await get_control_db()
+    cursor = await db.execute("SELECT username, totp_secret FROM users WHERE id = ?", (user["id"],))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row[1]:
+        raise HTTPException(status_code=400, detail="TOTP already enabled")
+
+    secret = pyotp.random_base32()
+    await db.execute(
+        """INSERT OR REPLACE INTO settings (key, value, updated_at)
+           VALUES (?, ?, datetime('now'))""",
+        (f"totp_pending:{user['id']}", secret)
+    )
+    await db.commit()
+
+    provisioning_uri = pyotp.TOTP(secret).provisioning_uri(
+        name=row[0],
+        issuer_name=TOTP_ISSUER,
+    )
+    return TOTPSetupResponse(secret=secret, provisioning_uri=provisioning_uri)
+
+
+@router.post("/totp/verify")
+async def verify_totp_setup(request: TOTPVerifyRequest, user: dict = Depends(get_current_user)):
+    """Verify pending TOTP setup and enable it for the current user."""
+    db = await get_control_db()
+    cursor = await db.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        (f"totp_pending:{user['id']}",)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=400, detail="No pending TOTP setup")
+
+    secret = row[0]
+    if not pyotp.TOTP(secret).verify(request.code):
+        raise HTTPException(status_code=401, detail="Invalid TOTP code")
+
+    await db.execute("UPDATE users SET totp_secret = ? WHERE id = ?", (secret, user["id"]))
+    await db.execute("DELETE FROM settings WHERE key = ?", (f"totp_pending:{user['id']}",))
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action) VALUES (?, ?)",
+        (user["id"], "totp_enabled")
+    )
+    await db.commit()
+    return {"message": "TOTP enabled"}
+
+
+@router.post("/totp/disable")
+async def disable_totp(user: dict = Depends(get_current_user)):
+    """Disable TOTP for the current user."""
+    db = await get_control_db()
+    await db.execute("UPDATE users SET totp_secret = NULL WHERE id = ?", (user["id"],))
+    await db.execute("DELETE FROM settings WHERE key = ?", (f"totp_pending:{user['id']}",))
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action) VALUES (?, ?)",
+        (user["id"], "totp_disabled")
+    )
+    await db.commit()
+    return {"message": "TOTP disabled"}
+
+
 class PasswordVerifyRequest(BaseModel):
     password: str
 
@@ -499,4 +625,3 @@ async def verify_system_password_endpoint(request: PasswordVerifyRequest, user: 
     except Exception as e:
         print(f"System password verification error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error during verification")
-

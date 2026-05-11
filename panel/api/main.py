@@ -6,6 +6,8 @@ Main entry point for the Panel API server.
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from collections import defaultdict, deque
+from time import monotonic
 
 import structlog
 from fastapi import FastAPI, Request
@@ -51,6 +53,25 @@ logger = structlog.get_logger(__name__)
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
+_rate_windows = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(key: str, limit: int, window_seconds: int = 60) -> bool:
+    now = monotonic()
+    hits = _rate_windows[key]
+    while hits and now - hits[0] > window_seconds:
+        hits.popleft()
+    if len(hits) >= limit:
+        return False
+    hits.append(now)
+    return True
 
 
 @asynccontextmanager
@@ -117,6 +138,20 @@ if settings.cors_origins_list:
 async def log_requests(request: Request, call_next):
     """Log all incoming requests."""
     start_time = datetime.utcnow()
+    path = request.url.path
+    client_ip = _client_ip(request)
+
+    if path.startswith("/api/") and path not in {"/api/health"}:
+        if not _check_rate_limit(f"global:{client_ip}", settings.rate_limit_per_minute):
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
+    if path == "/api/auth/login":
+        if not _check_rate_limit(f"login:{client_ip}", 5):
+            return JSONResponse(status_code=429, content={"detail": "Too many login attempts"})
+
+    if path == "/api/admin/console":
+        if not _check_rate_limit(f"admin-console:{client_ip}", settings.rate_limit_admin_console):
+            return JSONResponse(status_code=429, content={"detail": "Admin console rate limit exceeded"})
     
     response = await call_next(request)
 

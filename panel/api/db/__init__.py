@@ -87,6 +87,8 @@ async def _init_control_schema(db):
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
             totp_secret TEXT,
+            failed_login_count INTEGER DEFAULT 0,
+            locked_until TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )

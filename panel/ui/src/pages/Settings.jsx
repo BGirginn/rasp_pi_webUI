@@ -142,7 +142,7 @@ function TOTPSection({ user, onUpdate }) {
             ) : step === 'setup' ? (
                 <div className="space-y-4">
                     <p className="text-sm text-gray-400">
-                        Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
+                        Add this secret to your authenticator app, then enter the generated 6-digit code.
                     </p>
 
                     {qrCode && (

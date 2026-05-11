@@ -39,6 +39,7 @@ async def run_migrations(db_path: str):
             ("003_ignored_resources", migrate_003_ignored_resources),
             ("004_alert_history", migrate_004_alert_history),
             ("005_standard_user", migrate_005_standard_user),
+            ("006_login_lockout", migrate_006_login_lockout),
         ]
         
         # Apply pending migrations
@@ -299,6 +300,18 @@ async def migrate_005_standard_user(db):
         
         print("  Created default standard user: user")
         print("  Role: viewer")
+
+
+async def migrate_006_login_lockout(db):
+    """Add login failure tracking for account lockout."""
+    cursor = await db.execute("PRAGMA table_info(users)")
+    columns = {row[1] for row in await cursor.fetchall()}
+
+    if "failed_login_count" not in columns:
+        await db.execute("ALTER TABLE users ADD COLUMN failed_login_count INTEGER DEFAULT 0")
+
+    if "locked_until" not in columns:
+        await db.execute("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP")
 
 
 if __name__ == "__main__":

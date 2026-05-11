@@ -23,6 +23,24 @@ router = APIRouter()
 # For this "Control Panel", we likely want full root access, but be careful.
 # If we wanted to sandbox, we'd set this to e.g., "/home/pi"
 ROOT_DIR = "/" 
+PROTECTED_PATHS = {
+    "/",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/lib",
+    "/lib64",
+    "/opt/pi-control",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/sys",
+    "/usr",
+    "/var",
+    "/var/lib/pi-control",
+}
 
 class FileItem(BaseModel):
     name: str
@@ -39,6 +57,22 @@ class FileAction(BaseModel):
     path: str
     destination: Optional[str] = None  # For move/copy/rename
     new_name: Optional[str] = None     # For rename
+
+
+def normalize_path(path: str) -> str:
+    if not path or not os.path.isabs(path):
+        raise HTTPException(status_code=400, detail="Absolute path required")
+    return os.path.realpath(path)
+
+
+def ensure_not_protected(path: str) -> None:
+    normalized = normalize_path(path)
+    if normalized == "/" or any(
+        normalized == protected or normalized.startswith(f"{protected}{os.sep}")
+        for protected in PROTECTED_PATHS
+        if protected != "/"
+    ):
+        raise HTTPException(status_code=403, detail=f"Protected path cannot be modified: {normalized}")
 
 def get_file_info(path: str) -> FileItem:
     try:
@@ -67,6 +101,7 @@ async def list_files(
     user: dict = Depends(get_current_user)
 ):
     """List contents of a directory."""
+    path = normalize_path(path)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Path not found")
     
@@ -125,6 +160,8 @@ async def file_action(
     
     try:
         if action.action == "delete":
+            src = normalize_path(src)
+            ensure_not_protected(src)
             if os.path.isdir(src):
                 shutil.rmtree(src)
             else:
@@ -132,13 +169,19 @@ async def file_action(
             return {"message": "Deleted successfully"}
             
         elif action.action == "mkdir":
+            src = normalize_path(src)
+            ensure_not_protected(src)
             os.makedirs(src, exist_ok=True)
             return {"message": "Directory created"}
             
         elif action.action == "rename":
             if not action.new_name:
                 raise HTTPException(status_code=400, detail="New name required")
+            if os.path.basename(action.new_name) != action.new_name:
+                raise HTTPException(status_code=400, detail="New name must not contain path separators")
             
+            src = normalize_path(src)
+            ensure_not_protected(src)
             parent = os.path.dirname(src)
             dst = os.path.join(parent, action.new_name)
             os.rename(src, dst)
@@ -147,16 +190,23 @@ async def file_action(
         elif action.action == "move":
             if not action.destination:
                 raise HTTPException(status_code=400, detail="Destination required")
-            shutil.move(src, action.destination)
+            src = normalize_path(src)
+            ensure_not_protected(src)
+            destination = normalize_path(action.destination)
+            ensure_not_protected(destination)
+            shutil.move(src, destination)
             return {"message": "Moved successfully"}
             
         elif action.action == "copy":
             if not action.destination:
                 raise HTTPException(status_code=400, detail="Destination required")
+            src = normalize_path(src)
+            destination = normalize_path(action.destination)
+            ensure_not_protected(destination)
             if os.path.isdir(src):
-                shutil.copytree(src, action.destination)
+                shutil.copytree(src, destination)
             else:
-                shutil.copy2(src, action.destination)
+                shutil.copy2(src, destination)
             return {"message": "Copied successfully"}
             
         else:
@@ -177,13 +227,18 @@ async def upload_file(
     if user['role'] == 'viewer':
         raise HTTPException(status_code=403, detail="Viewers cannot upload files")
         
+    path = normalize_path(path)
+    ensure_not_protected(path)
     if not os.path.exists(path) or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Target directory not found")
         
     uploaded_counts = 0
     try:
         for file in files:
-            file_path = os.path.join(path, file.filename)
+            filename = os.path.basename(file.filename or "")
+            if not filename or filename != file.filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+            file_path = os.path.join(path, filename)
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             uploaded_counts += 1
@@ -200,6 +255,7 @@ async def download_file(
     user: dict = Depends(get_current_user)
 ):
     """Download a file."""
+    path = normalize_path(path)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found")
     
