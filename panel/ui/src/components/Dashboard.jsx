@@ -19,7 +19,6 @@ const SettingsPage = lazy(() => import('../pages/SettingsPage').then(mod => ({ d
 const IoTPage = lazy(() => import('../pages/IoTPage').then(mod => ({ default: mod.IoTPage })));
 const IoTDeviceDetail = lazy(() => import('../pages/IoTDeviceDetail').then(mod => ({ default: mod.IoTDeviceDetail })));
 const ArchivePage = lazy(() => import('../pages/ArchivePage').then(mod => ({ default: mod.ArchivePage })));
-const AppStorePage = lazy(() => import('../pages/AppStorePage').then(mod => ({ default: mod.AppStorePage })));
 const ProjectsPage = lazy(() => import('../pages/ProjectsPage').then(mod => ({ default: mod.ProjectsPage })));
 const FilesPage = lazy(() => import('../pages/FilesPage'));
 
@@ -86,8 +85,6 @@ export function Dashboard() {
         );
       case 'projects':
         return <ProjectsPage />;
-      case 'appstore':
-        return <AppStorePage />;
       case 'settings':
         return <SettingsPage />;
       case 'archive':
