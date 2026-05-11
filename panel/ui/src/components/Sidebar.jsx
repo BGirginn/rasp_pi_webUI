@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database, GitBranch } from 'lucide-react';
+import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database, GitBranch, Ban } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -19,6 +19,7 @@ export function Sidebar() {
     { icon: Cpu, label: 'IoT', active: currentPage === 'iot', page: 'iot' },
     { icon: Activity, label: 'Telemetry', active: currentPage === 'telemetry', page: 'telemetry' },
     { icon: Wifi, label: 'Network', active: currentPage === 'network', page: 'network' },
+    { icon: Ban, label: 'AdGuard', active: currentPage === 'adguard', page: 'adguard' },
     { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal', restricted: true },
     { icon: Folder, label: 'Files', active: currentPage === 'files', page: 'files', restricted: true },
     { icon: GitBranch, label: 'Projects', active: currentPage === 'projects', page: 'projects' },
