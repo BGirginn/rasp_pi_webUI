@@ -6,10 +6,13 @@ import os
 import sqlite3
 import tempfile
 import time
+import base64
+import tarfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 TEST_ROOT = Path(tempfile.mkdtemp(prefix="pi-control-archive-tests-"))
@@ -23,6 +26,9 @@ os.environ["DATABASE_PATH"] = str(CONTROL_DB)
 os.environ["TELEMETRY_DB_PATH"] = str(TELEMETRY_DB)
 os.environ["BACKUP_LOCAL_DIR"] = str(BACKUP_DIR)
 os.environ["BACKUP_CREDENTIALS_DIR"] = str(CREDENTIALS_DIR)
+os.environ["BACKUP_GDRIVE_CLIENT_FILE"] = str(CREDENTIALS_DIR / "gdrive_oauth_client.json")
+os.environ["BACKUP_GDRIVE_TOKEN_FILE"] = str(CREDENTIALS_DIR / "gdrive_token.json")
+os.environ["BACKUP_ENCRYPTION_KEY_FILE"] = str(CREDENTIALS_DIR / "backup_encryption.key")
 os.environ["BACKUP_DAILY_EXPORT_ENABLED"] = "false"
 os.environ["API_DEBUG"] = "true"
 
@@ -80,15 +86,23 @@ def admin_client():
     os.environ["TELEMETRY_DB_PATH"] = str(TELEMETRY_DB)
     os.environ["BACKUP_LOCAL_DIR"] = str(BACKUP_DIR)
     os.environ["BACKUP_CREDENTIALS_DIR"] = str(CREDENTIALS_DIR)
+    os.environ["BACKUP_GDRIVE_CLIENT_FILE"] = str(CREDENTIALS_DIR / "gdrive_oauth_client.json")
+    os.environ["BACKUP_GDRIVE_TOKEN_FILE"] = str(CREDENTIALS_DIR / "gdrive_token.json")
+    os.environ["BACKUP_ENCRYPTION_KEY_FILE"] = str(CREDENTIALS_DIR / "backup_encryption.key")
     os.environ["BACKUP_DAILY_EXPORT_ENABLED"] = "false"
 
     settings.database_path = str(CONTROL_DB)
     settings.telemetry_db_path = str(TELEMETRY_DB)
     settings.backup_local_dir = str(BACKUP_DIR)
+    settings.backup_retention_days = 90
+    settings.backup_encryption_key_file = str(CREDENTIALS_DIR / "backup_encryption.key")
+    settings.backup_gdrive_client_file = str(CREDENTIALS_DIR / "gdrive_oauth_client.json")
+    settings.backup_gdrive_token_file = str(CREDENTIALS_DIR / "gdrive_token.json")
 
     backup_service.backup_dir = BACKUP_DIR
     backup_service.credentials_file = CREDENTIALS_DIR / "gdrive_credentials.json"
     backup_service.token_file = CREDENTIALS_DIR / "gdrive_token.json"
+    backup_service.encryption_key_file = CREDENTIALS_DIR / "backup_encryption.key"
     backup_service.folder_id = None
     backup_service._running = False
     backup_service._task = None
@@ -160,3 +174,50 @@ def test_retention_cleanup_archives_and_deletes_old_rows(admin_client):
     old_day = time.strftime("%Y-%m-%d", time.localtime(old_ts))
     assert f"archive_{old_day}_telemetry.json" in archived_files
     assert f"archive_{old_day}_iot.json" in archived_files
+
+
+def test_encrypted_backup_contains_db_snapshots_and_manifest(admin_client):
+    _insert_telemetry_rows()
+
+    response = admin_client.post("/api/backup/encrypted")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["status"] == "completed_local_only"
+    encrypted_path = Path(payload["path"])
+    assert encrypted_path.exists()
+    assert encrypted_path.name.startswith("pi-control_backup_")
+    assert encrypted_path.name.endswith(".tar.gz.enc")
+
+    key = base64.urlsafe_b64decode((CREDENTIALS_DIR / "backup_encryption.key").read_text().strip().encode())
+    encrypted = encrypted_path.read_bytes()
+    assert encrypted.startswith(b"PCBACKUP1")
+    plaintext = AESGCM(key).decrypt(encrypted[9:21], encrypted[21:], None)
+
+    tar_path = TEST_ROOT / "decrypted.tar.gz"
+    tar_path.write_bytes(plaintext)
+    with tarfile.open(tar_path, "r:gz") as archive:
+        names = set(archive.getnames())
+
+    assert "pi-control-backup/manifest.json" in names
+    assert "pi-control-backup/databases/control.db" in names
+    assert "pi-control-backup/databases/telemetry.db" in names
+
+
+def test_backup_file_retention_deletes_older_than_90_days(admin_client):
+    from services.gdrive_backup import backup_service
+
+    old_file = BACKUP_DIR / "pi-control_backup_2026-01-01_000000.tar.gz.enc"
+    fresh_file = BACKUP_DIR / "pi-control_backup_2026-05-01_000000.tar.gz.enc"
+    old_file.write_bytes(b"old")
+    fresh_file.write_bytes(b"fresh")
+    old_ts = time.time() - (91 * 24 * 3600)
+    os.utime(old_file, (old_ts, old_ts))
+
+    import asyncio
+    result = asyncio.run(backup_service.enforce_backup_file_retention())
+
+    assert result["status"] == "completed"
+    assert old_file.name in result["local_deleted"]
+    assert not old_file.exists()
+    assert fresh_file.exists()

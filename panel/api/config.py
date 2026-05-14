@@ -73,9 +73,15 @@ class Settings(BaseSettings):
     backup_local_dir: str = Field(default="/opt/pi-control/backups", alias="BACKUP_LOCAL_DIR")
     backup_daily_export_enabled: bool = Field(default=True, alias="BACKUP_DAILY_EXPORT_ENABLED")
     backup_daily_export_hour: int = Field(default=0, alias="BACKUP_DAILY_EXPORT_HOUR")
-    backup_daily_export_minute: int = Field(default=5, alias="BACKUP_DAILY_EXPORT_MINUTE")
+    backup_daily_export_minute: int = Field(default=0, alias="BACKUP_DAILY_EXPORT_MINUTE")
     backup_default_format: str = Field(default="json", alias="BACKUP_DEFAULT_FORMAT")
     backup_archive_max_days_per_cycle: int = Field(default=7, alias="BACKUP_ARCHIVE_MAX_DAYS_PER_CYCLE")
+    backup_retention_days: int = Field(default=90, alias="BACKUP_RETENTION_DAYS")
+    backup_gdrive_enabled: bool = Field(default=False, alias="BACKUP_GDRIVE_ENABLED")
+    backup_gdrive_folder_name: str = Field(default="Pi Control Backups", alias="BACKUP_GDRIVE_FOLDER_NAME")
+    backup_gdrive_client_file: str = Field(default="/etc/pi-control/gdrive_oauth_client.json", alias="BACKUP_GDRIVE_CLIENT_FILE")
+    backup_gdrive_token_file: str = Field(default="/etc/pi-control/gdrive_token.json", alias="BACKUP_GDRIVE_TOKEN_FILE")
+    backup_encryption_key_file: str = Field(default="/etc/pi-control/backup_encryption.key", alias="BACKUP_ENCRYPTION_KEY_FILE")
     
     @property
     def cors_origins_list(self) -> List[str]:

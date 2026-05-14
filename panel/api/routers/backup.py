@@ -4,8 +4,9 @@ Pi Control Panel - Backup Router
 Provides API endpoints for local backup management.
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
+from db import get_control_db
 from .auth import get_current_user, require_role
 from services.gdrive_backup import backup_service
 
@@ -13,6 +14,15 @@ from services.gdrive_backup import backup_service
 require_admin = require_role("admin")
 
 router = APIRouter()
+
+
+async def _audit(user: dict, action: str, details: str = "") -> None:
+    db = await get_control_db()
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, resource_id, details) VALUES (?, ?, ?, ?)",
+        (user["id"], action, "backup", details),
+    )
+    await db.commit()
 
 # ==================== Status ====================
 
@@ -41,6 +51,69 @@ async def trigger_backup(
         "format": format,
         "status": "running"
     }
+
+
+@router.post("/encrypted")
+async def trigger_encrypted_backup(user: dict = Depends(require_admin)):
+    """Create an encrypted DB/export backup and upload it to Drive when authenticated."""
+    result = await backup_service.run_encrypted_backup(trigger="manual")
+    await _audit(user, "backup.encrypted.create", f"status={result.get('status')}, uploaded={result.get('uploaded')}")
+    return result
+
+
+@router.post("/gdrive/client")
+async def upload_gdrive_client(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_admin),
+):
+    """Upload Google OAuth client JSON for device authorization."""
+    if not file.filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="OAuth client file must be JSON")
+    try:
+        result = await backup_service.upload_oauth_client(await file.read())
+        await _audit(user, "backup.gdrive.client_upload", f"filename={file.filename}")
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/gdrive/auth/start")
+async def start_gdrive_auth(user: dict = Depends(require_admin)):
+    """Start Google OAuth device-code flow."""
+    try:
+        result = await backup_service.start_device_authorization()
+        await _audit(user, "backup.gdrive.auth_start")
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/gdrive/auth/status")
+async def get_gdrive_auth_status(user: dict = Depends(require_admin)):
+    """Poll Google OAuth device-code flow status."""
+    try:
+        return await backup_service.poll_device_authorization()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/gdrive/disconnect")
+async def disconnect_gdrive(user: dict = Depends(require_admin)):
+    """Disconnect Google Drive by deleting the stored OAuth token."""
+    result = await backup_service.disconnect_gdrive()
+    await _audit(user, "backup.gdrive.disconnect")
+    return result
+
+
+@router.delete("/gdrive/files/{file_id}")
+async def delete_gdrive_backup(file_id: str, user: dict = Depends(require_admin)):
+    """Delete a Pi Control backup file from Google Drive."""
+    try:
+        result = backup_service.delete_drive_backup(file_id)
+        await _audit(user, "backup.gdrive.remote_delete", f"file_id={file_id}")
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 # ==================== Backup History ====================
 
@@ -104,6 +177,3 @@ async def delete_backup_file(
     
     filepath.unlink()
     return {"message": f"Deleted {filename}"}
-
-# NOTE: Google Drive backup endpoints are intentionally removed for now.
-# TODO: Re-introduce cloud backup endpoints once the new GDrive flow is finalized.

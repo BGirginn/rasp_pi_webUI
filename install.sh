@@ -360,8 +360,9 @@ create_directories() {
     section "Creating application directories..."
 
     mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
-    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR"
+    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
     chmod 755 "$PROJECT_DIR"
+    chmod 700 "$CONFIG_DIR"
 
     success "Application directories are ready."
 }
@@ -441,6 +442,7 @@ generate_secrets() {
     else
         info "JWT secret already exists."
     fi
+    chown "$INSTALL_USER:$INSTALL_GROUP" "$CONFIG_DIR/jwt_secret"
 
     write_service_env_file
     success "Runtime secrets are configured."
@@ -476,7 +478,7 @@ KillMode=mixed
 # Security hardening
 ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/var/lib/pi-control /opt/pi-control
+ReadWritePaths=/var/lib/pi-control /opt/pi-control /etc/pi-control
 PrivateTmp=true
 
 [Install]

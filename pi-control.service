@@ -41,7 +41,7 @@ SyslogIdentifier=pi-control
 # Security hardening
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/lib/pi-control /opt/pi-control /run/pi-control
+ReadWritePaths=/var/lib/pi-control /opt/pi-control /run/pi-control /etc/pi-control
 PrivateTmp=true
 NoNewPrivileges=true
 
