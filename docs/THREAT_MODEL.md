@@ -83,7 +83,9 @@ This document outlines the security threats, attack vectors, and mitigations for
 | Threat | Severity | Mitigation |
 |--------|----------|------------|
 | Credential exposure | CRITICAL | Secrets in env vars, never in code |
-| Backup theft | HIGH | Encrypted backups, secure storage |
+| Backup theft | HIGH | AES-256-GCM encrypted backup archives, no plaintext Drive uploads |
+| Cloud backup token exposure | HIGH | Google Drive `drive.file` scope, token stored locally with `0600` permissions |
+| Backup encryption key loss | HIGH | Key file path documented; restore requires the local key |
 | Log data leakage | MEDIUM | PII scrubbing, log rotation |
 | Database tampering | HIGH | SQLite WAL mode, file permissions |
 
@@ -115,6 +117,16 @@ This document outlines the security threats, attack vectors, and mitigations for
 - **Entry Point**: Port 53 conflict, broken upstream, or router DNS pointed to an unhealthy Pi
 - **Mitigations**: Installer fails fast on port 53 conflicts, AdGuard upstream defaults to Cloudflare security DoH with bootstrap DNS, router DNS change remains manual
 - **Residual Risk**: If the Pi is offline and the router only advertises the Pi as DNS, clients may lose DNS resolution until router DNS is changed or the Pi recovers
+
+### A3e: Cloud Backup Exposure
+- **Entry Point**: Google Drive account compromise, leaked OAuth token, or leaked backup archive
+- **Mitigations**: Drive stores only `.tar.gz.enc` backup packages, archives are encrypted with AES-256-GCM before upload, OAuth uses the limited `drive.file` scope, panel setup and deletion endpoints are admin-only and audit logged
+- **Residual Risk**: If an attacker also obtains `/etc/pi-control/backup_encryption.key`, backup databases and exports can be decrypted
+
+### A3f: Backup Key Loss
+- **Entry Point**: SD card loss, accidental deletion, or reinstall without preserving `/etc/pi-control/backup_encryption.key`
+- **Mitigations**: Key path is documented in README and status API; encrypted archive format avoids server-side recovery paths by design
+- **Residual Risk**: Existing Drive backups cannot be restored without the original key
 
 ### A4: Insider Threat (Operator)
 - **Entry Point**: Authenticated API access
@@ -152,6 +164,7 @@ This document outlines the security threats, attack vectors, and mitigations for
 - [x] Command execution history
 - [x] Failed authentication logging
 - [x] Retention policies for compliance
+- [x] Backup setup, upload, disconnect, and remote delete actions are admin-only and audit logged
 
 ### Resource Protection
 - [x] CORE services immutable
@@ -178,8 +191,14 @@ This document outlines the security threats, attack vectors, and mitigations for
 ### Ransomware/Malware
 1. Disconnect from network
 2. Boot from known-good image
-3. Restore from encrypted backup
+3. Restore from encrypted backup using the original `/etc/pi-control/backup_encryption.key`
 4. Audit all containers for tampering
+
+### Google Drive Backup Credential Leak
+1. Disconnect Google Drive from Archive > Backups
+2. Revoke the app/token in the Google account security settings
+3. Upload a new OAuth client if needed and re-authorize
+4. Rotate the backup encryption key only after preserving any backups that must remain restorable
 
 ## Compliance Notes
 
@@ -196,5 +215,5 @@ This document outlines the security threats, attack vectors, and mitigations for
 
 ---
 
-*Last Updated: 2024-01-15*
-*Next Review: 2024-04-15*
+*Last Updated: 2026-05-11*
+*Next Review: 2026-08-11*

@@ -263,7 +263,13 @@ Common variables:
 | `WEB_PORT` | `8088` | Caddy web UI port used by install/check scripts |
 | `PANEL_ALLOW_LAN` | `false` | LAN access mode |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour |
-| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `0` | Daily export minute |
+| `BACKUP_RETENTION_DAYS` | `90` | Local and Google Drive backup file retention |
+| `BACKUP_GDRIVE_ENABLED` | `false` | Google Drive backup starts inactive until OAuth is completed |
+| `BACKUP_GDRIVE_FOLDER_NAME` | `Pi Control Backups` | Google Drive folder for encrypted backups |
+| `BACKUP_GDRIVE_CLIENT_FILE` | `/etc/pi-control/gdrive_oauth_client.json` | Stored Google OAuth client config |
+| `BACKUP_GDRIVE_TOKEN_FILE` | `/etc/pi-control/gdrive_token.json` | Stored Google OAuth token |
+| `BACKUP_ENCRYPTION_KEY_FILE` | `/etc/pi-control/backup_encryption.key` | Local AES-256-GCM backup encryption key |
 
 Default admin at first startup:
 
@@ -300,26 +306,36 @@ sudo systemctl restart caddy
 sudo ./scripts/update.sh
 ```
 
-Note: Google Drive backup integration is temporarily disabled.
+### Encrypted Google Drive Backups
+
+Archive > Backups can create encrypted backup packages and upload them to Google Drive after an admin completes the OAuth setup. Upload the Google OAuth client JSON in the panel, start authorization, open the verification URL, and approve access with the target Gmail account.
+
+- Schedule: every day at `00:00` Pi local time by default.
+- Contents: consistent SQLite snapshots of `control.db` and `telemetry.db`, plus existing JSON/CSV export files.
+- Format: `pi-control_backup_YYYY-MM-DD_HHMMSS.tar.gz.enc`.
+- Retention: local and Google Drive backup files older than `BACKUP_RETENTION_DAYS` are deleted; only Pi Control backup filenames are targeted.
+- Drive scope: `https://www.googleapis.com/auth/drive.file`.
+
+Drive never receives plain database or export files. The encrypted archives can only be restored with the key stored in `BACKUP_ENCRYPTION_KEY_FILE`; if that key is lost, existing Drive backups cannot be decrypted.
 
 ---
 
 ## Latest Update Notes
 
-**Current date:** 2026-03-27
+**Current date:** 2026-05-11
 
 - Improved metric selection/filter flow in telemetry history.
 - Added stabilizations to reduce unnecessary UI resets during live metric refresh.
 - Refined category-based styling in Devices and strengthened dedupe behavior for repeated records.
 - Improved resilience in API background service startup and logging flows.
 - Simplified and accelerated install/update scripts for operational usage.
-- Google Drive backup system is temporarily removed (local backup remains active).
+- Added encrypted Google Drive backup setup with OAuth, daily `00:00` scheduling, and 90-day local/cloud backup retention.
 
 ---
 
 ## TODO
 
-- [ ] Re-enable Google Drive backup integration with a new flow.
+- [ ] Add a first-class restore flow for encrypted backup packages.
 
 ---
 
@@ -606,7 +622,13 @@ Sik kullanilan degiskenler:
 | `WEB_PORT` | `8088` | Install/check scriptlerinin kullandigi Caddy web UI portu |
 | `PANEL_ALLOW_LAN` | `false` | LAN erisim modu |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Gunluk export saati |
-| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Gunluk export dakikasi |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `0` | Gunluk export dakikasi |
+| `BACKUP_RETENTION_DAYS` | `90` | Local ve Google Drive backup dosyasi saklama suresi |
+| `BACKUP_GDRIVE_ENABLED` | `false` | OAuth tamamlanana kadar Google Drive backup pasif baslar |
+| `BACKUP_GDRIVE_FOLDER_NAME` | `Pi Control Backups` | Sifreli yedeklerin Google Drive klasoru |
+| `BACKUP_GDRIVE_CLIENT_FILE` | `/etc/pi-control/gdrive_oauth_client.json` | Saklanan Google OAuth client config dosyasi |
+| `BACKUP_GDRIVE_TOKEN_FILE` | `/etc/pi-control/gdrive_token.json` | Saklanan Google OAuth token dosyasi |
+| `BACKUP_ENCRYPTION_KEY_FILE` | `/etc/pi-control/backup_encryption.key` | Yerel AES-256-GCM backup sifreleme anahtari |
 
 Ilk acilista varsayilan admin:
 
@@ -643,26 +665,36 @@ sudo systemctl restart caddy
 sudo ./scripts/update.sh
 ```
 
-Not: Google Drive backup entegrasyonu gecici olarak devre disidir.
+### Sifreli Google Drive Yedekleri
+
+Archive > Backups ekrani, admin OAuth kurulumunu tamamladiktan sonra sifreli yedek paketi olusturup Google Drive'a yukleyebilir. Panelde Google OAuth client JSON dosyasini yukleyin, yetkilendirmeyi baslatin, verification URL'yi acin ve hedef Gmail hesabi ile izni onaylayin.
+
+- Zamanlama: varsayilan olarak Pi local saatine gore her gun `00:00`.
+- Icerik: `control.db` ve `telemetry.db` icin tutarli SQLite snapshotlari, ayrica mevcut JSON/CSV export dosyalari.
+- Format: `pi-control_backup_YYYY-MM-DD_HHMMSS.tar.gz.enc`.
+- Saklama: `BACKUP_RETENTION_DAYS` degerinden eski local ve Google Drive backup dosyalari silinir; sadece Pi Control backup dosya adlari hedeflenir.
+- Drive scope: `https://www.googleapis.com/auth/drive.file`.
+
+Drive'a duz veritabani veya duz export dosyasi yuklenmez. Sifreli arsivler sadece `BACKUP_ENCRYPTION_KEY_FILE` icindeki anahtarla acilabilir; bu anahtar kaybolursa mevcut Drive yedekleri geri acilamaz.
 
 ---
 
 ## Son Guncelleme Notlari
 
-**Guncel tarih:** 2026-03-27
+**Guncel tarih:** 2026-05-11
 
 - Telemetry history ekraninda metrik bazli secim/filtre akisi iyilestirildi.
 - Canli metrik yenilemelerinde gereksiz UI resetlerini azaltan stabilizasyonlar eklendi.
 - Devices ekraninda kategori tabanli stil yapisi netlestirildi ve tekrar eden kayitlara karsi dedupe mantigi guclendirildi.
 - API tarafinda background servis baslatma ve loglama akislarinda dayaniklilik artirildi.
 - Kurulum/guncelleme scriptleri operasyonel kullanim icin sadelestirildi ve hizlandirildi.
-- Google Drive backup sistemi gecici olarak kaldirildi (local backup aktif).
+- OAuth destekli sifreli Google Drive backup akisi, gunluk `00:00` zamanlama ve 90 gunluk local/cloud backup saklama eklendi.
 
 ---
 
 ## TODO
 
-- [ ] Google Drive backup entegrasyonunu yeni akisla tekrar devreye almak.
+- [ ] Sifreli backup paketleri icin panelden restore akisi eklemek.
 
 ---
 

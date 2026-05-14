@@ -286,8 +286,12 @@ services:
 | Max backup size | 1 GB |
 | Max concurrent backups | 1 |
 | Backup timeout | 30 minutes |
-| Backup retention | 7 backups |
+| Backup file retention | 90 days local and Google Drive |
 | Backup encryption | AES-256-GCM |
+
+Google Drive backups use the `drive.file` scope and store only encrypted `pi-control_backup_*.tar.gz.enc` archives in the configured Drive folder. Plain SQLite databases and export files are never uploaded. The OAuth client file, OAuth token, and backup encryption key are stored under `/etc/pi-control` with `0600` file permissions. Administrators can upload the OAuth client, start or disconnect authorization, trigger encrypted backups, list Drive backup files, and delete Pi Control backup files from Drive.
+
+The encryption key remains local to the Pi. If `/etc/pi-control/backup_encryption.key` is lost, existing Drive backups cannot be decrypted. If the Pi is fully compromised, an attacker with root or app-user access may be able to read the token and encryption key and should be assumed capable of accessing backup contents after decryption.
 
 ## Alert Limits
 
