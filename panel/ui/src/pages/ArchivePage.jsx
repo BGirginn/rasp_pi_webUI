@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {
     Database, Download, Calendar, Filter, RefreshCw,
-    HardDrive, CloudOff, Clock, FileJson, FileSpreadsheet,
+    HardDrive, CloudOff, Cloud, Upload, Link2, ShieldCheck, FileArchive, FileJson, FileSpreadsheet,
     ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Search, Trash2, Play,
     Thermometer, Droplets, Sun, Gauge, Flame, Wind, Volume2, Zap, Activity
 } from 'lucide-react';
@@ -69,6 +69,10 @@ export function ArchivePage() {
     const [backupStatus, setBackupStatus] = useState(null);
     const [backupFiles, setBackupFiles] = useState([]);
     const [backupRunning, setBackupRunning] = useState(false);
+    const [driveRunning, setDriveRunning] = useState(false);
+    const [oauthClientFile, setOauthClientFile] = useState(null);
+    const [oauthStatus, setOauthStatus] = useState(null);
+    const [backupMessage, setBackupMessage] = useState('');
 
     // Sensor icon helper
     const getSensorIcon = (type) => {
@@ -445,6 +449,7 @@ export function ArchivePage() {
             ]);
             setBackupStatus(statusRes.data);
             setBackupFiles(filesRes.data.files || []);
+            setOauthStatus(statusRes.data.auth_flow || null);
         } catch (err) {
             console.error('Failed to load backup status:', err);
         }
@@ -453,6 +458,7 @@ export function ArchivePage() {
     // Trigger backup
     const triggerBackup = async (format = 'json') => {
         setBackupRunning(true);
+        setBackupMessage('');
         try {
             await api.post(`/backup/trigger?format=${format}`);
             setTimeout(() => {
@@ -462,6 +468,101 @@ export function ArchivePage() {
         } catch (err) {
             console.error('Backup failed:', err);
             setBackupRunning(false);
+        }
+    };
+
+    const triggerEncryptedBackup = async () => {
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            const res = await api.post('/backup/encrypted');
+            setBackupMessage(res.data.uploaded ? 'Şifreli yedek Drive’a yüklendi.' : 'Şifreli yedek lokal oluşturuldu; Drive bağlantısı yok.');
+            await loadBackupStatus();
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'Şifreli yedekleme başarısız');
+        } finally {
+            setDriveRunning(false);
+        }
+    };
+
+    const uploadOauthClient = async () => {
+        if (!oauthClientFile) return;
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            const form = new FormData();
+            form.append('file', oauthClientFile);
+            await api.post('/backup/gdrive/client', form, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setOauthClientFile(null);
+            setBackupMessage('OAuth client yüklendi. Yetkilendirme başlatılabilir.');
+            await loadBackupStatus();
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'OAuth client yüklenemedi');
+        } finally {
+            setDriveRunning(false);
+        }
+    };
+
+    const startDriveAuth = async () => {
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            const res = await api.post('/backup/gdrive/auth/start');
+            setOauthStatus(res.data);
+            setBackupMessage('Google Drive yetkilendirme kodu oluşturuldu.');
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'Yetkilendirme başlatılamadı');
+        } finally {
+            setDriveRunning(false);
+        }
+    };
+
+    const pollDriveAuth = async () => {
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            const res = await api.get('/backup/gdrive/auth/status');
+            setOauthStatus(res.data);
+            if (res.data.authenticated) {
+                setBackupMessage('Google Drive bağlantısı tamamlandı.');
+                await loadBackupStatus();
+            } else if (res.data.error) {
+                setBackupMessage(res.data.error);
+            }
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'Yetkilendirme durumu alınamadı');
+        } finally {
+            setDriveRunning(false);
+        }
+    };
+
+    const disconnectDrive = async () => {
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            await api.post('/backup/gdrive/disconnect');
+            setOauthStatus(null);
+            setBackupMessage('Google Drive bağlantısı kaldırıldı.');
+            await loadBackupStatus();
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'Drive bağlantısı kaldırılamadı');
+        } finally {
+            setDriveRunning(false);
+        }
+    };
+
+    const deleteRemoteBackup = async (fileId) => {
+        setDriveRunning(true);
+        setBackupMessage('');
+        try {
+            await api.delete(`/backup/gdrive/files/${fileId}`);
+            await loadBackupStatus();
+        } catch (err) {
+            setBackupMessage(err.response?.data?.detail || 'Drive dosyası silinemedi');
+        } finally {
+            setDriveRunning(false);
         }
     };
 
@@ -884,8 +985,9 @@ export function ArchivePage() {
                         <div className="flex items-center justify-between mb-6">
                             <h3 className="text-lg font-bold">Yedekleme Durumu</h3>
                             <div className="flex items-center gap-2">
-                                <span className="flex items-center gap-2 text-gray-500 text-sm">
-                                    <CloudOff size={16} />Sadece Lokal
+                                <span className={`flex items-center gap-2 text-sm ${backupStatus?.gdrive_enabled ? 'text-green-500' : 'text-gray-500'}`}>
+                                    {backupStatus?.gdrive_enabled ? <Cloud size={16} /> : <CloudOff size={16} />}
+                                    {backupStatus?.gdrive_enabled ? 'Drive Aktif' : 'Drive Bağlı Değil'}
                                 </span>
                             </div>
                         </div>
@@ -923,24 +1025,85 @@ export function ArchivePage() {
                                 </div>
                             </div>
                             <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
-                                <div className="text-sm text-gray-500 mb-1">Local Saklama</div>
+                                <div className="text-sm text-gray-500 mb-1">Yedek Saklama</div>
                                 <div className="font-medium">
-                                    Sistem: {backupStatus?.retention_days?.telemetry ?? 90} gun
+                                    Drive + lokal: {backupStatus?.retention_days?.backup_files ?? 90} gun
                                 </div>
                                 <div className="text-xs text-gray-500 mt-2">
-                                    IoT: {backupStatus?.retention_days?.iot ?? 90} gun
+                                    DB satirlari: {backupStatus?.retention_days?.telemetry ?? 90} gun
                                 </div>
                             </div>
                         </div>
 
-                        <div className={`p-4 rounded-xl mb-6 border ${isDarkMode ? 'bg-amber-500/10 border-amber-500/30' : 'bg-amber-50 border-amber-200'}`}>
-                            <div className="text-sm font-semibold mb-1">TODO: Cloud Backup</div>
-                            <div className="text-sm text-gray-500">
-                                Google Drive entegrasyonu gecici olarak kaldirildi. Yeni akista tekrar eklenecek.
+                        <div className={`p-4 rounded-xl mb-6 border ${isDarkMode ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'}`}>
+                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                <div>
+                                    <div className="flex items-center gap-2 text-sm font-semibold mb-1">
+                                        <ShieldCheck size={16} className="text-blue-500" />
+                                        Google Drive Şifreli Yedekleme
+                                    </div>
+                                    <div className="text-sm text-gray-500">
+                                        DB snapshotlari ve exportlar AES-256-GCM ile sifrelenip Drive klasorune yuklenir.
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-2">
+                                        Klasor: {backupStatus?.folder_name || 'Pi Control Backups'} • Sonraki calisma: {backupStatus?.next_run_at ? new Date(backupStatus.next_run_at).toLocaleString('tr-TR') : 'Bekleniyor'}
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    <button onClick={triggerEncryptedBackup} disabled={driveRunning}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r ${themeColors.secondary} text-white font-medium ${driveRunning ? 'opacity-50' : 'hover:opacity-90'}`}>
+                                        {driveRunning ? <RefreshCw size={16} className="animate-spin" /> : <FileArchive size={16} />}
+                                        Şifreli Yedekle
+                                    </button>
+                                    {backupStatus?.gdrive_enabled && (
+                                        <button onClick={disconnectDrive} disabled={driveRunning}
+                                            className={`flex items-center gap-2 px-4 py-2 rounded-lg ${isDarkMode ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
+                                            <Trash2 size={16} />
+                                            Bağlantıyı Kaldır
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            <div className="text-xs text-gray-500 mt-2">
-                                Sonraki planli calisma: {backupStatus?.next_run_at ? new Date(backupStatus.next_run_at).toLocaleString('tr-TR') : 'Bekleniyor'}
-                            </div>
+                            {backupMessage && (
+                                <div className={`mt-4 p-3 rounded-lg text-sm ${backupMessage.includes('başarısız') || backupMessage.includes('silinemedi') || backupMessage.includes('yüklenemedi') ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}>
+                                    {backupMessage}
+                                </div>
+                            )}
+                            {!backupStatus?.gdrive_enabled && (
+                                <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_auto_auto] gap-3">
+                                    <input
+                                        type="file"
+                                        accept="application/json,.json"
+                                        onChange={(event) => setOauthClientFile(event.target.files?.[0] || null)}
+                                        className={`rounded-lg px-3 py-2 text-sm border ${isDarkMode ? 'bg-black/30 border-white/10 text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}
+                                    />
+                                    <button onClick={uploadOauthClient} disabled={!oauthClientFile || driveRunning}
+                                        className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-white hover:bg-gray-100'} disabled:opacity-50`}>
+                                        <Upload size={16} />
+                                        Client Yükle
+                                    </button>
+                                    <button onClick={startDriveAuth} disabled={!backupStatus?.configured || driveRunning}
+                                        className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-white hover:bg-gray-100'} disabled:opacity-50`}>
+                                        <Link2 size={16} />
+                                        Yetkilendir
+                                    </button>
+                                </div>
+                            )}
+                            {oauthStatus?.user_code && !backupStatus?.gdrive_enabled && (
+                                <div className={`mt-4 p-4 rounded-xl ${isDarkMode ? 'bg-black/30' : 'bg-white'}`}>
+                                    <div className="text-sm text-gray-500 mb-2">Google hesabinda bu kodu gir:</div>
+                                    <div className="font-mono text-2xl font-bold tracking-widest">{oauthStatus.user_code}</div>
+                                    <a href={oauthStatus.verification_url} target="_blank" rel="noreferrer" className="inline-flex mt-3 text-blue-500 text-sm font-medium">
+                                        {oauthStatus.verification_url}
+                                    </a>
+                                    <div className="mt-3">
+                                        <button onClick={pollDriveAuth} disabled={driveRunning}
+                                            className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-100 hover:bg-gray-200'}`}>
+                                            Durumu Kontrol Et
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex gap-2">
@@ -967,7 +1130,9 @@ export function ArchivePage() {
                                 {backupFiles.map((file, idx) => (
                                     <div key={idx} className={`px-6 py-3 flex items-center justify-between ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-gray-50'}`}>
                                         <div className="flex items-center gap-3">
-                                            {file.filename.endsWith('.json') ? (
+                                            {file.filename.endsWith('.enc') ? (
+                                                <FileArchive size={20} className="text-blue-500" />
+                                            ) : file.filename.endsWith('.json') ? (
                                                 <FileJson size={20} className="text-yellow-500" />
                                             ) : (
                                                 <FileSpreadsheet size={20} className="text-green-500" />
@@ -983,6 +1148,48 @@ export function ArchivePage() {
                                             className={`p-2 rounded-lg ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
                                             <Download size={18} />
                                         </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-200'} border rounded-2xl overflow-hidden`}>
+                        <div className={`px-6 py-4 border-b ${isDarkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between`}>
+                            <h3 className="font-bold">Google Drive Yedekleri</h3>
+                            <span className="text-xs text-gray-500">{backupStatus?.remote_backups?.length || 0} dosya</span>
+                        </div>
+                        {backupStatus?.remote_error ? (
+                            <div className="p-6 text-sm text-red-500">{backupStatus.remote_error}</div>
+                        ) : !backupStatus?.gdrive_enabled ? (
+                            <div className="p-8 text-center text-gray-500">Drive baglantisi tamamlaninca sifreli yedekler burada gorunur</div>
+                        ) : (backupStatus?.remote_backups || []).length === 0 ? (
+                            <div className="p-8 text-center text-gray-500">Drive yedek dosyasi henuz yok</div>
+                        ) : (
+                            <div className={`divide-y ${isDarkMode ? 'divide-white/5' : 'divide-gray-100'}`}>
+                                {(backupStatus?.remote_backups || []).map((file) => (
+                                    <div key={file.id} className={`px-6 py-3 flex items-center justify-between gap-4 ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-gray-50'}`}>
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <Cloud size={20} className="text-blue-500 shrink-0" />
+                                            <div className="min-w-0">
+                                                <div className="font-medium truncate">{file.name}</div>
+                                                <div className="text-xs text-gray-500">
+                                                    {formatBytes(file.size || 0)} • {file.createdTime ? new Date(file.createdTime).toLocaleString('tr-TR') : 'tarih yok'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {file.webViewLink && (
+                                                <a href={file.webViewLink} target="_blank" rel="noreferrer"
+                                                    className={`p-2 rounded-lg ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}>
+                                                    <Link2 size={18} />
+                                                </a>
+                                            )}
+                                            <button onClick={() => deleteRemoteBackup(file.id)} disabled={driveRunning}
+                                                className={`p-2 rounded-lg ${isDarkMode ? 'hover:bg-red-500/10 text-red-400' : 'hover:bg-red-50 text-red-600'} disabled:opacity-50`}>
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
