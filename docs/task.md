@@ -1,0 +1,35 @@
+- [x] **Restrict GPIO Manager** <!-- id: 50 -->
+    - [x] Locate "Open GPIO Manager" link <!-- id: 51 -->
+    - [x] Hide for non-admin users <!-- id: 52 -->
+
+- [x] **Fix WiFi Scanning** <!-- id: 53 -->
+    - [x] Investigate `routers/network.py` scanning logic <!-- id: 54 -->
+    - [x] Check frontend `NetworkPage.jsx` <!-- id: 55 -->
+    - [x] Debug scanning command (permissions/path) <!-- id: 56 -->
+    - [x] Implement `scan_wifi` in agent `network_provider.py` <!-- id: 57 -->
+    - [x] Install and start `pi-agent` service <!-- id: 58 -->
+
+- [x] **Standard User Role Implementation** <!-- id: 39 -->
+    - [x] Explore Authorization Codebase (Auth routers, DB models) <!-- id: 40 -->
+    - [x] Backend: Update User Model & Seed Logic (Add `user` / `user123`) <!-- id: 41 -->
+    - [x] Backend: Implement Role-Based Permissions (Protect Terminal, Services) <!-- id: 42 -->
+    - [x] Frontend: Update Auth Context to store/expose Role <!-- id: 43 -->
+    - [x] Frontend: Restrict UI Access (Hide Terminal, Disable Service Controls) <!-- id: 44 -->
+    - [x] Verification: Test `user` login and restrictions <!-- id: 45 -->
+    - [x] **Settings Page Refinement** <!-- id: 46 -->
+        - [x] Dynamic Profile Info (`user.username` instead of static) <!-- id: 47 -->
+        - [x] Hide Security/Users tabs for non-admins <!-- id: 48 -->
+        - [x] Implement User Management (List/Add/Delete) for Admins <!-- id: 49 -->
+
+- [x] **Enhance Performance Widget** <!-- id: 0 -->
+    - [x] Initial Planning & Research <!-- id: 1 -->
+    - [x] Backend: Create/Update Telemetry Endpoint (POST support) <!-- id: 2 -->
+    - [x] Frontend: Update Data Fetching (Use POST) <!-- id: 3 -->
+    - [x] Frontend: Refactor Header Layout (Consolidated Row) <!-- id: 4 -->
+    - [x] Frontend: Implement Refresh Rate Control (UI & Logic) <!-- id: 5 -->
+    - [x] Verification: Fix Syntax Errors & Ensure Stability <!-- id: 6 -->
+    - [x] Re-implement Configurable Refresh Rate (Input + Confirm + Persistence) <!-- id: 34 -->
+    - [x] Optimize Backend Collection Interval to 1s (True Real-time) <!-- id: 35 -->
+    - [x] Implement Unit Selector (s/m) and Remove Min Limit <!-- id: 36 -->
+    - [x] Update Retention Policy (15 days raw) and UI Ranges (Remove 30m, Add 15d) <!-- id: 37 -->
+    - [x] Fix Input Field UX (Allow empty typing) <!-- id: 38 -->

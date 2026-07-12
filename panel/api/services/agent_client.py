@@ -1,0 +1,296 @@
+"""
+Pi Control Panel - Agent RPC Client
+
+Communicates with Pi Agent via Unix domain socket.
+Includes circuit breaker pattern for resilience.
+"""
+
+import asyncio
+import json
+import time
+from enum import Enum
+from typing import Any, Dict, Optional
+
+import structlog
+
+from config import settings
+
+logger = structlog.get_logger(__name__)
+
+
+class _CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class AgentClient:
+    """RPC client for communicating with Pi Agent."""
+
+    def __init__(self, socket_path: str = None):
+        self.socket_path = socket_path or settings.agent_socket
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
+        self._request_id = 0
+        self._lock = asyncio.Lock()
+        self._connected = False
+
+        # Circuit breaker state
+        self._circuit_state = _CircuitState.CLOSED
+        self._failure_count = 0
+        self._failure_threshold = 5
+        self._last_failure_time = 0.0
+        self._circuit_timeout = 30.0  # seconds before trying half-open
+        self._half_open_successes = 0
+        self._half_open_threshold = 2
+    
+    async def connect(self) -> bool:
+        """Connect to the agent socket."""
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path),
+                timeout=5.0
+            )
+            self._connected = True
+            logger.info("Connected to agent", socket=self.socket_path)
+            return True
+        except FileNotFoundError:
+            logger.warning("Agent socket not found", socket=self.socket_path)
+            return False
+        except asyncio.TimeoutError:
+            logger.error("Agent connection timeout")
+            return False
+        except Exception as e:
+            logger.error("Agent connection failed", error=str(e))
+            return False
+    
+    async def disconnect(self):
+        """Disconnect from the agent."""
+        if self._writer:
+            self._writer.close()
+            await self._writer.wait_closed()
+        self._reader = None
+        self._writer = None
+        self._connected = False
+    
+    def _check_circuit(self) -> bool:
+        """Check if circuit breaker allows the request."""
+        if self._circuit_state == _CircuitState.CLOSED:
+            return True
+        if self._circuit_state == _CircuitState.OPEN:
+            if time.monotonic() - self._last_failure_time > self._circuit_timeout:
+                self._circuit_state = _CircuitState.HALF_OPEN
+                self._half_open_successes = 0
+                logger.info("Circuit breaker half-open, testing connection")
+                return True
+            return False
+        return True  # HALF_OPEN allows requests
+
+    def _record_success(self):
+        """Record successful call for circuit breaker."""
+        if self._circuit_state == _CircuitState.HALF_OPEN:
+            self._half_open_successes += 1
+            if self._half_open_successes >= self._half_open_threshold:
+                self._circuit_state = _CircuitState.CLOSED
+                self._failure_count = 0
+                logger.info("Circuit breaker closed, agent recovered")
+        else:
+            self._failure_count = 0
+
+    def _record_failure(self):
+        """Record failed call for circuit breaker."""
+        self._failure_count += 1
+        self._last_failure_time = time.monotonic()
+        if self._circuit_state == _CircuitState.HALF_OPEN:
+            self._circuit_state = _CircuitState.OPEN
+            logger.warning("Circuit breaker re-opened after half-open failure")
+        elif self._failure_count >= self._failure_threshold:
+            self._circuit_state = _CircuitState.OPEN
+            logger.warning("Circuit breaker opened", failures=self._failure_count)
+
+    async def call(self, method: str, params: Optional[Dict] = None, timeout: float = 30.0) -> Any:
+        """Call an RPC method on the agent with circuit breaker."""
+        if not self._check_circuit():
+            raise ConnectionError("Agent unavailable (circuit breaker open)")
+
+        async with self._lock:
+            if not self._connected:
+                if not await self.connect():
+                    raise ConnectionError("Cannot connect to agent")
+            
+            self._request_id += 1
+            
+            request = {
+                "jsonrpc": "2.0",
+                "id": self._request_id,
+                "method": method,
+                "params": params or {}
+            }
+            
+            try:
+                # Send request with timeout to prevent deadlock
+                request_bytes = json.dumps(request).encode("utf-8")
+                self._writer.write(len(request_bytes).to_bytes(4, byteorder="big"))
+                self._writer.write(request_bytes)
+                await asyncio.wait_for(self._writer.drain(), timeout=5.0)
+
+                # Read response
+                length_bytes = await asyncio.wait_for(
+                    self._reader.readexactly(4),
+                    timeout=timeout
+                )
+                length = int.from_bytes(length_bytes, byteorder="big")
+
+                response_bytes = await asyncio.wait_for(
+                    self._reader.readexactly(length),
+                    timeout=timeout
+                )
+                response = json.loads(response_bytes.decode("utf-8"))
+
+                if "error" in response:
+                    raise Exception(f"RPC error: {response['error']}")
+
+                self._record_success()
+                return response.get("result")
+
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError) as e:
+                logger.error("RPC call failed", method=method, error=str(e))
+                self._connected = False
+                self._record_failure()
+                # Clean up connection to prevent stale state
+                try:
+                    if self._writer:
+                        self._writer.close()
+                        await self._writer.wait_closed()
+                except Exception:
+                    pass
+                self._reader = None
+                self._writer = None
+                raise
+    
+    # Discovery methods
+    async def get_snapshot(self) -> Dict:
+        """Get current resource snapshot."""
+        return await self.call("discovery.snapshot")
+    
+    async def refresh_discovery(self) -> Dict:
+        """Force refresh discovery and return snapshot."""
+        return await self.call("discovery.refresh")
+    
+    # Resource methods
+    async def resource_action(
+        self,
+        resource_id: str,
+        action: str,
+        params: Dict = None,
+        timeout: float = 90.0,
+    ) -> Dict:
+        """Execute action on a resource."""
+        return await self.call(
+            "resource.action",
+            {
+                "resource_id": resource_id,
+                "action": action,
+                "params": params or {},
+            },
+            timeout=timeout,
+        )
+
+    async def execute_action(
+        self,
+        resource_id: str,
+        action: str,
+        params: Dict = None,
+        timeout: float = 90.0,
+    ) -> Dict:
+        """Backward-compatible alias for resource actions."""
+        return await self.resource_action(
+            resource_id=resource_id,
+            action=action,
+            params=params,
+            timeout=timeout,
+        )
+    
+    async def get_resource_logs(self, resource_id: str, tail: int = 100) -> list:
+        """Get logs for a resource."""
+        return await self.call("resource.logs", {
+            "resource_id": resource_id,
+            "tail": tail
+        })
+    
+    async def get_resource_stats(self, resource_id: str) -> Dict:
+        """Get stats for a resource."""
+        return await self.call("resource.stats", {"resource_id": resource_id})
+    
+    # Telemetry methods
+    async def get_current_telemetry(self) -> Dict:
+        """Get current telemetry snapshot."""
+        return await self.call("telemetry.current")
+    
+    async def query_telemetry(self, metric: str, start: int, end: int) -> list:
+        """Query historical telemetry."""
+        return await self.call("telemetry.query", {
+            "metric": metric,
+            "start": start,
+            "end": end
+        })
+    
+    # Job methods
+    async def run_job(self, job_type: str, name: str, config: Dict = None) -> Dict:
+        """Run a job on the agent."""
+        return await self.call("job.run", {
+            "job_type": job_type,
+            "name": name,
+            "config": config or {}
+        })
+    
+    async def get_job_status(self, job_id: str) -> Dict:
+        """Get job status."""
+        return await self.call("job.status", {"job_id": job_id})
+
+    async def get_job_logs(self, job_id: str) -> list:
+        """Get job logs."""
+        return await self.call("job.logs", {"job_id": job_id})
+    
+    async def cancel_job(self, job_id: str) -> Dict:
+        """Cancel a running job."""
+        return await self.call("job.cancel", {"job_id": job_id})
+    
+    # System methods
+    async def get_system_info(self) -> Dict:
+        """Get system information."""
+        return await self.call("system.info")
+    
+    async def get_health(self) -> Dict:
+        """Get agent health status."""
+        return await self.call("system.health")
+    
+    # Network methods
+    async def get_network_interfaces(self) -> list:
+        """Get network interfaces."""
+        return await self.call("network.interfaces")
+    
+    async def toggle_wifi(self, enable: bool) -> Dict:
+        """Toggle WiFi."""
+        return await self.call("network.wifi.toggle", {"enable": enable})
+    
+    async def scan_wifi(self) -> list:
+        """Scan for WiFi networks."""
+        return await self.call("network.wifi.scan")
+    
+    # Device methods
+    async def get_devices(self) -> list:
+        """Get hardware devices."""
+        return await self.call("devices.list")
+    
+    async def send_device_command(self, device_id: str, command: str, payload: Dict = None) -> Dict:
+        """Send command to device."""
+        return await self.call("devices.command", {
+            "device_id": device_id,
+            "command": command,
+            "payload": payload or {}
+        })
+
+
+# Global agent client instance
+agent_client = AgentClient()
