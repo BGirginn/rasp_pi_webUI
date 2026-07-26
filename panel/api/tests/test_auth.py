@@ -7,7 +7,7 @@ Pytest tests for authentication functionality.
 import pytest
 import jwt
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Set up test environment
 import os
@@ -36,13 +36,14 @@ class TestPasswordHashing:
 
 class TestJWTTokens:
     """Test JWT token creation and verification."""
+    secret = "test-secret-key-with-at-least-32-bytes"
     
     def test_create_access_token(self):
         """Test creating an access token."""
-        secret = "test-secret"
+        secret = self.secret
         payload = {
             "sub": "testuser",
-            "exp": datetime.utcnow() + timedelta(minutes=15)
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15)
         }
         
         token = jwt.encode(payload, secret, algorithm="HS256")
@@ -52,10 +53,10 @@ class TestJWTTokens:
     
     def test_expired_token_fails(self):
         """Test that expired tokens are rejected."""
-        secret = "test-secret"
+        secret = self.secret
         payload = {
             "sub": "testuser",
-            "exp": datetime.utcnow() - timedelta(minutes=1)
+            "exp": datetime.now(timezone.utc) - timedelta(minutes=1)
         }
         
         token = jwt.encode(payload, secret, algorithm="HS256")
@@ -67,13 +68,13 @@ class TestJWTTokens:
         """Test that tokens with invalid signature are rejected."""
         payload = {
             "sub": "testuser",
-            "exp": datetime.utcnow() + timedelta(minutes=15)
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15)
         }
         
-        token = jwt.encode(payload, "secret1", algorithm="HS256")
+        token = jwt.encode(payload, "first-test-signing-key-with-32-bytes", algorithm="HS256")
         
         with pytest.raises(jwt.InvalidSignatureError):
-            jwt.decode(token, "secret2", algorithms=["HS256"])
+            jwt.decode(token, "second-test-signing-key-with-32-bytes", algorithms=["HS256"])
 
 
 class TestTOTP:

@@ -7,7 +7,7 @@ Collects system metrics at configured intervals and stores them in SQLite.
 import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -391,7 +391,7 @@ class TelemetryCollector:
         """Get current metrics snapshot."""
         metrics = await self._collect_metrics()
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "degrade_mode": self._degrade_mode,
             "metrics": {m["metric"]: m["value"] for m in metrics}
         }

@@ -5,7 +5,7 @@ Discovers and manages systemd services.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import structlog
@@ -155,7 +155,7 @@ class SystemdProvider(BaseProvider):
             provider=self.name,
             resource_class=resource_class,
             state=state,
-            last_seen=datetime.utcnow(),
+            last_seen=datetime.now(timezone.utc),
             metadata={
                 "load_state": load_state,
                 "active_state": active_state,

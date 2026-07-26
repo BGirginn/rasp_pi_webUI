@@ -6,6 +6,7 @@ Pytest tests for the Panel API.
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 
 # Set up test environment before imports
 import os
@@ -60,6 +61,45 @@ class TestApiRoot:
         data = response.json()
         assert data["name"] == "Pi Control Panel API"
         assert data["version"] == "1.0.0"
+
+
+class TestRouteInventory:
+    """Keep every API operation visible and protected by default."""
+
+    PUBLIC_PATHS = {
+        "/api",
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/refresh",
+    }
+
+    def test_all_api_operations_are_unique_and_accounted_for(self):
+        from main import app
+
+        routes = [route for route in app.routes if isinstance(route, APIRoute)]
+        operations = [
+            (method, route.path)
+            for route in routes
+            for method in route.methods
+        ]
+
+        assert len(routes) == 204
+        assert len(operations) == len(set(operations))
+        assert sum(path.startswith("/api") for _, path in operations) == 203
+
+    def test_every_non_public_api_route_requires_authentication(self):
+        from main import app
+
+        unprotected = []
+        for route in app.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            if not route.path.startswith("/api") or route.path in self.PUBLIC_PATHS:
+                continue
+            if not route.dependant.dependencies:
+                unprotected.append((sorted(route.methods), route.path))
+
+        assert unprotected == []
 
 
 class TestAuthEndpoints:
@@ -217,11 +257,10 @@ class TestAuthenticatedEndpoints:
 class TestRateLimiting:
     """Test rate limiting."""
     
-    def test_rate_limit_headers(self, client):
-        """Test that rate limit headers are present."""
+    def test_health_endpoint_is_exempt_from_api_rate_limit(self, client):
+        """Health probes remain available without authentication."""
         response = client.get("/api/health")
-        # Rate limiting headers should be present after enough requests
-        # This is a basic test - actual rate limiting needs more requests
+        assert response.status_code == 200
 
     def test_client_ip_uses_last_proxy_hop_and_rejects_direct_spoof(self):
         from starlette.requests import Request

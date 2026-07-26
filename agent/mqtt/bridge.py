@@ -154,10 +154,10 @@ class MQTTBridge:
     def _handle_telemetry(self, device_id: str, payload: Dict) -> None:
         """Handle device telemetry message."""
         if device_id not in self._devices:
-            self._devices[device_id] = {"id": device_id, "first_seen": datetime.utcnow()}
+            self._devices[device_id] = {"id": device_id, "first_seen": datetime.now(timezone.utc)}
         
         self._devices[device_id]["last_telemetry"] = payload
-        self._devices[device_id]["last_seen"] = datetime.utcnow()
+        self._devices[device_id]["last_seen"] = datetime.now(timezone.utc)
         
         logger.debug("Device telemetry", device=device_id, payload=payload)
         
@@ -167,10 +167,10 @@ class MQTTBridge:
     def _handle_status(self, device_id: str, payload: Dict) -> None:
         """Handle device status message."""
         if device_id not in self._devices:
-            self._devices[device_id] = {"id": device_id, "first_seen": datetime.utcnow()}
+            self._devices[device_id] = {"id": device_id, "first_seen": datetime.now(timezone.utc)}
         
         self._devices[device_id]["status"] = payload.get("status", "unknown")
-        self._devices[device_id]["last_seen"] = datetime.utcnow()
+        self._devices[device_id]["last_seen"] = datetime.now(timezone.utc)
         
         logger.info("Device status", device=device_id, status=payload)
     

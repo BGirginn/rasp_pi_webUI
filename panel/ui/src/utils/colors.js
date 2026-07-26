@@ -45,13 +45,14 @@ export function hsvToRgb(h, s, v) {
     const c = v * s;
     const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
     const m = v - c;
-    let rr = 0, gg = 0, bb = 0;
-    if (h >= 0 && h < 60) { rr = c; gg = x; bb = 0; }
-    else if (h >= 60 && h < 120) { rr = x; gg = c; bb = 0; }
-    else if (h >= 120 && h < 180) { rr = 0; gg = c; bb = x; }
-    else if (h >= 180 && h < 240) { rr = 0; gg = x; bb = c; }
-    else if (h >= 240 && h < 300) { rr = x; gg = 0; bb = c; }
-    else { rr = c; gg = 0; bb = x; }
+    let rgb;
+    if (h >= 0 && h < 60) rgb = [c, x, 0];
+    else if (h >= 60 && h < 120) rgb = [x, c, 0];
+    else if (h >= 120 && h < 180) rgb = [0, c, x];
+    else if (h >= 180 && h < 240) rgb = [0, x, c];
+    else if (h >= 240 && h < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    const [rr, gg, bb] = rgb;
     return {
         r: Math.round((rr + m) * 255),
         g: Math.round((gg + m) * 255),

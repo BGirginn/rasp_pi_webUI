@@ -6,7 +6,7 @@ Loads configuration from environment variables and files.
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict

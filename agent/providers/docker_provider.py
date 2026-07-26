@@ -5,7 +5,7 @@ Discovers and manages Docker containers, images, volumes, and networks.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import structlog
@@ -17,7 +17,7 @@ try:
 except ImportError:
     DOCKER_AVAILABLE = False
 
-from .base import BaseProvider, Resource, ResourceClass, ResourceState, ActionResult
+from .base import BaseProvider, Resource, ResourceState, ActionResult
 
 logger = structlog.get_logger(__name__)
 
@@ -125,7 +125,7 @@ class DockerProvider(BaseProvider):
             image=image,
             ports=ports,
             labels=labels,
-            last_seen=datetime.utcnow(),
+            last_seen=datetime.now(timezone.utc),
             metadata={
                 "created": container.attrs.get("Created"),
                 "started_at": container.attrs.get("State", {}).get("StartedAt"),

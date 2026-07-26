@@ -143,7 +143,7 @@ class ApiService {
         }
 
         if (!response.ok) {
-            let errorData = {}
+            let errorData
             if (responseType === 'blob') {
                 errorData = await errorResponse.json().catch(async () => {
                     const text = await errorResponse.text().catch(() => '')

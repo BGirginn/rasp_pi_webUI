@@ -2,7 +2,7 @@
 
 import asyncio
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 
 MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")

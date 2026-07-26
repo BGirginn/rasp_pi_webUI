@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, LoaderCircle, ShieldCheck, Wifi } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../contexts/ThemeContext';
@@ -15,7 +14,6 @@ export default function Login() {
     const [error, setError] = useState('');
     const { login } = useAuth();
     const { theme } = useTheme();
-    const navigate = useNavigate();
 
     async function handleSubmit(event) {
         event.preventDefault();
@@ -24,7 +22,6 @@ export default function Login() {
 
         try {
             await login(username, password, needsTotp ? totpCode : null);
-            navigate('/');
         } catch (requestError) {
             if (requestError.message?.includes('TOTP')) {
                 setNeedsTotp(true);

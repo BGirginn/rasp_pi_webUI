@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { User, Shield, Users, Plus, Edit, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle, Send, Laptop } from 'lucide-react';
+import { User, Shield, Users, Plus, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle, Send, Laptop } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
@@ -37,13 +37,16 @@ export function SettingsPage() {
   const [telegram, setTelegram] = useState({ token: '', chat_id: '' });
   const [telegramConfigured, setTelegramConfigured] = useState(false);
   const [sessions, setSessions] = useState([]);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [totpSetup, setTotpSetup] = useState(null);
+  const [totpCode, setTotpCode] = useState('');
 
   // Alerts state
   const [alertFilter, setAlertFilter] = useState('all');
   const [alertType, setAlertType] = useState('alerts');
 
   const { theme, isDarkMode } = useTheme();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, refreshUser } = useAuth();
   const themeColors = getThemeColors(theme);
 
   // Fetch users when tab changes to 'users'
@@ -107,6 +110,57 @@ export function SettingsPage() {
   const revokeSession = async (sessionId) => {
     try { await api.delete(`/auth/sessions/${sessionId}`); await loadSecurity(); }
     catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) return alert('New password must be at least 8 characters.');
+    if (newPassword !== confirmPassword) return alert('New passwords do not match.');
+    setSavingPassword(true);
+    try {
+      await api.post('/auth/password/change', {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      alert('Password changed successfully.');
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const startTotpSetup = async () => {
+    try {
+      const response = await api.post('/auth/totp/setup');
+      setTotpSetup(response.data);
+      setTotpCode('');
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const verifyTotp = async () => {
+    try {
+      await api.post('/auth/totp/verify', { code: totpCode });
+      setTotpSetup(null);
+      setTotpCode('');
+      await refreshUser();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const disableTotp = async () => {
+    if (!confirm('Disable two-factor authentication?')) return;
+    try {
+      await api.post('/auth/totp/disable');
+      await refreshUser();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
   };
 
   const tabs = [
@@ -175,20 +229,6 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Email
-                  </label>
-                  <button className={`text-xs flex items-center gap-1 ${isDarkMode ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-700'}`}>
-                    <Edit size={12} />
-                    Edit
-                  </button>
-                </div>
-                <div className={`px-4 py-3 rounded-lg ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'} border ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
-                  Not set
-                </div>
-              </div>
             </div>
           </motion.div>
 
@@ -267,8 +307,14 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className={`w-full px-6 py-3 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border mt-4`}>
-                Change Password
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                disabled={savingPassword || !currentPassword || !newPassword || !confirmPassword}
+                onClick={changePassword}
+                className={`w-full px-6 py-3 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border mt-4 disabled:opacity-50`}
+              >
+                {savingPassword ? 'Changing...' : 'Change Password'}
               </motion.button>
             </div>
           </motion.div>
@@ -286,9 +332,32 @@ export function SettingsPage() {
             <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-6`}>
               Add an extra layer of security to your account by enabling two-factor authentication.
             </p>
-            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className={`px-6 py-2 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border`}>
-              Enable 2FA
-            </motion.button>
+            {user?.has_totp ? (
+              <button onClick={disableTotp} className="rounded-lg border border-red-500/40 px-6 py-2 text-red-400">
+                Disable 2FA
+              </button>
+            ) : totpSetup ? (
+              <div className="space-y-3">
+                <p className="break-all rounded-lg border border-white/10 p-3 font-mono text-xs">{totpSetup.secret}</p>
+                <a className="block break-all text-xs text-blue-400 underline" href={totpSetup.provisioning_uri}>Open authenticator setup link</a>
+                <div className="flex gap-2">
+                  <input
+                    aria-label="TOTP verification code"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={totpCode}
+                    onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className={`h-10 w-36 rounded-lg border px-3 font-mono ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-300'}`}
+                    placeholder="000000"
+                  />
+                  <button disabled={totpCode.length !== 6} onClick={verifyTotp} className="rounded-lg bg-purple-600 px-5 py-2 text-white disabled:opacity-50">Verify</button>
+                </div>
+              </div>
+            ) : (
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={startTotpSetup} className={`px-6 py-2 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border`}>
+                Enable 2FA
+              </motion.button>
+            )}
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className={`${isDarkMode ? 'bg-black/40' : 'bg-white'} backdrop-blur-xl rounded-2xl p-6 border ${isDarkMode ? 'border-white/10' : 'border-gray-300'}`}>
@@ -296,7 +365,7 @@ export function SettingsPage() {
               Active Sessions
             </h3>
             <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              No active sessions
+              {sessions.filter((session) => !session.revoked_at).length} active session(s)
             </p>
           </motion.div>
           <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-300'} rounded-lg border p-6 lg:col-span-2`}>

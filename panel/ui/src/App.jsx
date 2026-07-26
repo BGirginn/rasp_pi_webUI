@@ -1,4 +1,3 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { DashboardProvider } from './contexts/DashboardContext';
@@ -9,8 +8,7 @@ import Loader from './components/common/Loader';
 const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
 const Login = lazy(() => import('./pages/Login'));
 
-// Protected Route wrapper
-function ProtectedRoute({ children }) {
+function AuthenticatedApp() {
     const { user, loading } = useAuth();
 
     if (loading) {
@@ -18,53 +16,22 @@ function ProtectedRoute({ children }) {
     }
 
     if (!user) {
-        return <Navigate to="/login" replace />;
+        if (window.location.pathname !== '/login') {
+            window.history.replaceState(null, '', '/login');
+        }
+        return <Login />;
     }
 
-    return children;
-}
-
-// Public Route - redirect to dashboard if already logged in
-function PublicRoute({ children }) {
-    const { user, loading } = useAuth();
-
-    if (loading) {
-        return <Loader />;
+    if (window.location.pathname !== '/') {
+        window.history.replaceState(null, '', '/');
     }
 
-    if (user) {
-        return <Navigate to="/" replace />;
-    }
-
-    return children;
-}
-
-function AppRoutes() {
     return (
-        <Suspense fallback={<Loader />}>
-        <Routes>
-            <Route
-                path="/login"
-                element={
-                    <PublicRoute>
-                        <Login />
-                    </PublicRoute>
-                }
-            />
-            <Route
-                path="/*"
-                element={
-                    <ProtectedRoute>
-                        <NavigationProvider>
-                            <DashboardProvider>
-                                <Dashboard />
-                            </DashboardProvider>
-                        </NavigationProvider>
-                    </ProtectedRoute>
-                }
-            />
-        </Routes>
-        </Suspense>
+        <NavigationProvider>
+            <DashboardProvider>
+                <Dashboard />
+            </DashboardProvider>
+        </NavigationProvider>
     );
 }
 
@@ -72,7 +39,9 @@ export default function App() {
     return (
         <ThemeProvider>
             <AuthProvider>
-                <AppRoutes />
+                <Suspense fallback={<Loader />}>
+                    <AuthenticatedApp />
+                </Suspense>
             </AuthProvider>
         </ThemeProvider>
     );

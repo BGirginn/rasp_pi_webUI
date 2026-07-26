@@ -46,6 +46,8 @@ pnpm-debug.log*
 # Frontend Build Artifacts
 panel/ui/dist/
 panel/ui/build/
+panel/ui/coverage/
+.coverage
 .cache/
 .parcel-cache/
 

@@ -15,7 +15,7 @@ import os
 import platform
 import subprocess
 from time import monotonic
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -234,7 +234,7 @@ class DevicesProvider(BaseProvider):
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE,
                     capabilities=capabilities,
-                    last_seen=datetime.utcnow(),
+                    last_seen=datetime.now(timezone.utc),
                     metadata={
                         "vendor_id": vendor_id,
                         "product_id": product_id,
@@ -397,7 +397,7 @@ class DevicesProvider(BaseProvider):
                 resource_class=ResourceClass.DEVICE,
                 state=ResourceState.ONLINE,
                 capabilities=capabilities,
-                last_seen=datetime.utcnow(),
+                last_seen=datetime.now(timezone.utc),
                 metadata={
                     "vendor_id": vendor_id,
                     "product_id": product_id,
@@ -443,7 +443,7 @@ class DevicesProvider(BaseProvider):
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE,
                     capabilities=["serial", "read", "write"],
-                    last_seen=datetime.utcnow(),
+                    last_seen=datetime.now(timezone.utc),
                     metadata={
                         "path": port_path,
                         "port_name": port_name,
@@ -495,7 +495,7 @@ class DevicesProvider(BaseProvider):
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE if is_online else ResourceState.OFFLINE,
                     capabilities=capabilities,
-                    last_seen=datetime.utcnow() if is_online else None,
+                    last_seen=datetime.now(timezone.utc) if is_online else None,
                     metadata={
                         "ip": ip,
                         "telemetry": telemetry,

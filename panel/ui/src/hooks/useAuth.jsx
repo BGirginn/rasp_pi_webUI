@@ -54,7 +54,7 @@ export function AuthProvider({ children }) {
         } catch (err) {
             const message = err.response?.data?.detail || 'Login failed'
             setError(message)
-            throw new Error(message)
+            throw new Error(message, { cause: err })
         }
     }
 
@@ -84,6 +84,7 @@ export function AuthProvider({ children }) {
         login,
         logout,
         refreshToken,
+        refreshUser: checkAuth,
         isAdmin: user?.role === 'admin',
         isOperator: user?.role === 'operator' || user?.role === 'admin',
     }
