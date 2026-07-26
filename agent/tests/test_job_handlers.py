@@ -80,3 +80,36 @@ async def test_cleanup_is_dry_run_by_default(tmp_path):
     result = await handler.execute(job)
     assert result["dry_run"] is True
     assert candidate.exists()
+
+
+def test_usb_write_test_verifies_and_removes_temporary_file(tmp_path, monkeypatch):
+    from jobs.handlers import UsbWriteTestJobHandler
+
+    device = {
+        "device_path": "/dev/sdz",
+        "fingerprint": "fingerprint",
+        "partitions": [{
+            "id": "sdz1",
+            "path": "/dev/sdz1",
+            "mount_points": [str(tmp_path)],
+            "read_only": False,
+        }],
+    }
+    monkeypatch.setattr("jobs.handlers.get_safe_usb_device", lambda *_args: device)
+    job = Job(
+        id="usbtest",
+        name="USB write",
+        type="usb_write_test",
+        config={
+            "device_path": "/dev/sdz",
+            "fingerprint": "fingerprint",
+            "volume_id": "sdz1",
+            "size_mb": 1,
+        },
+    )
+
+    result = UsbWriteTestJobHandler()._write_test(job)
+
+    assert result["bytes_tested"] == 1024 * 1024
+    assert result["temporary_file_removed"] is True
+    assert list(tmp_path.iterdir()) == []

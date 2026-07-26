@@ -127,16 +127,20 @@ class SystemdProvider(BaseProvider):
     ) -> Optional[Resource]:
         """Parse service info into Resource."""
         # Determine state
-        state_map = {
-            ("active", "running"): ResourceState.RUNNING,
-            ("active", "exited"): ResourceState.STOPPED,
-            ("inactive", "dead"): ResourceState.STOPPED,
-            ("failed", "failed"): ResourceState.FAILED,
-            ("activating", "start"): ResourceState.STARTING,
-            ("deactivating", "stop"): ResourceState.STOPPING,
-            ("reloading", "reload"): ResourceState.RESTARTING,
-        }
-        state = state_map.get((active_state, sub_state), ResourceState.UNKNOWN)
+        if active_state == "active":
+            state = ResourceState.RUNNING
+        elif active_state == "inactive":
+            state = ResourceState.STOPPED
+        elif active_state == "failed":
+            state = ResourceState.FAILED
+        elif active_state == "activating":
+            state = ResourceState.STARTING
+        elif active_state == "deactivating":
+            state = ResourceState.STOPPING
+        elif active_state == "reloading":
+            state = ResourceState.RESTARTING
+        else:
+            state = ResourceState.UNKNOWN
         
         # Clean service name
         service_name = unit_name.replace(".service", "")
@@ -163,7 +167,7 @@ class SystemdProvider(BaseProvider):
         """Get a specific service."""
         result = await self._run_command([
             "systemctl", "show", resource_id,
-            "--property=LoadState,ActiveState,SubState,Description"
+            "--property=LoadState,ActiveState,SubState,UnitFileState,Description"
         ])
         
         if result["returncode"] != 0:
@@ -176,12 +180,16 @@ class SystemdProvider(BaseProvider):
                 key, value = line.split("=", 1)
                 props[key] = value
         
-        return self._parse_service(
+        resource = self._parse_service(
             resource_id,
             props.get("LoadState", "unknown"),
             props.get("ActiveState", "unknown"),
             props.get("SubState", "unknown")
         )
+        if resource:
+            resource.metadata["unit_file_state"] = props.get("UnitFileState", "unknown")
+            resource.metadata["description"] = props.get("Description", "")
+        return resource
     
     async def execute_action(
         self,
@@ -190,10 +198,16 @@ class SystemdProvider(BaseProvider):
         params: Optional[Dict] = None
     ) -> ActionResult:
         """Execute an action on a service."""
-        resource = self._resources.get(resource_id)
+        resource = await self.get_resource(resource_id)
+        if not resource:
+            return ActionResult(
+                success=False,
+                message=f"Service not found: {resource_id}",
+                error="NOT_FOUND",
+            )
         
         # Check CORE protection
-        if resource and resource.resource_class == ResourceClass.CORE:
+        if resource.resource_class == ResourceClass.CORE:
             return ActionResult(
                 success=False,
                 message=f"Cannot modify CORE service: {resource_id}",

@@ -388,16 +388,30 @@ class ProviderManager:
             for resource_id in [key for key, item in self._resources.items() if item.provider == "devices"]:
                 self._resources.pop(resource_id, None)
             self._resources.update({resource.id: resource for resource in resources})
-            self._devices_cache = [r.to_dict() for r in resources]
+            self._devices_cache = [self._device_dict(provider, r) for r in resources]
             self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
             self._devices_snapshot_ready = True
             return self._devices_cache
 
     def _refresh_devices_cache_from_resources(self) -> None:
         """Keep device cache in sync with latest discovery snapshot."""
-        snapshot_devices = [r.to_dict() for r in self._resources.values() if r.provider == "devices"]
+        provider = self._providers.get("devices")
+        snapshot_devices = [
+            self._device_dict(provider, resource)
+            for resource in self._resources.values()
+            if resource.provider == "devices"
+        ]
         self._devices_cache = snapshot_devices
         self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
+
+    @staticmethod
+    def _device_dict(provider: Optional[BaseProvider], resource: Resource) -> Dict:
+        payload = resource.to_dict()
+        payload["storage"] = (resource.metadata or {}).get("storage")
+        payload["allowed_actions"] = (
+            provider.get_allowed_actions(resource.resource_class) if provider else []
+        )
+        return payload
 
     def _invalidate_devices_cache(self) -> None:
         """Force device list recomputation on the next request."""

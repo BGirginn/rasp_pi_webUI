@@ -253,16 +253,16 @@ export function ServicesPage() {
   };
 
   const getActionPermissions = (service, serviceState = service.state) => {
-    const canManage = isOperator;
-    const isCore = service.resource_class === 'CORE';
-    const canRestart = canManage && !isCore;
-    const canStartStop = canManage && !isCore;
+    const allowed = new Set(service.allowed_actions || []);
+    const canRestart = isOperator && allowed.has('restart');
+    const canStart = isOperator && allowed.has('start');
+    const canStop = isOperator && allowed.has('stop');
 
     return {
       canRestart,
-      canStartStop,
-      canStart: canStartStop && !['running', 'starting', 'restarting', 'stopping'].includes(serviceState),
-      canStop: canStartStop && serviceState === 'running',
+      canStartStop: canStart || canStop,
+      canStart: canStart && !['running', 'starting', 'restarting', 'stopping'].includes(serviceState),
+      canStop: canStop && serviceState === 'running',
     };
   };
 
@@ -475,6 +475,7 @@ export function ServicesPage() {
                       <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStateStyles(displayState)}`}>
                         {getStatusIcon(displayState)}
                         {formatStateLabel(displayState)}
+                        {!progress && service.sub_state && <span>({service.sub_state})</span>}
                       </div>
                     </div>
 

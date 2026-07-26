@@ -213,6 +213,25 @@ JOB_TYPES = {
             "check_disk": {"type": "boolean", "default": True},
             "check_network": {"type": "boolean", "default": True},
         }
+    },
+    "usb_format": {
+        "name": "Format USB",
+        "description": "Create a fresh filesystem on a removable USB disk",
+        "config_schema": {
+            "device_id": {"type": "string", "required": True},
+            "filesystem": {"type": "string", "enum": ["exfat", "fat32", "ext4"]},
+            "label": {"type": "string", "default": "PI-USB"},
+            "confirmation": {"type": "string", "required": True},
+        },
+    },
+    "usb_write_test": {
+        "name": "USB Write Test",
+        "description": "Verify removable storage with a temporary checksum file",
+        "config_schema": {
+            "device_id": {"type": "string", "required": True},
+            "volume_id": {"type": "string"},
+            "size_mb": {"type": "integer", "default": 64},
+        },
     }
 }
 
@@ -415,11 +434,15 @@ async def create_job(
     """Create and queue a new job."""
     if job.type not in JOB_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown job type: {job.type}")
-    if job.type in {"restore", "update"} and user["role"] != "admin":
+    if job.type in {"restore", "update", "usb_format"} and user["role"] != "admin":
         raise HTTPException(status_code=403, detail=f"Only admins can run {job.type} jobs")
     if job.type == "cleanup" and not (job.config or {}).get("dry_run", True) and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Only admins can apply cleanup jobs")
     
+    if job.type in {"usb_format", "usb_write_test"}:
+        from .devices import prepare_usb_job_config
+        job.config = await prepare_usb_job_config(job.type, dict(job.config or {}))
+
     db = await get_control_db()
     
     job_id = str(uuid.uuid4())[:8]

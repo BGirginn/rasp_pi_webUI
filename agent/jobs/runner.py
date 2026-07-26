@@ -109,7 +109,10 @@ class JobRunner:
         self._db: Optional[sqlite3.Connection] = None
         self._running = False
 
-        for job_type in ("backup", "restore", "update", "cleanup", "healthcheck"):
+        for job_type in (
+            "backup", "restore", "update", "cleanup", "healthcheck",
+            "usb_format", "usb_write_test",
+        ):
             self.register_handler(job_type, UnsupportedJobHandler(job_type))
 
     @property

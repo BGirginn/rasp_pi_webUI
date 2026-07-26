@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -19,6 +20,13 @@ import psutil
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .runner import Job
+from storage import (
+    StorageSafetyError,
+    discover_block_devices,
+    get_safe_usb_device,
+    resolve_volume,
+    unmount_device,
+)
 
 
 BACKUP_MAGIC = b"PCBACKUP1"
@@ -605,6 +613,182 @@ class UpdateJobHandler:
         }
 
 
+class UsbFormatJobHandler:
+    """Destructively create one partition and filesystem on a verified USB disk."""
+
+    FILESYSTEMS = {
+        "exfat": ("mkfs.exfat", "-n"),
+        "fat32": ("mkfs.vfat", "-F", "32", "-n"),
+        "ext4": ("mkfs.ext4", "-F", "-L"),
+    }
+
+    async def precheck(self, job: Job) -> Dict[str, Any]:
+        config = job.config
+        device_id = str(config.get("device_id") or "")
+        if config.get("confirmation") != f"ERASE {device_id}":
+            return {"passed": False, "reason": "Exact erase confirmation is required"}
+        filesystem = str(config.get("filesystem") or "").lower()
+        if filesystem not in self.FILESYSTEMS:
+            return {"passed": False, "reason": "Unsupported filesystem"}
+        required = ["lsblk", "findmnt", "wipefs", "sfdisk", self.FILESYSTEMS[filesystem][0]]
+        missing = [command for command in required if not shutil.which(command)]
+        if missing:
+            return {"passed": False, "reason": f"Missing tools: {', '.join(missing)}"}
+        try:
+            device = await asyncio.to_thread(
+                get_safe_usb_device,
+                str(config.get("device_path") or ""),
+                str(config.get("fingerprint") or ""),
+            )
+        except StorageSafetyError as exc:
+            return {"passed": False, "reason": str(exc)}
+        return {"passed": True, "device": device["device_path"]}
+
+    async def execute(self, job: Job) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._format, job)
+
+    def _format(self, job: Job) -> Dict[str, Any]:
+        config = job.config
+        device = get_safe_usb_device(config["device_path"], config["fingerprint"])
+        unmounted = unmount_device(device)
+        filesystem = config["filesystem"].lower()
+        label = re.sub(r"[^A-Za-z0-9 _.-]", "", str(config.get("label") or "PI-USB")).strip()
+        label_limit = 11 if filesystem == "fat32" else 15 if filesystem == "exfat" else 16
+        label = (label or "PI-USB")[:label_limit]
+        table = "gpt" if int(device.get("size_bytes") or 0) > 2 * 1024**4 else "dos"
+
+        self._checked(["wipefs", "--all", "--force", device["device_path"]])
+        partition_spec = f"label: {table}\n,;\n"
+        result = subprocess.run(
+            ["sfdisk", "--wipe", "always", device["device_path"]],
+            input=partition_spec,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "Partitioning failed")
+        subprocess.run(["udevadm", "settle"], capture_output=True, timeout=30)
+
+        partition_path = (
+            f"{device['device_path']}p1"
+            if device["device_path"][-1:].isdigit()
+            else f"{device['device_path']}1"
+        )
+        for _ in range(30):
+            if Path(partition_path).exists():
+                break
+            import time
+            time.sleep(0.2)
+        if not Path(partition_path).exists():
+            raise RuntimeError("New USB partition did not appear")
+
+        command = list(self.FILESYSTEMS[filesystem])
+        if filesystem == "fat32":
+            command.extend([label, partition_path])
+        else:
+            command.extend([label, partition_path])
+        self._checked(command, timeout=180)
+        subprocess.run(["udevadm", "settle"], capture_output=True, timeout=30)
+        return {
+            "device_path": device["device_path"],
+            "partition_path": partition_path,
+            "partition_table": table,
+            "filesystem": filesystem,
+            "label": label,
+            "unmounted": unmounted,
+        }
+
+    async def verify(self, job: Job, result: Dict[str, Any]) -> Dict[str, Any]:
+        devices = await asyncio.to_thread(discover_block_devices)
+        device = next(
+            (item for item in devices if item["device_path"] == result["device_path"]),
+            None,
+        )
+        volume = next(
+            (
+                item
+                for item in (device or {}).get("partitions", [])
+                if item["path"] == result["partition_path"]
+            ),
+            None,
+        )
+        expected = "vfat" if result["filesystem"] == "fat32" else result["filesystem"]
+        return {
+            "passed": bool(volume and volume.get("filesystem") == expected),
+            "reason": "Formatted filesystem was not detected",
+        }
+
+    @staticmethod
+    def _checked(command: list[str], timeout: int = 60) -> None:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or f"{command[0]} failed")
+
+
+class UsbWriteTestJobHandler:
+    """Write, fsync, checksum, read and remove a temporary USB test file."""
+
+    async def precheck(self, job: Job) -> Dict[str, Any]:
+        try:
+            device = await asyncio.to_thread(
+                get_safe_usb_device,
+                str(job.config.get("device_path") or ""),
+                str(job.config.get("fingerprint") or ""),
+            )
+            volume = resolve_volume(device, job.config.get("volume_id"))
+        except StorageSafetyError as exc:
+            return {"passed": False, "reason": str(exc)}
+        if volume.get("read_only") or not volume.get("mount_points"):
+            return {"passed": False, "reason": "Volume must be mounted read-write"}
+        return {"passed": True, "volume": volume["path"]}
+
+    async def execute(self, job: Job) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._write_test, job)
+
+    def _write_test(self, job: Job) -> Dict[str, Any]:
+        device = get_safe_usb_device(job.config["device_path"], job.config["fingerprint"])
+        volume = resolve_volume(device, job.config.get("volume_id"))
+        mount_point = Path(volume["mount_points"][0]).resolve()
+        size_mb = max(1, min(int(job.config.get("size_mb", 64)), 1024))
+        requested = size_mb * 1024 * 1024
+        free = shutil.disk_usage(mount_point).free
+        if requested > max(0, free - 16 * 1024 * 1024):
+            raise ValueError("Not enough free space for write test")
+
+        target = mount_point / f".pi-control-write-test-{job.id}.bin"
+        chunk = hashlib.sha256(f"{job.id}:{device['fingerprint']}".encode()).digest() * 32768
+        expected = hashlib.sha256()
+        try:
+            remaining = requested
+            with target.open("xb") as output:
+                while remaining:
+                    payload = chunk[: min(len(chunk), remaining)]
+                    output.write(payload)
+                    expected.update(payload)
+                    remaining -= len(payload)
+                output.flush()
+                os.fsync(output.fileno())
+            actual = _sha256(target)
+            if actual != expected.hexdigest():
+                raise RuntimeError("USB write-test checksum mismatch")
+            return {
+                "volume_path": volume["path"],
+                "mount_point": str(mount_point),
+                "bytes_tested": requested,
+                "checksum": actual,
+                "temporary_file_removed": True,
+            }
+        finally:
+            target.unlink(missing_ok=True)
+
+    async def verify(self, job: Job, result: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "passed": bool(result.get("checksum") and result.get("temporary_file_removed")),
+            "reason": "Write-test verification failed",
+        }
+
+
 def register_builtin_handlers(runner, config: dict) -> Dict[str, Any]:
     registered = {
         "backup": BackupJobHandler(config),
@@ -612,6 +796,8 @@ def register_builtin_handlers(runner, config: dict) -> Dict[str, Any]:
         "update": UpdateJobHandler(config),
         "cleanup": CleanupJobHandler(config),
         "healthcheck": HealthCheckJobHandler(),
+        "usb_format": UsbFormatJobHandler(),
+        "usb_write_test": UsbWriteTestJobHandler(),
     }
     for job_type, handler in registered.items():
         runner.register_handler(job_type, handler)

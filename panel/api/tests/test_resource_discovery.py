@@ -14,6 +14,7 @@ def test_panel_and_access_services_are_protected():
 
 def test_systemd_states_are_normalized():
     assert _state_from_systemd("active", "running") == "running"
+    assert _state_from_systemd("active", "exited") == "running"
     assert _state_from_systemd("inactive", "dead") == "stopped"
     assert _state_from_systemd("failed", "failed") == "failed"
     assert _state_from_systemd("deactivating", "stop") == "stopping"

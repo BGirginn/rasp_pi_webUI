@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import get_control_db
 from services.agent_client import agent_client
@@ -46,6 +46,10 @@ class ResourceResponse(BaseModel):
     updated_at: str
     cpu_usage: Optional[float] = 0.0
     memory_usage: Optional[float] = 0.0
+    active_state: Optional[str] = None
+    sub_state: Optional[str] = None
+    unit_file_state: Optional[str] = None
+    allowed_actions: List[str] = Field(default_factory=list)
 
 
 class ActionRequest(BaseModel):
@@ -136,9 +140,15 @@ def _state_from_systemd(active_state: str, sub_state: str = "") -> str:
         return "restarting"
     if active_state == "failed":
         return "failed"
-    if active_state == "active" and sub_state not in {"exited", "dead"}:
+    if active_state == "active":
         return "running"
     return "stopped"
+
+
+def _allowed_service_actions(resource_class: str) -> List[str]:
+    if resource_class == "CORE":
+        return []
+    return ["start", "stop", "restart"]
 
 
 async def _get_live_systemd_services(force_refresh: bool = False) -> List[ResourceResponse]:
@@ -197,7 +207,12 @@ async def _get_live_systemd_services(force_refresh: bool = False) -> List[Resour
              name = unit_name.replace(".service", "")
              active_state = parts[2] if len(parts) > 2 else "unknown"
              sub_state = parts[3] if len(parts) > 3 else ""
-             unit_states[name] = _state_from_systemd(active_state, sub_state)
+             unit_states[name] = {
+                 "state": _state_from_systemd(active_state, sub_state),
+                 "active_state": active_state,
+                 "sub_state": sub_state,
+                 "unit_file_state": "unknown",
+             }
 
         unit_files = run_host_command_simple(
             "systemctl list-unit-files --type=service --no-pager --no-legend",
@@ -206,11 +221,23 @@ async def _get_live_systemd_services(force_refresh: bool = False) -> List[Resour
         for line in unit_files.splitlines():
             parts = line.split()
             if parts and parts[0].endswith(".service") and "@." not in parts[0]:
-                unit_states.setdefault(parts[0].removesuffix(".service"), "stopped")
+                name = parts[0].removesuffix(".service")
+                unit_file_state = parts[1] if len(parts) > 1 else "unknown"
+                details = unit_states.setdefault(
+                    name,
+                    {
+                        "state": "stopped",
+                        "active_state": "inactive",
+                        "sub_state": "dead",
+                        "unit_file_state": unit_file_state,
+                    },
+                )
+                details["unit_file_state"] = unit_file_state
 
-        for name, state in unit_states.items():
+        for name, details in unit_states.items():
              unit_name = f"{name}.service"
              r_class = _classify_service(name)
+             state = details["state"]
 
              use_data = usage_map.get(unit_name, {"cpu": 0.0, "mem": 0.0})
              
@@ -230,7 +257,11 @@ async def _get_live_systemd_services(force_refresh: bool = False) -> List[Resour
                  managed=True,
                  updated_at=now,
                  cpu_usage=use_data["cpu"],
-                 memory_usage=use_data["mem"]
+                 memory_usage=use_data["mem"],
+                 active_state=details["active_state"],
+                 sub_state=details["sub_state"],
+                 unit_file_state=details["unit_file_state"],
+                 allowed_actions=_allowed_service_actions(r_class),
              ))
              
         # Update cache before returning (OPT-004)
@@ -349,32 +380,21 @@ async def execute_action(
             status_code=403,
             detail="Cannot modify CORE resources"
         )
+    if request.action not in _allowed_service_actions(resource_class):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Action '{request.action}' is not allowed for this resource",
+        )
     
     # Execute the action based on provider type
     action_result = None
     if provider == "systemd" and resource_id.startswith("systemd-"):
         service_name = resource_id.replace("systemd-", "")
-        
-        # Try agent RPC first (Preferred: Agent runs as root)
         try:
-            # Agent expects ID like "service.service"
             agent_resource_id = f"{service_name}.service"
-            print(f"Attempting agent action on {agent_resource_id}")
             action_result = await agent_client.execute_action(agent_resource_id, request.action, request.params)
-            
-            # If agent returns explicit failure (but communication worked), respect it?
-            # Or fall back if it says "Resource not found"?
-            # For now, if communication works, we trust the result.
-            if action_result and action_result.get("success"):
-                pass  # Success!
-            elif action_result and action_result.get("error") == "NOT_FOUND":
-                # Agent doesn't know about it (maybe just created?), try local fallback
-                print("Agent resource not found, falling back to local action")
-                raise Exception("Agent resource not found")
-                
-        except Exception as e:
-            print(f"Agent action failed ({e}), falling back to local execution")
-            action_result = await _execute_systemd_action(service_name, request.action)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Agent unavailable: {exc}") from exc
     else:
         # Try agent RPC for other providers
         try:
@@ -404,14 +424,20 @@ async def execute_action(
 
     # Invalidate caches and wait briefly for systemd to settle.
     _services_cache = ([], 0)
-    target_state = "stopped" if request.action == "stop" else "running"
+    expected_active_state = "inactive" if request.action == "stop" else "active"
     updated_resource = None
     for _ in range(20):
         services = await _get_live_systemd_services(force_refresh=True)
         updated_resource = next((item for item in services if item.id == resource_id), None)
-        if updated_resource and updated_resource.state == target_state:
+        if updated_resource and updated_resource.active_state == expected_active_state:
             break
         await asyncio.sleep(0.25)
+
+    if not updated_resource or updated_resource.active_state != expected_active_state:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Service action completed but did not reach {expected_active_state}",
+        )
     
     return ActionResponse(
         success=True,

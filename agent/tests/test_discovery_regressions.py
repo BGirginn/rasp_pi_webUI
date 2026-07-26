@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock
 
 
 class TestUsbFunctionDiscovery:
@@ -41,6 +42,94 @@ class TestUsbFunctionDiscovery:
         assert capabilities == ["device"]
         assert device_type == "usb"
         assert endpoints == {}
+
+
+def test_systemd_active_exited_is_running():
+    from providers.base import ResourceState
+    from providers.systemd_provider import SystemdProvider
+
+    resource = SystemdProvider({})._parse_service(
+        "oneshot.service", "loaded", "active", "exited"
+    )
+
+    assert resource.state == ResourceState.RUNNING
+    assert resource.metadata["sub_state"] == "exited"
+
+
+@pytest.mark.asyncio
+async def test_systemd_core_action_is_protected_when_cache_is_empty():
+    from providers.systemd_provider import SystemdProvider
+
+    provider = SystemdProvider({"classification": {"core": ["critical.service"]}})
+    provider._run_command = AsyncMock(
+        return_value={
+            "returncode": 0,
+            "stdout": (
+                "LoadState=loaded\nActiveState=active\nSubState=running\n"
+                "UnitFileState=enabled\nDescription=Critical\n"
+            ),
+            "stderr": "",
+        }
+    )
+
+    result = await provider.execute_action("critical.service", "stop")
+
+    assert result.success is False
+    assert result.error == "PROTECTED_RESOURCE"
+
+
+def test_storage_discovery_reports_capacity_rw_and_partitions(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    import storage
+
+    payload = {
+        "blockdevices": [{
+            "name": "sda", "kname": "sda", "path": "/dev/sda", "type": "disk",
+            "size": 32000000000, "model": "Flash Drive", "vendor": "Test",
+            "serial": "ABC123", "tran": "usb", "rm": True, "ro": False,
+            "hotplug": True, "maj:min": "8:0",
+            "children": [{
+                "name": "sda1", "kname": "sda1", "path": "/dev/sda1",
+                "type": "part", "size": 31900000000, "fstype": "exfat",
+                "label": "DATA", "uuid": "uuid", "ro": False,
+                "mountpoints": ["/media/data"], "fsavail": 20000000000,
+                "fsused": 11900000000, "fsuse%": "37%",
+            }],
+        }]
+    }
+    monkeypatch.setattr(
+        storage,
+        "_run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    device = storage.discover_usb_storage()[0]
+
+    assert device["size_bytes"] == 32000000000
+    assert device["read_only"] is False
+    assert device["mounted"] is True
+    assert device["partitions"][0]["filesystem"] == "exfat"
+    assert device["partitions"][0]["available_bytes"] == 20000000000
+
+
+def test_storage_safety_rejects_non_removable_device(monkeypatch):
+    import storage
+
+    monkeypatch.setattr(
+        storage,
+        "discover_block_devices",
+        lambda: [{
+            "device_path": "/dev/sda", "fingerprint": "same",
+            "transport": "usb", "removable": False, "read_only": False,
+        }],
+    )
+
+    with pytest.raises(storage.StorageSafetyError, match="removable"):
+        storage.get_safe_usb_device("/dev/sda", "same")
 
 
 @pytest.mark.asyncio

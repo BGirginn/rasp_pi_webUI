@@ -9,8 +9,8 @@ import json
 from time import monotonic
 from typing import List, Optional, Dict
 
-from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query, HTTPException, status
+from pydantic import BaseModel, Field
 
 from db import get_control_db
 from services.agent_client import agent_client
@@ -36,6 +36,8 @@ class DeviceResponse(BaseModel):
     telemetry: Optional[Dict] = None
     last_seen: Optional[str] = None
     metadata: Optional[Dict] = None
+    storage: Optional[Dict] = None
+    allowed_actions: List[str] = Field(default_factory=list)
 
 
 class DeviceCommand(BaseModel):
@@ -48,6 +50,22 @@ class GPIOConfig(BaseModel):
     mode: str  # input, output
     pull: Optional[str] = None  # up, down, none
     value: Optional[int] = None  # 0 or 1 for output
+
+
+class UsbMountRequest(BaseModel):
+    volume_id: Optional[str] = None
+    read_only: bool = False
+
+
+class UsbFormatRequest(BaseModel):
+    filesystem: str
+    label: str = "PI-USB"
+    confirmation: str
+
+
+class UsbWriteTestRequest(BaseModel):
+    volume_id: Optional[str] = None
+    size_mb: int = Field(default=64, ge=1, le=1024)
 
 
 # === Device Discovery ===
@@ -76,7 +94,14 @@ async def _fetch_devices_uncached() -> List[Dict]:
     """Fetch devices from agent with local fallback, no cache."""
     try:
         devices = await agent_client.get_devices()
-        return [dict(d) for d in devices]
+        normalized = []
+        for item in devices:
+            device = dict(item)
+            metadata = device.get("metadata") or {}
+            device["storage"] = device.get("storage") or metadata.get("storage")
+            device.setdefault("allowed_actions", [])
+            normalized.append(device)
+        return normalized
     except Exception:
         local_devices = await _local_device_discovery()
         return [_model_to_dict(d) for d in local_devices]
@@ -339,13 +364,12 @@ async def send_device_command(
 @router.get("/usb/list", response_model=List[DeviceResponse])
 async def list_usb_devices(user: dict = Depends(get_current_user)):
     """List USB devices."""
-    try:
-        result = await agent_client.call("devices.usb.list")
-        return [DeviceResponse(**d) for d in result]
-    except Exception:
-        # Fallback to local discovery
-        all_devices = await _local_device_discovery()
-        return [d for d in all_devices if d.type == "usb"]
+    devices = await _get_cached_devices()
+    return [
+        DeviceResponse(**device)
+        for device in devices
+        if device.get("storage") or device.get("type") == "usb"
+    ]
 
 
 @router.post("/usb/{device_id}/eject")
@@ -354,20 +378,139 @@ async def eject_usb(
     user: dict = Depends(require_role("admin", "operator"))
 ):
     """Safely eject a USB device."""
+    return await _execute_usb_action(device_id, "eject", {}, user)
+
+
+@router.post("/usb/{device_id}/mount")
+async def mount_usb(
+    device_id: str,
+    request: UsbMountRequest,
+    user: dict = Depends(require_role("admin", "operator")),
+):
+    return await _execute_usb_action(device_id, "mount", request.model_dump(), user)
+
+
+@router.post("/usb/{device_id}/unmount")
+async def unmount_usb(
+    device_id: str,
+    user: dict = Depends(require_role("admin", "operator")),
+):
+    return await _execute_usb_action(device_id, "unmount", {}, user)
+
+
+@router.post(
+    "/usb/{device_id}/format",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def format_usb(
+    device_id: str,
+    request: UsbFormatRequest,
+    user: dict = Depends(require_role("admin")),
+):
+    from .jobs import JobCreate, create_job
+
+    job = JobCreate(
+        name=f"Format USB {device_id}",
+        type="usb_format",
+        config={
+            "device_id": device_id,
+            "filesystem": request.filesystem,
+            "label": request.label,
+            "confirmation": request.confirmation,
+        },
+    )
+    return await create_job(job, user)
+
+
+@router.post(
+    "/usb/{device_id}/write-test",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def write_test_usb(
+    device_id: str,
+    request: UsbWriteTestRequest,
+    user: dict = Depends(require_role("admin", "operator")),
+):
+    from .jobs import JobCreate, create_job
+
+    job = JobCreate(
+        name=f"USB write test {device_id}",
+        type="usb_write_test",
+        config={
+            "device_id": device_id,
+            "volume_id": request.volume_id,
+            "size_mb": request.size_mb,
+        },
+    )
+    return await create_job(job, user)
+
+
+async def prepare_usb_job_config(job_type: str, config: Dict) -> Dict:
+    """Replace client block paths with the current agent-discovered identity."""
+    device_id = str(config.get("device_id") or "")
+    devices = await _get_cached_devices()
+    target = next((item for item in devices if item.get("id") == device_id), None)
+    storage = (target or {}).get("storage") or {}
+    if not target or not storage:
+        raise HTTPException(status_code=404, detail="USB storage device not found")
+    if storage.get("transport") != "usb" or not storage.get("removable"):
+        raise HTTPException(status_code=400, detail="Only removable USB disks are supported")
+
+    sanitized = {
+        key: value
+        for key, value in config.items()
+        if key not in {"device_path", "fingerprint"}
+    }
+    sanitized.update(
+        {
+            "device_id": device_id,
+            "device_path": storage.get("device_path"),
+            "fingerprint": storage.get("fingerprint"),
+        }
+    )
+    if job_type == "usb_format":
+        filesystem = str(sanitized.get("filesystem") or "").lower()
+        if filesystem not in {"exfat", "fat32", "ext4"}:
+            raise HTTPException(status_code=400, detail="Unsupported USB filesystem")
+        if sanitized.get("confirmation") != f"ERASE {device_id}":
+            raise HTTPException(status_code=400, detail=f"Type exactly: ERASE {device_id}")
+    return sanitized
+
+
+async def _execute_usb_action(
+    device_id: str,
+    action: str,
+    params: Dict,
+    user: dict,
+):
+    devices = await _get_cached_devices()
+    target = next((item for item in devices if item.get("id") == device_id), None)
+    if not target or not target.get("storage"):
+        raise HTTPException(status_code=404, detail="USB storage device not found")
+    if action not in (target.get("allowed_actions") or []):
+        raise HTTPException(status_code=403, detail=f"USB action not allowed: {action}")
+    try:
+        result = await agent_client.execute_action(device_id, action, params)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Agent unavailable: {exc}") from exc
+    if not result.get("success"):
+        code = 409 if result.get("error") == "UNSAFE_DEVICE" else 500
+        raise HTTPException(status_code=code, detail=result.get("message", "USB action failed"))
+
     db = await get_control_db()
-    
     await db.execute(
-        """INSERT INTO audit_log (user_id, action, resource_id)
-           VALUES (?, ?, ?)""",
-        (user["id"], "device.usb.eject", device_id)
+        """INSERT INTO audit_log (user_id, action, resource_id, details)
+           VALUES (?, ?, ?, ?)""",
+        (user["id"], f"device.usb.{action}", device_id, json.dumps(params)),
     )
     await db.commit()
-    
-    try:
-        await agent_client.call("devices.usb.eject", {"device_id": device_id})
-        return {"message": f"USB device {device_id} ejected"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _invalidate_device_cache()
+    await sse_manager.broadcast(
+        Channels.resource(device_id),
+        "device_action",
+        {"device_id": device_id, "action": action},
+    )
+    return result
 
 
 # === ESP Devices (MQTT) ===

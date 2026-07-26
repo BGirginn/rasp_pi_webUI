@@ -203,7 +203,8 @@ install_dependencies() {
     run_cmd apt-get install -y \
         python3 python3-pip python3-venv python3-dev \
         curl rsync sqlite3 gnupg ca-certificates unattended-upgrades mosquitto mosquitto-clients \
-        debian-keyring debian-archive-keyring apt-transport-https
+        debian-keyring debian-archive-keyring apt-transport-https \
+        util-linux dosfstools exfatprogs e2fsprogs udisks2
 
     info "Checking Node.js runtime"
     if command -v node >/dev/null 2>&1; then
@@ -440,8 +441,8 @@ RuntimeDirectory=pi-agent
 RuntimeDirectoryMode=0755
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-$SERVICE_ENV_FILE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
-AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pi-agent

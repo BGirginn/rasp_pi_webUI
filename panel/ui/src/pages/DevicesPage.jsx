@@ -1,9 +1,18 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Usb, Cpu, HardDrive, Keyboard, Link, Bluetooth, Wifi, Send, Zap, MousePointer2, AlertCircle } from 'lucide-react';
+import { RefreshCw, Usb, Cpu, HardDrive, Keyboard, Link, Bluetooth, Wifi, Send, Zap, MousePointer2, AlertCircle, CheckCircle2, Eraser, TestTube2, Unplug, X } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+
+const formatBytes = (value) => {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown';
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / (1024 ** index)).toFixed(index > 2 ? 1 : 0)} ${units[index]}`;
+};
 
 export function DevicesPage() {
   const [devices, setDevices] = useState([]);
@@ -14,11 +23,15 @@ export function DevicesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [usbBusy, setUsbBusy] = useState('');
+  const [usbNotice, setUsbNotice] = useState(null);
+  const [formatTarget, setFormatTarget] = useState(null);
+  const [formatForm, setFormatForm] = useState({ filesystem: 'exfat', label: 'PI-USB', confirmation: '' });
   const hasLoadedDevicesRef = useRef(false);
   const devicesHashRef = useRef('');
   const gpioHashRef = useRef('');
   const { theme, isDarkMode } = useTheme();
-  const { isOperator } = useAuth();
+  const { isOperator, isAdmin } = useAuth();
   const themeColors = getThemeColors(theme);
 
   const getDeviceCategory = (deviceType) => {
@@ -143,6 +156,37 @@ export function DevicesPage() {
     }
   };
 
+  const runUsbAction = async (device, action, body = {}) => {
+    const key = `${device.id}:${action}`;
+    setUsbBusy(key);
+    setUsbNotice(null);
+    try {
+      const response = await api.post(`/devices/usb/${device.id}/${action}`, body);
+      const job = response.data;
+      setUsbNotice({
+        type: 'success',
+        message: job?.id
+          ? `${action === 'write-test' ? 'Write test' : 'Format'} job ${job.id} queued. Track it on Jobs.`
+          : response.data?.message || `USB ${action} completed.`,
+      });
+      setFormatTarget(null);
+      setFormatForm({ filesystem: 'exfat', label: 'PI-USB', confirmation: '' });
+      await loadDevices();
+    } catch (requestError) {
+      setUsbNotice({
+        type: 'error',
+        message: requestError.response?.data?.detail || requestError.message,
+      });
+    } finally {
+      setUsbBusy('');
+    }
+  };
+
+  const openFormatDialog = (device) => {
+    setFormatTarget(device);
+    setFormatForm({ filesystem: 'exfat', label: 'PI-USB', confirmation: '' });
+  };
+
   const typeIcons = {
     usb: Usb,
     disk: HardDrive,
@@ -238,6 +282,19 @@ export function DevicesPage() {
           <span>{error}</span>
         </motion.div>
       )}
+      {usbNotice && (
+        <div className={`mb-8 p-4 rounded-xl border flex items-center gap-3 ${
+          usbNotice.type === 'success'
+            ? isDarkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-300' : 'bg-red-50 border-red-200 text-red-700'
+        }`}>
+          {usbNotice.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+          <span>{usbNotice.message}</span>
+          <button type="button" className="ml-auto" onClick={() => setUsbNotice(null)} aria-label="Dismiss">
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-8">
@@ -276,6 +333,8 @@ export function DevicesPage() {
               const category = getDeviceCategory(device.type);
               const style = categoryStyles[category] || categoryStyles.default;
               const canSendCommand = device.type === 'esp';
+              const storage = device.storage;
+              const allowed = new Set(device.allowed_actions || []);
               return (
                 <motion.div
                   key={device.id}
@@ -319,6 +378,104 @@ export function DevicesPage() {
                     )}
                   </div>
 
+                  {storage && (
+                    <div className={`p-4 rounded-xl mb-5 border ${isDarkMode ? 'bg-white/[0.04] border-white/10' : 'bg-emerald-50/60 border-emerald-100'}`}>
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                          <div className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {formatBytes(storage.size_bytes)}
+                          </div>
+                          <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                            {storage.device_path} · {storage.transport || 'unknown transport'}
+                          </div>
+                        </div>
+                        <span className={`px-2 py-1 rounded-md text-[10px] font-bold ${
+                          storage.read_only
+                            ? 'bg-amber-500/15 text-amber-500'
+                            : 'bg-emerald-500/15 text-emerald-500'
+                        }`}>
+                          {storage.read_only ? 'READ ONLY' : 'READ / WRITE'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-3">
+                        {(storage.partitions || []).length === 0 && (
+                          <div className="text-xs text-gray-500">No partition or filesystem detected.</div>
+                        )}
+                        {(storage.partitions || []).map((volume) => {
+                          const used = Number(volume.used_bytes || 0);
+                          const size = Number(volume.size_bytes || 0);
+                          const percent = size > 0 ? Math.min(100, Math.round((used / size) * 100)) : 0;
+                          return (
+                            <div key={volume.id} className={`p-3 rounded-lg ${isDarkMode ? 'bg-black/20' : 'bg-white/80'}`}>
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className={`text-sm font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+                                    {volume.label || volume.id}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500">
+                                    {(volume.filesystem || 'unformatted').toUpperCase()} · {formatBytes(volume.size_bytes)}
+                                  </div>
+                                </div>
+                                <span className={`text-[10px] font-bold ${volume.mounted ? 'text-emerald-500' : 'text-gray-500'}`}>
+                                  {volume.mounted ? 'MOUNTED' : 'UNMOUNTED'}
+                                </span>
+                              </div>
+                              {size > 0 && volume.filesystem && (
+                                <div className="mt-2">
+                                  <div className={`h-1.5 rounded-full overflow-hidden ${isDarkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${percent}%` }} />
+                                  </div>
+                                  <div className="mt-1 text-[10px] text-gray-500">
+                                    {formatBytes(used)} used · {formatBytes(volume.available_bytes)} free
+                                  </div>
+                                </div>
+                              )}
+                              {volume.mount_points?.[0] && (
+                                <div className="mt-2 text-[10px] font-mono text-gray-500 break-all">{volume.mount_points[0]}</div>
+                              )}
+                              {isOperator && !volume.mounted && allowed.has('mount') && volume.filesystem && (
+                                <button
+                                  type="button"
+                                  disabled={Boolean(usbBusy)}
+                                  onClick={() => runUsbAction(device, 'mount', { volume_id: volume.id, read_only: false })}
+                                  className="mt-3 px-3 py-1.5 rounded-lg text-xs border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 disabled:opacity-50"
+                                >
+                                  Mount
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {isOperator && (
+                        <div className="grid grid-cols-2 gap-2 mt-4">
+                          {storage.mounted && allowed.has('unmount') && (
+                            <button type="button" disabled={Boolean(usbBusy)} onClick={() => runUsbAction(device, 'unmount')} className="px-3 py-2 rounded-lg text-xs border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 disabled:opacity-50">
+                              Unmount
+                            </button>
+                          )}
+                          {storage.mounted && !storage.read_only && (
+                            <button type="button" disabled={Boolean(usbBusy)} onClick={() => runUsbAction(device, 'write-test', { volume_id: storage.partitions.find((item) => item.mounted)?.id, size_mb: 64 })} className="px-3 py-2 rounded-lg text-xs border border-sky-500/30 text-sky-500 hover:bg-sky-500/10 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                              <TestTube2 size={13} /> Write test
+                            </button>
+                          )}
+                          {isAdmin && !storage.read_only && (
+                            <button type="button" disabled={Boolean(usbBusy)} onClick={() => openFormatDialog(device)} className="px-3 py-2 rounded-lg text-xs border border-red-500/30 text-red-500 hover:bg-red-500/10 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                              <Eraser size={13} /> Format
+                            </button>
+                          )}
+                          {allowed.has('eject') && (
+                            <button type="button" disabled={Boolean(usbBusy)} onClick={() => runUsbAction(device, 'eject')} className="px-3 py-2 rounded-lg text-xs border border-gray-500/30 text-gray-500 hover:bg-gray-500/10 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                              <Unplug size={13} /> Eject
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Telemetry if exists */}
                   {device.telemetry && Object.keys(device.telemetry).length > 0 && (
                     <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'} mb-6 border ${isDarkMode ? 'border-white/5' : 'border-gray-100'}`}>
@@ -356,7 +513,7 @@ export function DevicesPage() {
                     </div>
                   )}
 
-                  {isOperator && !canSendCommand && (
+                  {isOperator && !canSendCommand && !storage && (
                     <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-500'} italic`}>
                       This device type does not support remote command or ping.
                     </div>
@@ -483,6 +640,91 @@ export function DevicesPage() {
           </div>
         </motion.div>
       )}
+
+      <AnimatePresence>
+        {formatTarget && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setFormatTarget(null);
+            }}
+          >
+            <motion.form
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                runUsbAction(formatTarget, 'format', formatForm);
+              }}
+              className={`w-full max-w-lg rounded-3xl border p-7 shadow-2xl ${isDarkMode ? 'bg-[#111018] border-white/10' : 'bg-white border-gray-200'}`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-[0.2em] text-red-500">Destructive operation</div>
+                  <h2 className={`mt-2 text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Format USB disk</h2>
+                  <p className="mt-2 text-sm text-gray-500">
+                    Every partition and file on {formatTarget.name} ({formatBytes(formatTarget.storage?.size_bytes)}) will be erased.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setFormatTarget(null)} className="p-2 rounded-lg text-gray-500 hover:bg-gray-500/10">
+                  <X size={19} />
+                </button>
+              </div>
+
+              <div className="mt-6 grid grid-cols-2 gap-4">
+                <label className="text-xs font-semibold text-gray-500">
+                  Filesystem
+                  <select
+                    value={formatForm.filesystem}
+                    onChange={(event) => setFormatForm((current) => ({ ...current, filesystem: event.target.value }))}
+                    className={`mt-2 w-full rounded-xl border px-3 py-2.5 ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-200 text-gray-900'}`}
+                  >
+                    <option value="exfat">exFAT</option>
+                    <option value="fat32">FAT32</option>
+                    <option value="ext4">ext4</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-gray-500">
+                  Label
+                  <input
+                    value={formatForm.label}
+                    maxLength={16}
+                    onChange={(event) => setFormatForm((current) => ({ ...current, label: event.target.value }))}
+                    className={`mt-2 w-full rounded-xl border px-3 py-2.5 ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-200 text-gray-900'}`}
+                  />
+                </label>
+              </div>
+
+              <label className="mt-5 block text-xs font-semibold text-gray-500">
+                Type <strong className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>ERASE {formatTarget.id}</strong> to continue
+                <input
+                  value={formatForm.confirmation}
+                  autoComplete="off"
+                  onChange={(event) => setFormatForm((current) => ({ ...current, confirmation: event.target.value }))}
+                  className={`mt-2 w-full rounded-xl border px-3 py-2.5 font-mono ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-200 text-gray-900'}`}
+                />
+              </label>
+
+              <div className="mt-7 flex justify-end gap-3">
+                <button type="button" onClick={() => setFormatTarget(null)} className={`px-4 py-2.5 rounded-xl border ${isDarkMode ? 'border-white/10 text-gray-300' : 'border-gray-200 text-gray-700'}`}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={usbBusy || formatForm.confirmation !== `ERASE ${formatTarget.id}`}
+                  className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-bold disabled:opacity-40"
+                >
+                  {usbBusy ? 'Queuing...' : 'Erase and format'}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
