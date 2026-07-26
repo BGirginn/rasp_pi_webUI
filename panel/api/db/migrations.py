@@ -6,6 +6,7 @@ Handles schema migrations and initial data setup.
 
 import asyncio
 import os
+from pathlib import Path
 
 import aiosqlite
 import bcrypt
@@ -18,6 +19,8 @@ def hash_password(password: str) -> str:
 async def run_migrations(db_path: str):
     """Run all pending migrations."""
     async with aiosqlite.connect(db_path) as db:
+        if db_path != ":memory:" and not db_path.startswith("file:"):
+            Path(db_path).chmod(0o600)
         # Create migrations tracking table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS migrations (

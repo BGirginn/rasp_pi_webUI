@@ -1,4 +1,5 @@
 import sqlite3
+import stat
 
 import pytest
 
@@ -17,6 +18,7 @@ async def test_fresh_migrations_are_secure_complete_and_idempotent(
 
     database = sqlite3.connect(database_path)
     try:
+        assert stat.S_IMODE(database_path.stat().st_mode) == 0o600
         assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert database.execute("SELECT COUNT(*) FROM migrations").fetchone()[0] == 7
         assert database.execute(

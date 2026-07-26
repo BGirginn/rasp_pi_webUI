@@ -7,6 +7,7 @@ SQLite database initialization and utilities.
 import aiosqlite
 import structlog
 import os
+from pathlib import Path
 
 from config import settings
 
@@ -34,6 +35,7 @@ async def init_db():
     
     # Initialize control database
     _control_db = await aiosqlite.connect(settings.database_path)
+    _secure_database_file(settings.database_path)
     await _control_db.execute("PRAGMA busy_timeout=5000")
     await _control_db.execute("PRAGMA journal_mode=WAL")
     await _control_db.execute("PRAGMA synchronous=NORMAL")
@@ -42,6 +44,7 @@ async def init_db():
     
     # Initialize telemetry database
     _telemetry_db = await aiosqlite.connect(settings.telemetry_db_path)
+    _secure_database_file(settings.telemetry_db_path)
     await _telemetry_db.execute("PRAGMA busy_timeout=5000")
     await _telemetry_db.execute("PRAGMA journal_mode=WAL")
     await _telemetry_db.execute("PRAGMA synchronous=NORMAL")
@@ -62,6 +65,13 @@ async def close_db():
         _telemetry_db = None
     
     logger.info("Database connections closed")
+
+
+def _secure_database_file(database_path: str) -> None:
+    """Restrict persistent databases to the service account."""
+    if database_path == ":memory:" or database_path.startswith("file:"):
+        return
+    Path(database_path).chmod(0o600)
 
 
 async def get_control_db():

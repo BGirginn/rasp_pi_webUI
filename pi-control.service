@@ -6,6 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+UMask=0077
 # User and group are set dynamically by install.sh
 # Placeholders are replaced during installation
 User=fou4

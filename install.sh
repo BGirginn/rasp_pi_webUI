@@ -394,6 +394,7 @@ After=network.target
 
 [Service]
 Type=simple
+UMask=0077
 User=$INSTALL_USER
 Group=$INSTALL_GROUP
 WorkingDirectory=/opt/pi-control/current/panel/api
