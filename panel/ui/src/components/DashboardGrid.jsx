@@ -54,7 +54,7 @@ export function DashboardGrid() {
         }
         return a.position.row - b.position.row;
     });
-    return (<div className="space-y-6">
+    return (<div className="dashboard-grid space-y-6">
       <div className="grid gap-4 md:gap-6 auto-rows-[220px] md:auto-rows-[240px]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} onDrop={handleDrop} onDragOver={handleDragOver}>
         {sortedWidgets.map((widget) => (<WidgetWrapper key={widget.id} widget={widget} columns={columns}>
             <WidgetRenderer widget={widget}/>

@@ -3,7 +3,7 @@ import { Sidebar } from './Sidebar';
 import { ThemeSelector } from './ThemeSelector';
 import { EditModeToggle } from './EditModeToggle';
 import { DashboardGrid } from './DashboardGrid';
-import { useTheme, getThemeColors } from '../contexts/ThemeContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { useAuth } from '../hooks/useAuth';
 import { TopBarActions } from './TopBarActions';
@@ -23,13 +23,29 @@ const ArchivePage = lazy(() => import('../pages/ArchivePage').then(mod => ({ def
 const ProjectsPage = lazy(() => import('../pages/ProjectsPage').then(mod => ({ default: mod.ProjectsPage })));
 const FilesPage = lazy(() => import('../pages/FilesPage'));
 const JobsPage = lazy(() => import('../pages/Jobs'));
-const AppStorePage = lazy(() => import('../pages/AppStorePage').then(mod => ({ default: mod.AppStorePage })));
+
+const pageMeta = {
+  dashboard: ['Dashboard', 'A live view of this Raspberry Pi'],
+  services: ['Services', 'Inspect and control system workloads'],
+  devices: ['Devices', 'Connected hardware and discovered endpoints'],
+  iot: ['IoT', 'Sensors, devices and local integrations'],
+  telemetry: ['Telemetry', 'Performance history and live system signals'],
+  network: ['Network', 'Interfaces, connectivity and wireless settings'],
+  adguard: ['AdGuard', 'DNS filtering and network protection'],
+  terminal: ['Terminal', 'Secure shell access to this device'],
+  files: ['Files', 'Browse and manage local files'],
+  projects: ['Projects', 'Applications and source deployments'],
+  jobs: ['Jobs', 'Run, inspect and track maintenance work'],
+  alerts: ['Alerts', 'System events that need attention'],
+  archive: ['Archive', 'Backups, snapshots and recovery points'],
+  settings: ['Settings', 'Panel preferences and administration'],
+};
 
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
   const { currentPage } = useNavigation();
   const { isAdmin } = useAuth();
-  const themeColors = getThemeColors(theme);
+  const [pageTitle, pageDescription] = pageMeta[currentPage] || pageMeta.dashboard;
 
   // State for IoT device detail view
   const [selectedDeviceId, setSelectedDeviceId] = useState(null);
@@ -92,8 +108,6 @@ export function Dashboard() {
         return <ProjectsPage />;
       case 'jobs':
         return <JobsPage />;
-      case 'appstore':
-        return <AppStorePage />;
       case 'settings':
         return <SettingsPage />;
       case 'archive':
@@ -103,34 +117,36 @@ export function Dashboard() {
     }
   };
 
-  return (<div className={`min-h-screen ${isDarkMode ? 'bg-[#0a0a0f] text-white' : 'bg-gray-50 text-gray-900'} flex flex-col md:flex-row overflow-x-hidden relative`}>
-    <Sidebar />
+  return (
+    <div className={`app-shell theme-${theme} ${isDarkMode ? 'dark' : 'light'}`}>
+      <Sidebar />
 
-    <main className="flex-1 p-4 md:p-8 md:ml-0 relative z-10 min-w-0">
-      {currentPage === 'dashboard' && (<div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className={`text-4xl mb-2 bg-gradient-to-r ${isDarkMode ? themeColors.primary : themeColors.lightPrimary} bg-clip-text text-transparent`}>
-            Dashboard
-          </h1>
-          <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>Welcome to Raspberry Pi Control</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <TopBarActions />
-          <ThemeSelector />
-          <EditModeToggle />
-        </div>
-      </div>)}
+      <main className="app-main">
+        <header className="app-topbar">
+          <div>
+            <div className="page-kicker">Pi Control / {pageTitle}</div>
+            <h1>{pageTitle}</h1>
+            <p>{pageDescription}</p>
+          </div>
+          <div className="topbar-actions">
+            <TopBarActions />
+            <ThemeSelector />
+            {currentPage === 'dashboard' && <EditModeToggle />}
+          </div>
+        </header>
 
-      {currentPage !== 'dashboard' && (<div className="mb-8 flex items-center justify-start lg:justify-end">
-        <div className="flex flex-wrap items-center gap-3">
-          <TopBarActions />
-          <ThemeSelector />
-        </div>
-      </div>)}
+        {currentPage === 'dashboard' && isEditMode && (
+          <div className="edit-mode-notice">
+            Edit mode is active. Drag widgets to reorder them, or use each widget menu to resize it.
+          </div>
+        )}
 
-      <Suspense fallback={<Loader fullScreen={false} />}>
-        {renderPage()}
-      </Suspense>
-    </main>
-  </div>);
+        <section className="page-stage">
+          <Suspense fallback={<Loader fullScreen={false} />}>
+            {renderPage()}
+          </Suspense>
+        </section>
+      </main>
+    </div>
+  );
 }

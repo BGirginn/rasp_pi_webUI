@@ -1,110 +1,74 @@
-import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../hooks/useAuth'
-import { initLuxuryNetwork } from '../utils/network'
-import './login.css'
-import { Eye, EyeOff } from 'lucide-react'
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowRight, Eye, EyeOff, LoaderCircle, ShieldCheck, Wifi } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../contexts/ThemeContext';
+import './login.css';
 
 export default function Login() {
-    const [username, setUsername] = useState('')
-    const [password, setPassword] = useState('')
-    const [showPassword, setShowPassword] = useState(false)
-    const [totpCode, setTotpCode] = useState('')
-    const [needsTotp, setNeedsTotp] = useState(false)
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState('')
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [totpCode, setTotpCode] = useState('');
+    const [needsTotp, setNeedsTotp] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const { login } = useAuth();
+    const { theme } = useTheme();
+    const navigate = useNavigate();
 
-    const canvasRef = useRef(null)
-    const networkRef = useRef(null)
-
-    const { login } = useAuth()
-    const navigate = useNavigate()
-
-    // Initialize animated background
-    useEffect(() => {
-        if (canvasRef.current && !networkRef.current) {
-            networkRef.current = initLuxuryNetwork({
-                canvas: canvasRef.current,
-                seed: 1337,
-                density: 0.000055,
-                motion: { pointer: true }
-            })
-            networkRef.current.start()
-        }
-
-        const handleResize = () => {
-            if (networkRef.current) {
-                networkRef.current.resize()
-            }
-        }
-
-        window.addEventListener('resize', handleResize)
-
-        return () => {
-            window.removeEventListener('resize', handleResize)
-            if (networkRef.current) {
-                networkRef.current.stop()
-                networkRef.current = null
-            }
-        }
-    }, [])
-
-    const handleSubmit = async (e) => {
-        e.preventDefault()
-        setError('')
-        // Local loading state only used for button, global loading handled by useAuth
-        setLoading(true)
-        networkRef.current?.stop()
+    async function handleSubmit(event) {
+        event.preventDefault();
+        setError('');
+        setLoading(true);
 
         try {
-            await login(username, password, needsTotp ? totpCode : null)
-            // Stop canvas animation before navigating away
-            if (networkRef.current) {
-                networkRef.current.stop()
-                networkRef.current = null
-            }
-            navigate('/')
-        } catch (err) {
-            networkRef.current?.start()
-            if (err.message?.includes('TOTP')) {
-                setNeedsTotp(true)
+            await login(username, password, needsTotp ? totpCode : null);
+            navigate('/');
+        } catch (requestError) {
+            if (requestError.message?.includes('TOTP')) {
+                setNeedsTotp(true);
             } else {
-                setError(err.message)
+                setError(requestError.message);
             }
         } finally {
-            setLoading(false)
+            setLoading(false);
         }
     }
 
     return (
-        <div className="login-page min-h-screen overflow-hidden" style={{ background: 'var(--bg-0)' }}>
-            {/* Animated gold network background */}
-            <canvas ref={canvasRef} className="login-canvas" aria-hidden="true" />
-
-            {/* Subtle grid overlay */}
-            <div className="login-grid-overlay" aria-hidden="true" />
-
-            {/* Purple aura + vignette */}
-            <div className="login-aura" aria-hidden="true" />
-            <div className="login-vignette" aria-hidden="true" />
-
+        <div className={`login-page theme-${theme}`}>
+            <div className="login-texture" aria-hidden="true" />
             <main className="login-shell">
-                <section className="login-card" role="dialog" aria-label="Sign in">
+                <section className="login-intro">
                     <div className="login-brand">
-                        <div className="login-logo" aria-hidden="true">π</div>
-                        <div className="login-brand-text">
-                            <h1>Pi Control</h1>
-                            <p>UNIVERSAL CONTROL PANEL</p>
+                        <div className="login-logo">π</div>
+                        <div>
+                            <strong>Pi Control</strong>
+                            <span>Raspberry operations</span>
                         </div>
                     </div>
 
-                    <h2>Sign in to continue</h2>
+                    <div className="login-intro-copy">
+                        <span className="login-eyebrow">Private control plane</span>
+                        <h1>Your Pi, without the noise.</h1>
+                        <p>Monitor services, investigate system activity and run maintenance work from one focused workspace.</p>
+                    </div>
 
-                    {error && (
-                        <div className="login-error">
-                            {error}
-                        </div>
-                    )}
+                    <div className="login-status-row">
+                        <span><i /><Wifi size={15} /> Tailnet ready</span>
+                        <span><ShieldCheck size={15} /> Encrypted access</span>
+                    </div>
+                </section>
+
+                <section className="login-card" aria-labelledby="login-heading">
+                    <div className="login-card-heading">
+                        <span>Welcome back</span>
+                        <h2 id="login-heading">Sign in to Pi Control</h2>
+                        <p>Use your panel account to continue.</p>
+                    </div>
+
+                    {error && <div className="login-error">{error}</div>}
 
                     <form className="login-form" onSubmit={handleSubmit} autoComplete="on">
                         <label className="login-field">
@@ -114,7 +78,7 @@ export default function Login() {
                                 name="username"
                                 placeholder="Enter username"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value)}
+                                onChange={(event) => setUsername(event.target.value)}
                                 required
                                 autoFocus
                             />
@@ -122,28 +86,34 @@ export default function Login() {
 
                         <label className="login-field">
                             <span>Password</span>
-                            <input
-                                type="password"
-                                name="password"
-                                placeholder="Enter password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                required
-                            />
+                            <div className="login-password-field">
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    name="password"
+                                    placeholder="Enter password"
+                                    value={password}
+                                    onChange={(event) => setPassword(event.target.value)}
+                                    required
+                                />
+                                <button type="button" onClick={() => setShowPassword((value) => !value)} title="Toggle password visibility">
+                                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                                </button>
+                            </div>
                         </label>
 
                         {needsTotp && (
                             <label className="login-field">
-                                <span>2FA Code</span>
+                                <span>Two-factor code</span>
                                 <input
+                                    className="login-totp"
                                     type="text"
+                                    inputMode="numeric"
                                     name="totp"
                                     placeholder="000000"
                                     value={totpCode}
-                                    onChange={(e) => setTotpCode(e.target.value)}
+                                    onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ''))}
                                     maxLength={6}
                                     pattern="[0-9]{6}"
-                                    style={{ textAlign: 'center', letterSpacing: '0.5em', fontFamily: 'monospace', fontSize: '18px' }}
                                     autoFocus
                                 />
                             </label>
@@ -151,24 +121,19 @@ export default function Login() {
 
                         <button className="login-btn" type="submit" disabled={loading}>
                             {loading ? (
-                                <>
-                                    <span className="login-spinner" />
-                                    Signing in...
-                                </>
+                                <><LoaderCircle size={17} className="login-spinner" /> Signing in</>
                             ) : (
-                                'Sign In'
+                                <>Continue <ArrowRight size={17} /></>
                             )}
                         </button>
-
-                        <div className="login-hint">
-                            <span aria-hidden="true">🔒</span>
-                            Secure local and remote access
-                        </div>
                     </form>
 
-                    <footer className="login-footer">PI CONTROL v2.0 • NEON EDITION</footer>
+                    <div className="login-footnote">
+                        <ShieldCheck size={14} />
+                        Credentials stay within your private panel.
+                    </div>
                 </section>
             </main>
         </div>
-    )
+    );
 }

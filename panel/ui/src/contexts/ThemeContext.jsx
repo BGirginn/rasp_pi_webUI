@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 const ThemeContext = createContext(undefined);
 const themes = {
     purple: {
@@ -45,11 +45,37 @@ const themes = {
         lightAccent: 'purple-600',
         lightGlow: 'rgba(168, 85, 247, 0.2)',
     },
+    sage: {
+        primary: 'from-emerald-700 via-green-700 to-teal-700',
+        secondary: 'from-emerald-600 to-teal-600',
+        accent: 'emerald-600',
+        accentRgb: '127, 169, 143',
+        glow: 'rgba(127, 169, 143, 0.28)',
+        lightPrimary: 'from-emerald-800 via-green-800 to-teal-800',
+        lightSecondary: 'from-emerald-700 to-teal-700',
+        lightAccent: 'emerald-700',
+        lightGlow: 'rgba(127, 169, 143, 0.16)',
+    },
 };
 export function ThemeProvider({ children }) {
-    const [theme, setTheme] = useState('purple');
+    const [theme, setTheme] = useState(() => {
+        const savedTheme = localStorage.getItem('pi-control-theme');
+        return themes[savedTheme] ? savedTheme : 'purple';
+    });
     const [isEditMode, setIsEditMode] = useState(false);
-    const [isDarkMode, setIsDarkMode] = useState(true);
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        const savedMode = localStorage.getItem('pi-control-dark-mode');
+        return savedMode === null ? true : savedMode === 'true';
+    });
+
+    useEffect(() => {
+        localStorage.setItem('pi-control-theme', theme);
+    }, [theme]);
+
+    useEffect(() => {
+        localStorage.setItem('pi-control-dark-mode', String(isDarkMode));
+    }, [isDarkMode]);
+
     return (<ThemeContext.Provider value={{ theme, setTheme, isEditMode, setIsEditMode, isDarkMode, setIsDarkMode }}>
       {children}
     </ThemeContext.Provider>);
