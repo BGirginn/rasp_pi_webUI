@@ -132,6 +132,35 @@ def test_storage_safety_rejects_non_removable_device(monkeypatch):
         storage.get_safe_usb_device("/dev/sda", "same")
 
 
+def test_device_actions_are_scoped_to_device_type():
+    from providers.base import Resource, ResourceClass, ResourceState
+    from providers.manager import ProviderManager
+
+    network = Resource(
+        id="usb-wifi",
+        name="Wi-Fi",
+        type="network",
+        provider="devices",
+        resource_class=ResourceClass.DEVICE,
+        state=ResourceState.ONLINE,
+        metadata={"is_storage": False},
+    )
+    storage_device = Resource(
+        id="usb-disk",
+        name="Flash",
+        type="storage",
+        provider="devices",
+        resource_class=ResourceClass.DEVICE,
+        state=ResourceState.ONLINE,
+        metadata={"is_storage": True, "storage": {"device_path": "/dev/sda"}},
+    )
+
+    assert ProviderManager._device_dict(None, network)["allowed_actions"] == []
+    assert ProviderManager._device_dict(None, storage_device)["allowed_actions"] == [
+        "mount", "unmount", "eject"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_telemetry_includes_capacity_limits():
     from telemetry.collector import TelemetryCollector

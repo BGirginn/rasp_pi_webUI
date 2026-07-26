@@ -407,10 +407,14 @@ class ProviderManager:
     @staticmethod
     def _device_dict(provider: Optional[BaseProvider], resource: Resource) -> Dict:
         payload = resource.to_dict()
-        payload["storage"] = (resource.metadata or {}).get("storage")
-        payload["allowed_actions"] = (
-            provider.get_allowed_actions(resource.resource_class) if provider else []
-        )
+        metadata = resource.metadata or {}
+        payload["storage"] = metadata.get("storage")
+        if metadata.get("is_storage") and metadata.get("storage"):
+            payload["allowed_actions"] = ["mount", "unmount", "eject"]
+        elif resource.type == "esp":
+            payload["allowed_actions"] = ["command"]
+        else:
+            payload["allowed_actions"] = []
         return payload
 
     def _invalidate_devices_cache(self) -> None:
