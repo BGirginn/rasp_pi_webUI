@@ -1,7 +1,6 @@
 import asyncio
 import random
 import socket
-import sys
 import argparse
 from aiohttp import web
 from zeroconf import ServiceInfo, InterfaceChoice

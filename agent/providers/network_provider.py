@@ -285,6 +285,8 @@ class NetworkProvider(BaseProvider):
             connected = False
             ssid = None
             ip = None
+            signal_quality = None
+            frequency = None
             
             for line in out2.strip().split("\n"):
                 parts = line.split(":")
@@ -297,13 +299,33 @@ class NetworkProvider(BaseProvider):
                         for ipline in out3.strip().split("\n"):
                             if ipline.startswith("IP4.ADDRESS"):
                                 ip = ipline.split(":")[1].split("/")[0] if ":" in ipline else None
+                        rc4, out4, _ = await self._run_nmcli([
+                            "-t", "-f", "IN-USE,SIGNAL,FREQ",
+                            "device", "wifi", "list", "ifname", parts[0],
+                        ])
+                        if rc4 == 0:
+                            for wifi_line in out4.strip().split("\n"):
+                                wifi_parts = wifi_line.split(":")
+                                if len(wifi_parts) >= 3 and wifi_parts[0] == "*":
+                                    signal_quality = (
+                                        int(wifi_parts[1])
+                                        if wifi_parts[1].isdigit()
+                                        else None
+                                    )
+                                    frequency = (
+                                        f"{wifi_parts[2]} MHz" if wifi_parts[2] else None
+                                    )
+                                    break
                         break
             
             return ActionResult(True, "Status retrieved", data={
                 "radio_enabled": radio_enabled,
                 "connected": connected,
                 "ssid": ssid,
-                "ip": ip
+                "ip": ip,
+                "ip_address": ip,
+                "signal_quality": signal_quality,
+                "frequency": frequency,
             })
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))

@@ -287,8 +287,9 @@ if UI_DIST_PATH.exists():
             return JSONResponse(status_code=404, content={"detail": "Not found"})
         
         # Check if file exists in dist
-        file_path = UI_DIST_PATH / full_path
-        if file_path.exists() and file_path.is_file():
+        dist_root = UI_DIST_PATH.resolve()
+        file_path = (dist_root / full_path).resolve()
+        if file_path.is_relative_to(dist_root) and file_path.is_file():
             return FileResponse(file_path)
         
         # Fallback to index.html for SPA routing

@@ -3,7 +3,7 @@
 import asyncio
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,6 +12,7 @@ import structlog
 
 from db import get_control_db
 from services.sse import Channels, sse_manager
+from time_utils import utc_now
 
 
 logger = structlog.get_logger(__name__)
@@ -139,7 +140,7 @@ class NotificationService:
             except Exception as exc:
                 attempts += 1
                 delay_minutes = min(60, 2 ** min(attempts, 5))
-                next_attempt = (datetime.utcnow() + timedelta(minutes=delay_minutes)).isoformat()
+                next_attempt = (utc_now() + timedelta(minutes=delay_minutes)).isoformat()
                 state = "failed" if attempts >= 8 else "retry"
                 await db.execute(
                     "UPDATE notification_deliveries SET state=?, attempts=?, last_error=?, next_attempt_at=? WHERE id=?",

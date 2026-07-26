@@ -62,6 +62,20 @@ class TestApiRoot:
         assert data["name"] == "Pi Control Panel API"
         assert data["version"] == "1.0.0"
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/%2e%2e/package.json",
+            "/%2e%2e%2fpackage.json",
+            "/..%2fpackage.json",
+        ],
+    )
+    def test_spa_fallback_cannot_read_files_outside_dist(self, client, path):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert '"name": "pi-control-ui"' not in response.text
+
 
 class TestRouteInventory:
     """Keep every API operation visible and protected by default."""

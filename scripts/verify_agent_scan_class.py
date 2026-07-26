@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import sys
-import os
 from pathlib import Path
 
 # Add agent directory to sys.path

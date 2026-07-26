@@ -233,8 +233,11 @@ async def migrate_002_default_admin(db):
     count = (await cursor.fetchone())[0]
     
     if count == 0:
-        # Generate random password
-        default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin")
+        default_password = os.environ.get("DEFAULT_ADMIN_PASSWORD")
+        if not default_password:
+            raise RuntimeError(
+                "DEFAULT_ADMIN_PASSWORD is required when creating the initial admin"
+            )
         password_hash = hash_password(default_password)
         
         await db.execute(
@@ -244,7 +247,6 @@ async def migrate_002_default_admin(db):
         )
         
         print("  Created default admin user: admin")
-        print(f"  Default password: {default_password}")
         print("  ⚠️  CHANGE THIS PASSWORD IMMEDIATELY!")
 
 
@@ -284,23 +286,7 @@ async def migrate_004_alert_history(db):
 
 
 async def migrate_005_standard_user(db):
-    """Create default standard user if none exists."""
-    cursor = await db.execute("SELECT COUNT(*) FROM users WHERE username = 'user'")
-    count = (await cursor.fetchone())[0]
-    
-    if count == 0:
-        # Default standard user
-        default_password = "user123"
-        password_hash = hash_password(default_password)
-        
-        await db.execute(
-            """INSERT INTO users (username, password_hash, role)
-               VALUES (?, ?, ?)""",
-            ("user", password_hash, "viewer")
-        )
-        
-        print("  Created default standard user: user")
-        print("  Role: viewer")
+    """Retained migration marker; predictable default viewer accounts are unsafe."""
 
 
 async def migrate_006_login_lockout(db):

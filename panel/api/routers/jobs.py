@@ -19,6 +19,7 @@ from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
 from services.job_scheduler import SAFE_SCHEDULED_TYPES, next_cron_run, parse_cron
 from .auth import get_current_user, require_role, get_current_user_sse
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -447,7 +448,7 @@ async def create_job(
     
     job_id = str(uuid.uuid4())[:8]
     config_json = json.dumps(job.config) if job.config else None
-    now = datetime.utcnow().isoformat()
+    now = utc_now().isoformat()
     
     await db.execute(
         """INSERT INTO jobs (id, name, type, state, config_json, started_by, created_at)

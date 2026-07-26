@@ -24,6 +24,7 @@ import termios
 import time
 import re
 import secrets
+import shlex
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
@@ -34,6 +35,7 @@ from pydantic import BaseModel
 from config import settings
 from db import get_control_db
 from .auth import _validate_token, require_role, get_current_user, verify_password_async
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -141,11 +143,11 @@ async def validate_breakglass_token(token: str, user_id: int) -> bool:
     
     # Check expiration
     expires_at = datetime.fromisoformat(expires_at_str)
-    if datetime.utcnow() > expires_at:
+    if utc_now() > expires_at:
         # Auto-close expired session
         await db.execute(
             "UPDATE breakglass_sessions SET closed_at = ?, close_reason = ? WHERE id = ?",
-            (datetime.utcnow().isoformat(), "expired", session_id)
+            (utc_now().isoformat(), "expired", session_id)
         )
         await db.commit()
         return False
@@ -160,7 +162,7 @@ async def close_breakglass_session(user_id: int, reason: str = "manual_close"):
         """UPDATE breakglass_sessions 
            SET closed_at = ?, close_reason = ? 
            WHERE user_id = ? AND closed_at IS NULL""",
-        (datetime.utcnow().isoformat(), reason, user_id)
+        (utc_now().isoformat(), reason, user_id)
     )
     await db.commit()
 
@@ -234,7 +236,7 @@ async def start_breakglass(
     
     # Calculate expiration
     ttl_minutes = min(settings.terminal_breakglass_ttl_min, 30)  # Cap at 30 min
-    issued_at = datetime.utcnow()
+    issued_at = utc_now()
     expires_at = issued_at + timedelta(minutes=ttl_minutes)
     
     # Store session
@@ -293,12 +295,12 @@ async def get_breakglass_status(user: dict = Depends(get_current_user)):
     session_id, expires_at_str = row
     expires_at = datetime.fromisoformat(expires_at_str)
     
-    if datetime.utcnow() > expires_at:
+    if utc_now() > expires_at:
         # Session expired, close it
         await close_breakglass_session(user["id"], "expired")
         return BreakGlassStatusResponse(active=False)
     
-    remaining = int((expires_at - datetime.utcnow()).total_seconds())
+    remaining = int((expires_at - utc_now()).total_seconds())
     
     return BreakGlassStatusResponse(
         active=True,
@@ -367,7 +369,7 @@ def validate_restricted_command(command: str) -> tuple[bool, str]:
         return False, "Empty command"
     
     # systemctl status/restart <service>
-    if len(parts) >= 3 and parts[0] == "systemctl":
+    if len(parts) == 3 and parts[0] == "systemctl":
         if parts[1] in ("status", "restart"):
             service = parts[2]
             if SERVICE_REGEX.match(service):
@@ -376,13 +378,32 @@ def validate_restricted_command(command: str) -> tuple[bool, str]:
         return False, "Only systemctl status/restart allowed"
     
     # journalctl -u <service>
-    if len(parts) >= 3 and parts[0] == "journalctl" and parts[1] == "-u":
+    if len(parts) == 3 and parts[0] == "journalctl" and parts[1] == "-u":
         service = parts[2]
         if SERVICE_REGEX.match(service):
             return True, ""
         return False, f"Invalid service name: {service}"
     
     return False, f"Command not in allowlist: {cmd_base}"
+
+
+async def _run_restricted_command(command: str, timeout: int = 30) -> tuple[str, int]:
+    """Run a validated command without invoking a shell."""
+    process = await asyncio.create_subprocess_exec(
+        *shlex.split(command),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        return "Command timed out (30s limit)", 124
+    output = stdout.decode("utf-8", errors="replace") + stderr.decode(
+        "utf-8", errors="replace"
+    )
+    return output, process.returncode or 0
 
 
 @router.post("/restricted/exec", response_model=RestrictedCommandResponse)
@@ -392,8 +413,6 @@ async def execute_restricted_command(
     user: dict = Depends(require_role("admin", "operator"))
 ):
     """Execute a command in restricted mode (allowlisted commands only)."""
-    import subprocess
-    
     # Validate command
     is_valid, error = validate_restricted_command(request.command)
     if not is_valid:
@@ -406,15 +425,7 @@ async def execute_restricted_command(
         raise HTTPException(status_code=403, detail=error)
     
     try:
-        result = subprocess.run(
-            request.command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        output = result.stdout + result.stderr
-        exit_code = result.returncode
+        output, exit_code = await _run_restricted_command(request.command)
         
         # Audit log (truncate output)
         await log_terminal_event(
@@ -430,12 +441,6 @@ async def execute_restricted_command(
             command=request.command
         )
         
-    except subprocess.TimeoutExpired:
-        return RestrictedCommandResponse(
-            output="Command timed out (30s limit)",
-            exit_code=124,
-            command=request.command
-        )
     except Exception as e:
         return RestrictedCommandResponse(
             output=str(e),
@@ -852,28 +857,16 @@ async def terminal_websocket(websocket: WebSocket):
                             })
                             continue
                         
-                        import subprocess
                         try:
-                            result = subprocess.run(
-                                command,
-                                shell=True,
-                                capture_output=True,
-                                text=True,
-                                timeout=30
-                            )
+                            output, exit_code = await _run_restricted_command(command)
                             await websocket.send_json({
                                 "type": "output",
                                 "command": command,
-                                "output": result.stdout + result.stderr,
-                                "exit_code": result.returncode
+                                "output": output[:10000] or "(no output)",
+                                "exit_code": exit_code
                             })
-                        except subprocess.TimeoutExpired:
-                            await websocket.send_json({
-                                "type": "output",
-                                "command": command,
-                                "output": "Command timed out",
-                                "exit_code": 124
-                            })
+                        except Exception as exc:
+                            await websocket.send_json({"type": "error", "error": str(exc)})
                         
                 except WebSocketDisconnect:
                     break
@@ -912,23 +905,12 @@ async def execute_command(
     user: dict = Depends(require_role("admin"))
 ):
     """Execute an allowlisted command for legacy mobile clients."""
-    import subprocess
-
     is_valid, error = validate_restricted_command(request.command)
     if not is_valid:
         return CommandResponse(output=f"Command blocked: {error}", exit_code=1)
     
     try:
-        result = subprocess.run(
-            request.command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        output = result.stdout + result.stderr
-        return CommandResponse(output=output or "(no output)", exit_code=result.returncode)
-    except subprocess.TimeoutExpired:
-        return CommandResponse(output="Command timed out (30s limit)", exit_code=124)
+        output, exit_code = await _run_restricted_command(request.command)
+        return CommandResponse(output=output[:10000] or "(no output)", exit_code=exit_code)
     except Exception as e:
         return CommandResponse(output=str(e), exit_code=1)

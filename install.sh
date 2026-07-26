@@ -31,7 +31,7 @@ VERBOSE=false
 
 INSTALL_USER="${SUDO_USER:-}"
 INSTALL_GROUP=""
-DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin123}"
+DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-}"
 
 print_usage() {
     cat <<'EOF'
@@ -354,17 +354,18 @@ prepare_release_layout() {
 }
 
 write_service_env_file() {
-    local escaped_password=""
+    local escaped_password
 
-    if [[ -n "${DEFAULT_ADMIN_PASSWORD:-}" ]]; then
-        escaped_password="${DEFAULT_ADMIN_PASSWORD//\\/\\\\}"
-        escaped_password="${escaped_password//\"/\\\"}"
-        printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" > "$SERVICE_ENV_FILE"
-        chmod 600 "$SERVICE_ENV_FILE"
-        info "Using DEFAULT_ADMIN_PASSWORD for the initial admin seed."
+    if [[ -z "$DEFAULT_ADMIN_PASSWORD_VALUE" ]]; then
+        DEFAULT_ADMIN_PASSWORD_VALUE="$(openssl rand -hex 18)"
+        info "Generated a random initial admin password."
     else
-        rm -f "$SERVICE_ENV_FILE"
+        info "Using DEFAULT_ADMIN_PASSWORD for the initial admin seed."
     fi
+    escaped_password="${DEFAULT_ADMIN_PASSWORD_VALUE//\\/\\\\}"
+    escaped_password="${escaped_password//\"/\\\"}"
+    printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" > "$SERVICE_ENV_FILE"
+    chmod 600 "$SERVICE_ENV_FILE"
 }
 
 generate_secrets() {
@@ -576,6 +577,7 @@ main() {
 
     if health_check; then
         print_summary
+        rm -f "$SERVICE_ENV_FILE"
     else
         fail "Installation completed but the health check failed."
         [[ "$VERBOSE" == true ]] || echo "  Re-run with --verbose for full command output."

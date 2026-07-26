@@ -115,6 +115,8 @@ class TestRestrictedCommandValidation:
             "systemctl status ../../../etc/passwd",
             "systemctl restart $(whoami)",
             "systemctl status service;rm -rf /",
+            "systemctl restart ssh nginx",
+            "journalctl -u ssh --output=json",
         ]
         
         for cmd in invalid:

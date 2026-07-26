@@ -655,8 +655,8 @@ async def configure_gpio(
     db = await get_control_db()
     
     await db.execute(
-        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, 'device.gpio.configure', ?, '127.0.0.1')",
-        (user["id"], json.dumps(config.dict()))
+        "INSERT INTO audit_log (user_id, action, details, ip_address) VALUES (?, 'device.gpio.configure', ?, '127.0.0.1')",
+        (user["id"], json.dumps(config.model_dump()))
     )
     await db.commit()
     

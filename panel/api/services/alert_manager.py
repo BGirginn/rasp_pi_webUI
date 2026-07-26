@@ -2,12 +2,12 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime
 
 from db import get_control_db
 from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
 from services.notification_service import notification_service
+from time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class AlertManager:
             
         # Create new alert
         alert_id = str(uuid.uuid4())[:8]
-        now = datetime.utcnow().isoformat()
+        now = utc_now().isoformat()
         message = f"{rule_name}: Value {value} is {condition} {threshold}"
         
         await db.execute(

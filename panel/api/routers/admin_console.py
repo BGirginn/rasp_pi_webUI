@@ -15,6 +15,7 @@ from pydantic import BaseModel, field_validator
 from db import get_control_db
 from services.agent_client import agent_client
 from .auth import require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -255,7 +256,7 @@ async def enable_risky_mode(
     """Enable risky mode for a limited duration (max 30 minutes)."""
     db = await get_control_db()
     
-    expiry = datetime.utcnow() + timedelta(minutes=duration_minutes)
+    expiry = utc_now() + timedelta(minutes=duration_minutes)
     _risky_sessions[user["id"]] = expiry
     
     # Audit log
@@ -298,8 +299,8 @@ async def risky_mode_status(user: dict = Depends(require_role("admin"))):
     """Check risky mode status."""
     if user["id"] in _risky_sessions:
         expiry = _risky_sessions[user["id"]]
-        if datetime.utcnow() < expiry:
-            remaining = int((expiry - datetime.utcnow()).total_seconds())
+        if utc_now() < expiry:
+            remaining = int((expiry - utc_now()).total_seconds())
             return {
                 "enabled": True,
                 "expires_at": expiry.isoformat(),
@@ -411,7 +412,7 @@ def _is_risky_mode_active(user_id: int) -> bool:
     """Check if risky mode is active for a user."""
     if user_id in _risky_sessions:
         expiry = _risky_sessions[user_id]
-        if datetime.utcnow() < expiry:
+        if utc_now() < expiry:
             return True
         else:
             del _risky_sessions[user_id]

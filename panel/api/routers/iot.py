@@ -98,6 +98,8 @@ async def provision_mqtt_device(
         result = await agent_client.mqtt_provision(request.device_id, request.name)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"MQTT provisioning failed: {exc}")
+    if not isinstance(result, dict) or not result.get("username"):
+        raise HTTPException(status_code=502, detail="MQTT agent returned an invalid provisioning response")
     db = await get_control_db()
     await db.execute(
         """INSERT INTO mqtt_devices (id, name, username, status, created_by)

@@ -4,7 +4,7 @@ Pi Control Panel - Audit Log Router
 Audit log viewing and management.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Optional
 
 import json
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from db import get_control_db
 from services.audit_chain import audit_chain_service, row_dict
 from .auth import require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -177,7 +178,7 @@ async def audit_summary(
     """Get audit log summary for the last N days."""
     db = await get_control_db()
     
-    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    since = (utc_now() - timedelta(days=days)).isoformat()
     
     # Actions by type
     cursor = await db.execute(

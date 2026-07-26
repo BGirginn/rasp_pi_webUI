@@ -1,8 +1,6 @@
 
 import asyncio
 import sys
-import json
-import logging
 
 # Add agent directory to sys.path
 sys.path.append("/opt/pi-control/agent")

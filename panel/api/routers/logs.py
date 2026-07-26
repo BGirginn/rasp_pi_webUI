@@ -4,7 +4,6 @@ Pi Control Panel - Logs Router
 Handles log retrieval, search, and streaming.
 """
 
-from datetime import datetime
 from typing import List, Optional
 import uuid
 
@@ -15,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
 from .auth import get_current_user
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -173,7 +173,7 @@ async def tail_logs(
     
     return {
         "resource_id": resource_id,
-        "lines": [line.dict() for line in parsed_lines],
+        "lines": [line.model_dump() for line in parsed_lines],
         "count": len(parsed_lines)
     }
 
@@ -241,7 +241,7 @@ def _parse_log_line(raw_line: str) -> LogLine:
     
     # Fallback: unknown format
     return LogLine(
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=utc_now().isoformat(),
         level="INFO",
         message=raw_line
     )

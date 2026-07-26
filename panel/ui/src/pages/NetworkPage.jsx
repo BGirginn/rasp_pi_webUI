@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Settings2, Power, RotateCcw, Ban, Search, Trash2, MonitorSmartphone, ChevronDown, Bluetooth } from "lucide-react";
+import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Power, RotateCcw, Ban, Search, Trash2, MonitorSmartphone, ChevronDown, Bluetooth } from "lucide-react";
 import { useTheme, getThemeColors, } from "../contexts/ThemeContext";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../services/api";
@@ -304,6 +304,18 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
       scanWifi();
     } catch (err) {
       alert('Failed to connect: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleWifiDisconnect = async () => {
+    if (!confirm(`Disconnect from ${wifiStatus?.ssid || 'the current WiFi network'}?`)) {
+      return;
+    }
+    try {
+      await api.post('/network/wifi/disconnect');
+      await scanWifi();
+    } catch (err) {
+      alert('Failed to disconnect: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -630,17 +642,19 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
                       <span className="flex items-center gap-1.5 text-xs font-bold text-green-500 uppercase bg-green-500/10 px-3 py-1 rounded-full border border-green-500/20">
                         <CheckCircle2 size={12} /> Connected
                       </span>
-                      <span className={`text-xs font-mono font-bold ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>{wifiStatus.ip_address}</span>
-                      <span className={`text-xs font-bold ${isDarkMode ? 'text-gray-600' : 'text-gray-400'}`}>• {wifiStatus.frequency} • {wifiStatus.signal_quality}% Quality</span>
+                      <span className={`text-xs font-mono font-bold ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>{wifiStatus.ip_address || wifiStatus.ip || 'No IP'}</span>
+                      {(wifiStatus.frequency || wifiStatus.signal_quality != null) && (
+                        <span className={`text-xs font-bold ${isDarkMode ? 'text-gray-600' : 'text-gray-400'}`}>
+                          {wifiStatus.frequency ? `• ${wifiStatus.frequency}` : ''}
+                          {wifiStatus.signal_quality != null ? ` • ${wifiStatus.signal_quality}% Quality` : ''}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-3 relative z-10">
-                  <button className={`px-6 py-3 rounded-2xl text-sm font-bold uppercase tracking-widest transition-all ${isDarkMode ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20" : "bg-red-50 text-red-600 border-red-100 hover:bg-red-100"} border`}>
+                  <button onClick={handleWifiDisconnect} className={`px-6 py-3 rounded-2xl text-sm font-bold uppercase tracking-widest transition-all ${isDarkMode ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20" : "bg-red-50 text-red-600 border-red-100 hover:bg-red-100"} border`}>
                     DISCONNECT
-                  </button>
-                  <button className={`p-3 rounded-2xl border transition-all ${isDarkMode ? "bg-white/5 border-white/10 hover:bg-white/10 text-gray-400" : "bg-white border-gray-200 hover:bg-gray-50 text-gray-600"}`}>
-                    <Settings2 size={24} />
                   </button>
                 </div>
               </motion.div>

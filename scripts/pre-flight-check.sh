@@ -356,8 +356,8 @@ check_network() {
 check_ports() {
     print_section "Port Availability"
     
-    local ports=("80" "8080" "8081")
-    local port_names=("HTTP" "API" "Health")
+    local ports=("80" "443" "8080" "8081")
+    local port_names=("HTTP" "HTTPS" "API" "Health")
     
     for i in "${!ports[@]}"; do
         local port="${ports[$i]}"
@@ -369,6 +369,10 @@ check_ports() {
             
             # Check if it's our services
             if [[ "$process" == *"caddy"* ]] || [[ "$process" == *"uvicorn"* ]]; then
+                check_pass "Port $port ($name): In use by Pi Control Panel"
+            elif [[ "$port" =~ ^(80|443|8081)$ ]] && systemctl is-active --quiet caddy 2>/dev/null; then
+                check_pass "Port $port ($name): In use by Caddy"
+            elif [[ "$port" == "8080" ]] && systemctl is-active --quiet pi-control 2>/dev/null; then
                 check_pass "Port $port ($name): In use by Pi Control Panel"
             else
                 check_warn "Port $port ($name): In use by $process"

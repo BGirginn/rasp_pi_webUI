@@ -6,7 +6,6 @@ Handles resource discovery, management, and actions.
 
 import asyncio
 import time
-from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,8 +13,9 @@ from pydantic import BaseModel, Field
 
 from db import get_control_db
 from services.agent_client import agent_client
-from services.host_exec import run_host_command_simple, run_host_command, is_running_in_container
+from services.host_exec import run_host_command_simple
 from .auth import get_current_user, require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -193,7 +193,7 @@ async def _get_live_systemd_services(force_refresh: bool = False) -> List[Resour
         if not output:
              output = ""
 
-        now = datetime.utcnow().isoformat()
+        now = utc_now().isoformat()
         unit_states = {}
 
         # Parse loaded services (active or inactive but loaded)
@@ -449,64 +449,6 @@ async def execute_action(
             "resource": updated_resource.model_dump() if updated_resource else None,
         }
     )
-
-
-async def _execute_systemd_action(service_name: str, action: str) -> dict:
-    """Execute a systemctl action on a service via host_exec."""
-    import os
-    
-    
-    # Allowed actions
-    allowed = ["start", "stop", "restart", "status"]
-    if action not in allowed:
-        return {"success": False, "message": f"Action '{action}' not allowed. Use: {allowed}"}
-    
-    # Protected services that cannot be stopped
-    if action == "stop" and service_name in CORE_SERVICES:
-        return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
-    
-    try:
-        base_command = f"systemctl {action} {service_name}.service"
-        password = os.environ.get("SUDO_PASSWORD") or os.environ.get("SSH_HOST_PASSWORD")
-
-        if password:
-            safe_password = password.replace("'", "'\"'\"'")
-            command = f"printf '%s\\n' '{safe_password}' | sudo -S -p '' {base_command}"
-        elif not is_running_in_container() and os.geteuid() == 0:
-            command = base_command
-        else:
-            # Use non-interactive sudo so we fail fast instead of hanging for a password prompt.
-            command = f"sudo -n {base_command}"
-
-        masked_command = command
-        if password:
-            masked_command = masked_command.replace(password, "***")
-        print(f"Executing systemd action: {masked_command}")
-        
-        stdout, stderr, returncode = run_host_command(command, timeout=30)
-        
-        if returncode == 0:
-            return {
-                "success": True,
-                "message": f"Service {service_name} {action} successful",
-                "output": stdout
-            }
-        else:
-            print(f"Systemd action failed: {stderr}")
-            if "password is required" in (stderr or "").lower() or "a password is required" in (stderr or "").lower():
-                return {
-                    "success": False,
-                    "message": "Insufficient sudo permissions for service control. Configure sudoers or run via agent.",
-                    "error": "SUDO_PERMISSION_REQUIRED"
-                }
-            return {
-                "success": False,
-                "message": f"Failed to {action} {service_name}. Error: {stderr.strip() or 'Exit code ' + str(returncode)}",
-                "error": stderr
-            }
-    except Exception as e:
-        print(f"Systemd execution exception: {e}")
-        return {"success": False, "message": str(e)}
 
 
 @router.post("/{resource_id}/manage")

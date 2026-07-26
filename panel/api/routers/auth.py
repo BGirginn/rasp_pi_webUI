@@ -6,6 +6,7 @@ Handles login, logout, token refresh, and user management.
 
 from datetime import datetime, timedelta
 from typing import List, Optional
+import asyncio
 import hashlib
 import uuid
 
@@ -15,11 +16,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
 import pyotp
-import subprocess
 
 from config import settings
 from db import get_control_db
 from services.audit_chain import row_dict
+from time_utils import utc_now
 
 router = APIRouter()
 security = HTTPBearer()
@@ -80,7 +81,7 @@ class UserResponse(BaseModel):
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create JWT access token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.jwt_access_token_expire_minutes))
+    expire = utc_now() + (expires_delta or timedelta(minutes=settings.jwt_access_token_expire_minutes))
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, settings.get_jwt_secret(), algorithm=settings.jwt_algorithm)
 
@@ -136,7 +137,7 @@ async def _record_failed_login(db, user_id: int, current_count: int, reason: str
     failed_count = current_count + 1
     locked_until = None
     if failed_count >= MAX_FAILED_LOGIN_ATTEMPTS:
-        locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        locked_until = utc_now() + timedelta(minutes=LOCKOUT_MINUTES)
 
     await db.execute(
         "UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?",
@@ -255,7 +256,7 @@ async def login(request: LoginRequest, response: Response, req: Request):
     user_id, username, password_hash, role, totp_secret, failed_login_count, locked_until = row
 
     locked_until_dt = _parse_datetime(locked_until)
-    if locked_until_dt and datetime.utcnow() < locked_until_dt:
+    if locked_until_dt and utc_now() < locked_until_dt:
         raise HTTPException(status_code=423, detail="Account temporarily locked")
     
     # Verify password (using async version to avoid blocking)
@@ -279,7 +280,7 @@ async def login(request: LoginRequest, response: Response, req: Request):
     
     # Store session
     session_id = str(uuid.uuid4())
-    expires_at = datetime.utcnow() + timedelta(days=settings.jwt_refresh_token_expire_days)
+    expires_at = utc_now() + timedelta(days=settings.jwt_refresh_token_expire_days)
     
     family_id = str(uuid.uuid4())
     await db.execute(
@@ -368,7 +369,7 @@ async def refresh_token(request: Request, response: Response):
 
     new_refresh_token = create_refresh_token()
     new_session_id = str(uuid.uuid4())
-    expires_at = datetime.utcnow() + timedelta(days=settings.jwt_refresh_token_expire_days)
+    expires_at = utc_now() + timedelta(days=settings.jwt_refresh_token_expire_days)
     await db.execute(
         "UPDATE sessions SET revoked_at=datetime('now'), last_used_at=datetime('now') WHERE id=?",
         (session["id"],),
@@ -464,6 +465,8 @@ async def get_me(user: dict = Depends(get_current_user)):
         (user["id"],)
     )
     row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
     
     return UserResponse(
         id=row[0],
@@ -516,7 +519,7 @@ async def create_user(
         username=user_data.username,
         role=user_data.role,
         has_totp=False,
-        created_at=datetime.utcnow().isoformat()
+        created_at=utc_now().isoformat()
     )
 
 
@@ -687,29 +690,26 @@ async def verify_system_password_endpoint(request: PasswordVerifyRequest, user: 
     cmd = ["sudo", "-S", "-v", "-k"] # -v updates cached credentials, -k invalidates them first just in case
     
     try:
-        # Use subprocess to run command
-        # Write password to stdin
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
-        
-        stdout, stderr = proc.communicate(input=f"{request.password}\n")
-        
-        if proc.returncode == 0:
-            return {"valid": True}
-        else:
-            # Check if it was actually a password failure or something else
-            if "incorrect password" in stderr.lower() or "try again" in stderr.lower():
-                 raise HTTPException(status_code=401, detail="Invalid system password")
-            else:
-                 # Some other sudo error? Log it potentially, but fail safe
-                 print(f"Sudo verification failed: {stderr}")
-                 raise HTTPException(status_code=401, detail="Invalid system password")
-                 
-    except Exception as e:
-        print(f"System password verification error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during verification")
+        try:
+            _, stderr = await asyncio.wait_for(
+                proc.communicate(input=f"{request.password}\n".encode()),
+                timeout=10,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise HTTPException(status_code=504, detail="System password verification timed out")
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="System password verification unavailable") from exc
+
+    if proc.returncode == 0:
+        return {"valid": True}
+    raise HTTPException(status_code=401, detail="Invalid system password")
