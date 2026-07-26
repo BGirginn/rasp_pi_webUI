@@ -40,6 +40,7 @@ async def init_db():
     await _control_db.execute("PRAGMA journal_mode=WAL")
     await _control_db.execute("PRAGMA synchronous=NORMAL")
     await _init_control_schema(_control_db)
+    _secure_database_file(settings.database_path)
     logger.info("Control database initialized", path=settings.database_path)
     
     # Initialize telemetry database
@@ -49,6 +50,7 @@ async def init_db():
     await _telemetry_db.execute("PRAGMA journal_mode=WAL")
     await _telemetry_db.execute("PRAGMA synchronous=NORMAL")
     await _init_telemetry_schema(_telemetry_db)
+    _secure_database_file(settings.telemetry_db_path)
     logger.info("Telemetry database initialized", path=settings.telemetry_db_path)
 
 
@@ -71,7 +73,11 @@ def _secure_database_file(database_path: str) -> None:
     """Restrict persistent databases to the service account."""
     if database_path == ":memory:" or database_path.startswith("file:"):
         return
-    Path(database_path).chmod(0o600)
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            Path(f"{database_path}{suffix}").chmod(0o600)
+        except FileNotFoundError:
+            pass
 
 
 async def get_control_db():
