@@ -911,14 +911,12 @@ async def execute_command(
     request: CommandRequest,
     user: dict = Depends(require_role("admin"))
 ):
-    """Execute a simple command and return output (for mobile app)."""
+    """Execute an allowlisted command for legacy mobile clients."""
     import subprocess
-    
-    # Security: Block dangerous commands
-    dangerous = ['rm -rf', ':(){', '> /dev', 'mkfs']
-    for d in dangerous:
-        if d in request.command:
-            return CommandResponse(output=f"Command blocked: {d}", exit_code=1)
+
+    is_valid, error = validate_restricted_command(request.command)
+    if not is_valid:
+        return CommandResponse(output=f"Command blocked: {error}", exit_code=1)
     
     try:
         result = subprocess.run(

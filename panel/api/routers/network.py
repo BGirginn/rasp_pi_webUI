@@ -4,10 +4,11 @@ Pi Control Panel - Network Router
 Handles network interface management, WiFi configuration, and connectivity.
 """
 
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import get_control_db
 from services.agent_client import agent_client
@@ -48,7 +49,34 @@ class WifiConfig(BaseModel):
 
 class NetworkAction(BaseModel):
     action: str  # enable, disable, restart
-    rollback_seconds: int = 0  # Auto-rollback timer
+    rollback_seconds: int = Field(default=0, ge=0, le=300)  # Auto-rollback timer
+
+
+class CheckpointAction(BaseModel):
+    checkpoint_id: str
+
+
+class BluetoothDeviceAction(BaseModel):
+    address: str
+
+
+INTERFACE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$")
+
+
+def _validate_interface_name(interface_name: str) -> None:
+    if not INTERFACE_NAME_RE.fullmatch(interface_name):
+        raise HTTPException(status_code=400, detail="Invalid interface name")
+
+
+def _require_agent_success(result: object, operation: str) -> dict:
+    if not isinstance(result, dict) or not result.get("success"):
+        message = result.get("message") if isinstance(result, dict) else None
+        error = result.get("error") if isinstance(result, dict) else None
+        raise HTTPException(
+            status_code=502,
+            detail=message or error or f"Agent failed to {operation}",
+        )
+    return result
 
 
 @router.get("/interfaces", response_model=List[InterfaceResponse])
@@ -166,16 +194,13 @@ async def _get_local_interfaces() -> List[InterfaceResponse]:
 @router.get("/interfaces/{interface_name}", response_model=InterfaceResponse)
 async def get_interface(interface_name: str, user: dict = Depends(get_current_user)):
     """Get details for a specific interface."""
-    try:
-        interfaces = await agent_client.get_network_interfaces()
-        for iface in interfaces:
-            if iface.get("name") == interface_name:
-                return InterfaceResponse(**iface)
-        raise HTTPException(status_code=404, detail="Interface not found")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=503, detail="Agent unavailable")
+    _validate_interface_name(interface_name)
+    interfaces = await list_interfaces(user)
+    for iface in interfaces:
+        candidate = iface if isinstance(iface, InterfaceResponse) else InterfaceResponse(**iface)
+        if candidate.name == interface_name:
+            return candidate
+    raise HTTPException(status_code=404, detail="Interface not found")
 
 
 @router.post("/interfaces/{interface_name}/action")
@@ -185,19 +210,17 @@ async def interface_action(
     user: dict = Depends(require_role("admin"))
 ):
     """Execute action on a network interface (enable/disable/restart)."""
+    _validate_interface_name(interface_name)
     db = await get_control_db()
     
     if action.action not in ("enable", "disable", "restart"):
         raise HTTPException(status_code=400, detail="Invalid action")
     
-    # Safety check for critical interfaces
-    critical_interfaces = ["eth0", "tailscale0"]
-    if interface_name in critical_interfaces and action.action == "disable":
-        if action.rollback_seconds <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Disabling critical interface requires rollback timer"
-            )
+    if action.action == "disable" and action.rollback_seconds <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Disabling an interface requires a rollback timer"
+        )
     
     # Audit log
     await db.execute(
@@ -219,11 +242,18 @@ async def interface_action(
             })
         else:
             result = await agent_client.call("network.interface.restart", {"interface": interface_name})
+
+        _require_agent_success(result, f"{action.action} interface {interface_name}")
         
-        return {
+        response = {
             "message": f"Interface {interface_name} {action.action}d",
             "rollback": action.rollback_seconds if action.action == "disable" else 0
         }
+        if isinstance(result.get("data"), dict):
+            response.update(result["data"])
+        return response
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -236,9 +266,8 @@ async def scan_wifi_networks(user: dict = Depends(get_current_user)):
     try:
         networks = await agent_client.scan_wifi()
         return [WifiNetwork(**n) for n in networks]
-    except Exception:
-        # Return empty list on failure
-        return []
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"WiFi scan unavailable: {exc}")
 
 
 @router.get("/wifi/status")
@@ -247,8 +276,8 @@ async def wifi_status(user: dict = Depends(get_current_user)):
     try:
         result = await agent_client.call("network.wifi.status")
         return result
-    except Exception:
-        return {"connected": False}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"WiFi status unavailable: {exc}")
 
 
 @router.post("/wifi/connect")
@@ -273,7 +302,10 @@ async def connect_wifi(
             "password": config.password,
             "hidden": config.hidden
         })
+        _require_agent_success(result, f"connect to WiFi {config.ssid}")
         return {"message": f"Connected to {config.ssid}"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -292,8 +324,11 @@ async def disconnect_wifi(user: dict = Depends(require_role("admin"))):
     await db.commit()
     
     try:
-        await agent_client.call("network.wifi.disconnect")
+        result = await agent_client.call("network.wifi.disconnect")
+        _require_agent_success(result, "disconnect WiFi")
         return {"message": "WiFi disconnected"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -305,6 +340,8 @@ async def toggle_wifi(
     user: dict = Depends(require_role("admin"))
 ):
     """Toggle WiFi with optional rollback timer."""
+    if not enable and rollback_seconds <= 0:
+        raise HTTPException(status_code=400, detail="Disabling WiFi requires a rollback timer")
     db = await get_control_db()
     
     action = "enable" if enable else "disable"
@@ -319,11 +356,15 @@ async def toggle_wifi(
     await db.commit()
     
     try:
-        result = await agent_client.toggle_wifi(enable)
+        result = await agent_client.toggle_wifi(enable, rollback_seconds)
+        _require_agent_success(result, f"{action} WiFi")
         return {
             "message": f"WiFi {action}d",
-            "rollback_in": rollback_seconds if not enable else 0
+            "rollback_in": rollback_seconds if not enable else 0,
+            **(result.get("data") or {}),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -336,12 +377,8 @@ async def bluetooth_status(user: dict = Depends(get_current_user)):
     try:
         result = await agent_client.call("network.bluetooth.status")
         return result
-    except Exception:
-        return {
-            "enabled": True,
-            "discoverable": False,
-            "paired_devices": [],
-        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Bluetooth status unavailable: {exc}")
 
 
 @router.post("/bluetooth/toggle")
@@ -362,10 +399,74 @@ async def toggle_bluetooth(
     await db.commit()
     
     try:
-        await agent_client.call(f"network.bluetooth.{action}")
+        result = await agent_client.call(f"network.bluetooth.{action}")
+        _require_agent_success(result, f"{action} Bluetooth")
         return {"message": f"Bluetooth {action}d"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.get("/bluetooth/scan")
+async def scan_bluetooth(
+    seconds: int = Query(8, ge=2, le=30),
+    user: dict = Depends(require_role("admin")),
+):
+    try:
+        result = await agent_client.call("network.bluetooth.scan", {"seconds": seconds})
+        _require_agent_success(result, "scan Bluetooth devices")
+        return result.get("data") or {"devices": []}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/bluetooth/{action}")
+async def bluetooth_device_action(
+    action: str,
+    request: BluetoothDeviceAction,
+    user: dict = Depends(require_role("admin")),
+):
+    if action not in {"pair", "trust", "connect", "disconnect", "remove"}:
+        raise HTTPException(status_code=400, detail="Invalid Bluetooth action")
+    if not re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", request.address):
+        raise HTTPException(status_code=400, detail="Invalid Bluetooth address")
+    try:
+        result = await agent_client.call(
+            f"network.bluetooth.{action}", {"address": request.address.upper()}
+        )
+        _require_agent_success(result, f"{action} Bluetooth device")
+        return {"message": result.get("message", "Bluetooth operation completed")}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/checkpoints/confirm")
+async def confirm_checkpoint(
+    request: CheckpointAction,
+    user: dict = Depends(require_role("admin")),
+):
+    result = await agent_client.call(
+        "network.checkpoint.confirm", {"checkpoint_id": request.checkpoint_id}
+    )
+    _require_agent_success(result, "confirm network checkpoint")
+    return {"message": result.get("message")}
+
+
+@router.post("/checkpoints/rollback")
+async def rollback_checkpoint(
+    request: CheckpointAction,
+    user: dict = Depends(require_role("admin")),
+):
+    result = await agent_client.call(
+        "network.checkpoint.rollback", {"checkpoint_id": request.checkpoint_id}
+    )
+    _require_agent_success(result, "rollback network checkpoint")
+    return {"message": result.get("message")}
 
 
 # === Connectivity ===
@@ -376,14 +477,8 @@ async def check_connectivity(user: dict = Depends(get_current_user)):
     try:
         result = await agent_client.call("network.connectivity.check")
         return result
-    except Exception:
-        return {
-            "lan": True,
-            "internet": True,
-            "dns": True,
-            "tailscale": False,
-            "latency_ms": 15,
-        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Connectivity check unavailable: {exc}")
 
 
 @router.get("/dns")
@@ -392,9 +487,5 @@ async def get_dns_config(user: dict = Depends(get_current_user)):
     try:
         result = await agent_client.call("network.dns.get")
         return result
-    except Exception:
-        return {
-            "primary": "1.1.1.1",
-            "secondary": "8.8.8.8",
-            "search_domains": ["local"],
-        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DNS configuration unavailable: {exc}")

@@ -79,7 +79,14 @@ jobs:
   default_timeout: 600
   
   # State persistence
-  db_path: "/var/lib/pi-control/control.db"
+  db_path: "/var/lib/pi-control/jobs.db"
+  backup_dir: "/opt/pi-control/backups"
+  backup_key_file: "/etc/pi-control/backup_encryption.key"
+  restore_dir: "/var/lib/pi-control/restore"
+  install_dir: "/opt/pi-control"
+  config_dir: "/etc/pi-control"
+  repository: "https://github.com/BGirginn/rasp_pi_webUI.git"
+  install_user: "fou4"
 
 # ===========================================
 # MQTT Bridge
@@ -87,15 +94,25 @@ jobs:
 mqtt:
   enabled: true
   host: "localhost"
-  port: 1883
+  advertised_host: "raspberrypi.local"
+  port: 8883
   username: "panel"
-  password_file: "/run/secrets/mqtt_password"
+  password_file: "/etc/pi-control/secrets/mqtt_panel_password"
+  ca_file: "/etc/pi-control/mqtt/ca.crt"
+  tls: true
+  provisioning_enabled: true
+  provisioning_dir: "/etc/mosquitto/pi-control"
+  secrets_dir: "/etc/pi-control/secrets"
+  mosquitto_conf: "/etc/mosquitto/conf.d/pi-control.conf"
+  mosquitto_password_file: "/etc/mosquitto/pi-control.passwd"
+  mosquitto_acl_file: "/etc/mosquitto/pi-control.acl"
   
   # Topics
   topics:
-    devices: "devices/+/telemetry"
-    status: "devices/+/status"
-    commands: "devices/{device_id}/command"
+    devices: "pi-control/v1/devices/+/telemetry"
+    status: "pi-control/v1/devices/+/status"
+    command_results: "pi-control/v1/devices/+/command-result"
+    commands: "pi-control/v1/devices/{device_id}/command"
 
 # ===========================================
 # Logging

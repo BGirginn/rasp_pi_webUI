@@ -43,6 +43,7 @@ class DeviceDiscoveryService:
         self.devices: Dict[str, IoTDevice] = {}
         self._running = False
         self._poll_task: Optional[asyncio.Task] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.service_type = "_iot-device._tcp.local."
         self._db = None
         self._last_broadcast_signature: Optional[str] = None
@@ -66,6 +67,7 @@ class DeviceDiscoveryService:
 
         logger.info("Starting IoT Device Discovery Service...")
         self._running = True
+        self._loop = asyncio.get_running_loop()
         self._last_broadcast_signature = None
         
         # Get database connection
@@ -110,6 +112,8 @@ class DeviceDiscoveryService:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+
+        self._loop = None
         
         logger.info("IoT Device Discovery Service stopped")
 
@@ -221,9 +225,24 @@ class DeviceDiscoveryService:
         if state_change == ServiceStateChange.Added or state_change == ServiceStateChange.Updated:
             info = zeroconf.get_service_info(service_type, name)
             if info:
-                asyncio.create_task(self._add_or_update_device_async(info))
+                self._submit_from_zeroconf(self._add_or_update_device_async(info))
         elif state_change == ServiceStateChange.Removed:
-            asyncio.create_task(self._remove_device_async(name))
+            self._submit_from_zeroconf(self._remove_device_async(name))
+
+    def _submit_from_zeroconf(self, coroutine) -> None:
+        """Schedule a Zeroconf thread callback on the API event loop."""
+        if not self._loop or not self._loop.is_running():
+            coroutine.close()
+            return
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+
+        def consume_result(done_future) -> None:
+            try:
+                done_future.result()
+            except Exception as exc:
+                logger.warning(f"mDNS callback failed: {exc}")
+
+        future.add_done_callback(consume_result)
 
     async def _add_or_update_device_async(self, info: ServiceInfo):
         """Add or update a device in the registry (async version)."""
@@ -531,6 +550,53 @@ class DeviceDiscoveryService:
             await self._save_sensor_readings(device_id, sensors)
         self._broadcast_update()
         return device
+
+    async def remove_device(self, device_id: str) -> bool:
+        """Remove a device and its sensor history from memory and SQLite."""
+        existed = device_id in self.devices
+        if not await self._ensure_db():
+            return False
+
+        try:
+            cursor = await self._db.execute(
+                "SELECT 1 FROM iot_devices WHERE id = ?",
+                (device_id,),
+            )
+            existed = existed or await cursor.fetchone() is not None
+            await self._db.execute(
+                "DELETE FROM iot_sensor_readings WHERE device_id = ?",
+                (device_id,),
+            )
+            await self._db.execute("DELETE FROM iot_devices WHERE id = ?", (device_id,))
+            await self._db.commit()
+        except Exception as exc:
+            logger.warning(f"Failed to remove device from database: {exc}")
+            return False
+
+        self.devices.pop(device_id, None)
+        self._broadcast_update()
+        return existed
+
+    async def clear_devices(self) -> int:
+        """Remove every discovered/simulated device and associated history."""
+        count = len(self.devices)
+        if not await self._ensure_db():
+            return 0
+
+        try:
+            cursor = await self._db.execute("SELECT COUNT(*) FROM iot_devices")
+            row = await cursor.fetchone()
+            count = max(count, int(row[0]) if row else 0)
+            await self._db.execute("DELETE FROM iot_sensor_readings")
+            await self._db.execute("DELETE FROM iot_devices")
+            await self._db.commit()
+        except Exception as exc:
+            logger.warning(f"Failed to clear devices from database: {exc}")
+            return 0
+
+        self.devices.clear()
+        self._broadcast_update()
+        return count
 
 # Global instance
 discovery_service = DeviceDiscoveryService()

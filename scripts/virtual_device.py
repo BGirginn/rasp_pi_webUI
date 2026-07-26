@@ -4,12 +4,13 @@ import socket
 import sys
 import argparse
 from aiohttp import web
-from zeroconf import ServiceInfo, Zeroconf
+from zeroconf import ServiceInfo, InterfaceChoice
+from zeroconf.asyncio import AsyncZeroconf
 
 # Configuration
 DEVICE_NAME = "Virtual IoT Device"
 SERVICE_TYPE = "_iot-device._tcp.local."
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 18080
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -27,12 +28,10 @@ class VirtualDevice:
     def __init__(self, port: int):
         self.ip = get_local_ip()
         self.port = port
-        # Use InterfaceChoice.Default to avoid socket binding issues on macOS
-        from zeroconf import InterfaceChoice
-        self.zeroconf = Zeroconf(interfaces=InterfaceChoice.Default)
+        self.zeroconf = AsyncZeroconf(interfaces=InterfaceChoice.Default)
         self.service_info = None
 
-    def start_mdns(self):
+    async def start_mdns(self):
         desc = {'version': '1.0.0', 'type': 'virtual'}
         
         self.service_info = ServiceInfo(
@@ -45,12 +44,12 @@ class VirtualDevice:
         )
         
         print(f"📡 Broadcasting mDNS service: {DEVICE_NAME} at {self.ip}:{self.port}")
-        self.zeroconf.register_service(self.service_info)
+        await self.zeroconf.async_register_service(self.service_info)
 
-    def stop_mdns(self):
+    async def stop_mdns(self):
         if self.service_info:
-            self.zeroconf.unregister_service(self.service_info)
-        self.zeroconf.close()
+            await self.zeroconf.async_unregister_service(self.service_info)
+        await self.zeroconf.async_close()
 
     async def handle_info(self, request):
         data = {
@@ -68,7 +67,7 @@ class VirtualDevice:
 
 async def main(port: int):
     device = VirtualDevice(port)
-    device.start_mdns()
+    await device.start_mdns()
 
     app = web.Application()
     app.router.add_get('/info', device.handle_info)
@@ -90,13 +89,13 @@ async def main(port: int):
         pass
     finally:
         print("\nShutting down...")
-        device.stop_mdns()
+        await device.stop_mdns()
         await runner.cleanup()
 
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description="Run a virtual IoT device simulator.")
-        parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP port to bind (default: 8080)")
+        parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"HTTP port to bind (default: {DEFAULT_PORT})")
         args = parser.parse_args()
         asyncio.run(main(args.port))
     except KeyboardInterrupt:

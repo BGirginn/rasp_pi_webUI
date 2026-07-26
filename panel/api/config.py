@@ -9,11 +9,17 @@ from pathlib import Path
 from typing import List, Optional
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
     
     # API Settings
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
@@ -98,11 +104,5 @@ class Settings(BaseSettings):
             return Path(secret_file).read_text().strip()
         return self.jwt_secret
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-
-
 # Global settings instance
 settings = Settings()

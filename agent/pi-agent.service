@@ -7,10 +7,10 @@ After=network.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/opt/pi-control/agent
+WorkingDirectory=/opt/pi-control/current/agent
 
 # Main process
-ExecStart=/opt/pi-control/venv/bin/python3 /opt/pi-control/agent/pi-agent.py
+ExecStart=/opt/pi-control/current/venv/bin/python3 /opt/pi-control/current/agent/pi-agent.py --config /opt/pi-control/current/agent/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Restart policy
@@ -18,9 +18,11 @@ Restart=on-failure
 RestartSec=10s
 StartLimitInterval=5min
 StartLimitBurst=5
+TimeoutStopSec=15s
+KillMode=mixed
 
-# Watchdog
-WatchdogSec=60
+# The agent does not emit sd_notify watchdog heartbeats.
+# WatchdogSec=60
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
@@ -36,8 +38,8 @@ RuntimeDirectory=pi-agent
 RuntimeDirectoryMode=0755
 
 # Capabilities
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE
-AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
 
 # Logging
 StandardOutput=journal

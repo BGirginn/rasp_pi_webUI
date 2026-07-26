@@ -57,12 +57,12 @@ check_pass() {
 
 check_fail() {
     echo -e "  ${RED}✗${NC} $1"
-    ((ERRORS++))
+    ((ERRORS += 1))
 }
 
 check_warn() {
     echo -e "  ${YELLOW}⚠${NC} $1"
-    ((WARNINGS++))
+    ((WARNINGS += 1))
 }
 
 check_info() {

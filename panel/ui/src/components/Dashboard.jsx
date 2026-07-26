@@ -22,6 +22,8 @@ const IoTDeviceDetail = lazy(() => import('../pages/IoTDeviceDetail').then(mod =
 const ArchivePage = lazy(() => import('../pages/ArchivePage').then(mod => ({ default: mod.ArchivePage })));
 const ProjectsPage = lazy(() => import('../pages/ProjectsPage').then(mod => ({ default: mod.ProjectsPage })));
 const FilesPage = lazy(() => import('../pages/FilesPage'));
+const JobsPage = lazy(() => import('../pages/Jobs'));
+const AppStorePage = lazy(() => import('../pages/AppStorePage').then(mod => ({ default: mod.AppStorePage })));
 
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
@@ -88,6 +90,10 @@ export function Dashboard() {
         );
       case 'projects':
         return <ProjectsPage />;
+      case 'jobs':
+        return <JobsPage />;
+      case 'appstore':
+        return <AppStorePage />;
       case 'settings':
         return <SettingsPage />;
       case 'archive':

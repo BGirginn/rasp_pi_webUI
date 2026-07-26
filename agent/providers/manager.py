@@ -243,6 +243,12 @@ class ProviderManager:
             return None
         
         return await provider.get_stats(resource_id)
+
+    async def get_service_dependencies(self, resource_id: str) -> Dict:
+        provider = self._providers.get("systemd")
+        if not provider:
+            raise RuntimeError("Systemd provider not available")
+        return await provider.get_dependency_graph(resource_id)
     
     async def toggle_interface(self, interface: str, enable: bool, rollback_seconds: int = 0) -> Dict:
         """Toggle a network interface."""
@@ -273,21 +279,58 @@ class ProviderManager:
             return []
 
         # Fast path: use last discovery snapshot if available.
-        cached = [r.to_dict() for r in self._resources.values() if r.provider == "network"]
+        cached = [r for r in self._resources.values() if r.provider == "network"]
         if cached:
-            return cached
+            return [self._network_interface_dict(resource) for resource in cached]
 
         resources = await provider.discover()
-        return [r.to_dict() for r in resources]
+        for resource in resources:
+            self._resources[resource.id] = resource
+        return [self._network_interface_dict(resource) for resource in resources]
+
+    @staticmethod
+    def _network_interface_dict(resource: Resource) -> Dict:
+        metadata = resource.metadata or {}
+        return {
+            "name": resource.name,
+            "type": metadata.get("interface_type", "ethernet"),
+            "status": metadata.get("status", resource.state.value),
+            "mac": metadata.get("mac"),
+            "ip": metadata.get("ip"),
+            "subnet_mask": metadata.get("subnet_mask"),
+            "gateway": metadata.get("gateway"),
+            "rx_bytes": metadata.get("rx_bytes", 0),
+            "tx_bytes": metadata.get("tx_bytes", 0),
+            "speed_mbps": metadata.get("speed_mbps"),
+        }
+
+    async def confirm_network_checkpoint(self, checkpoint_id: str) -> Dict:
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        result = await provider.execute_action(
+            "wlan0", "checkpoint_confirm", {"checkpoint_id": checkpoint_id}
+        )
+        return result.to_dict()
+
+    async def rollback_network_checkpoint(self, checkpoint_id: str) -> Dict:
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        result = await provider.execute_action(
+            "wlan0", "checkpoint_rollback", {"checkpoint_id": checkpoint_id}
+        )
+        return result.to_dict()
     
-    async def toggle_wifi(self, enable: bool) -> Dict:
+    async def toggle_wifi(self, enable: bool, rollback_seconds: int = 0) -> Dict:
         """Toggle WiFi interface."""
         provider = self._providers.get("network")
         if not provider:
             return ActionResult(success=False, message="Network provider not available").to_dict()
         
         action = "enable" if enable else "disable"
-        result = await provider.execute_action("wlan0", action)
+        params = {"rollback_seconds": rollback_seconds} if rollback_seconds > 0 else {}
+        result = await provider.execute_action("wlan0", action, params)
         return result.to_dict()
     
     async def wifi_status(self) -> Dict:

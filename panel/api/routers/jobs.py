@@ -7,16 +7,17 @@ Handles job scheduling, execution, and history.
 import json
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from db import get_control_db
 from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
+from services.job_scheduler import SAFE_SCHEDULED_TYPES, next_cron_run, parse_cron
 from .auth import get_current_user, require_role, get_current_user_sse
 
 router = APIRouter()
@@ -38,10 +39,11 @@ async def _sync_job_status(db, job_id: str) -> None:
     completed_at = status.get("completed_at")
     started_at = status.get("started_at")
 
-    progress = 100 if state in ("completed", "failed", "rolled_back", "cancelled") else 0
+    progress = int(status.get("progress", 0))
 
     await db.execute(
         """UPDATE jobs SET state = ?, progress = ?, result_json = ?, error = ?,
+                  phase = ?, cancellable = ?, checkpoint_json = ?, updated_at = datetime('now'),
                   started_at = COALESCE(?, started_at),
                   completed_at = COALESCE(?, completed_at)
            WHERE id = ?""",
@@ -50,11 +52,43 @@ async def _sync_job_status(db, job_id: str) -> None:
             progress,
             json.dumps(result) if result else None,
             error,
+            status.get("phase"),
+            int(status.get("cancellable", False)),
+            json.dumps(status.get("checkpoint")) if status.get("checkpoint") is not None else None,
             started_at,
             completed_at,
             job_id,
         )
     )
+    await db.commit()
+
+
+async def _sync_agent_jobs(db) -> None:
+    """Mirror durable agent job state without inventing fallback status."""
+    try:
+        statuses = await agent_client.list_jobs(limit=200)
+    except Exception:
+        return
+    for status in statuses or []:
+        await db.execute(
+            """UPDATE jobs SET state = ?, progress = ?, result_json = ?, error = ?,
+                      phase = ?, cancellable = ?, checkpoint_json = ?,
+                      started_at = COALESCE(?, started_at),
+                      completed_at = COALESCE(?, completed_at), updated_at = datetime('now')
+               WHERE id = ?""",
+            (
+                status.get("state", "pending"),
+                int(status.get("progress", 0)),
+                json.dumps(status.get("result")) if status.get("result") is not None else None,
+                status.get("error"),
+                status.get("phase"),
+                int(status.get("cancellable", False)),
+                json.dumps(status.get("checkpoint")) if status.get("checkpoint") is not None else None,
+                status.get("started_at"),
+                status.get("completed_at"),
+                status.get("id"),
+            ),
+        )
     await db.commit()
 
 
@@ -92,7 +126,7 @@ async def _sync_job_logs(db, job_id: str) -> None:
 
 
 class JobCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
     type: str  # backup, restore, update, cleanup
     config: Optional[Dict] = None
 
@@ -103,6 +137,9 @@ class JobResponse(BaseModel):
     type: str
     state: str
     progress: int
+    phase: Optional[str] = None
+    cancellable: bool = False
+    checkpoint: Optional[Dict] = None
     config: Optional[Dict]
     result: Optional[Dict]
     error: Optional[str]
@@ -118,16 +155,22 @@ class JobLogEntry(BaseModel):
     created_at: str
 
 
+class ScheduleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    job_type: str
+    config: Dict = Field(default_factory=dict)
+    cron_expression: str = Field(min_length=5, max_length=100)
+    timezone: str = "Europe/Istanbul"
+    enabled: bool = True
+
+
 # Job type configurations
 JOB_TYPES = {
     "backup": {
         "name": "System Backup",
         "description": "Backup configuration and data files",
         "config_schema": {
-            "include_service_data": {"type": "boolean", "default": True},
-            "include_databases": {"type": "boolean", "default": True},
-            "destination": {"type": "string", "default": "/backups"},
-            "compression": {"type": "string", "default": "gzip", "enum": ["none", "gzip", "zstd"]},
+            "components": {"type": "array", "default": ["control_db", "telemetry_db", "app_config", "release"]},
         }
     },
     "restore": {
@@ -135,16 +178,20 @@ JOB_TYPES = {
         "description": "Restore from a backup archive",
         "config_schema": {
             "backup_path": {"type": "string", "required": True},
-            "verify_checksum": {"type": "boolean", "default": True},
+            "components": {"type": "array", "default": []},
+            "dry_run": {"type": "boolean", "default": True},
+            "confirmed": {"type": "boolean", "default": False},
         }
     },
     "update": {
         "name": "System Update",
         "description": "Update containers and system packages",
         "config_schema": {
-            "backup_only": {"type": "boolean", "default": False},
-            "no_backup": {"type": "boolean", "default": False},
-            "force": {"type": "boolean", "default": False},
+            "scope": {"type": "string", "default": "application", "enum": ["application", "security"]},
+            "branch": {"type": "string", "default": "main"},
+            "approved_commit": {"type": "string", "default": ""},
+            "dry_run": {"type": "boolean", "default": True},
+            "confirmed": {"type": "boolean", "default": False},
         }
     },
     "cleanup": {
@@ -152,9 +199,9 @@ JOB_TYPES = {
         "description": "Clean up old logs, images, and temporary files",
         "config_schema": {
             "prune_unused_images": {"type": "boolean", "default": True},
-            "prune_unused_volumes": {"type": "boolean", "default": False},
-            "clean_old_logs": {"type": "boolean", "default": True},
-            "log_retention_days": {"type": "integer", "default": 30},
+            "retention_days": {"type": "integer", "default": 30},
+            "dry_run": {"type": "boolean", "default": True},
+            "confirmed": {"type": "boolean", "default": False},
         }
     },
     "healthcheck": {
@@ -185,9 +232,10 @@ async def list_jobs(
 ):
     """List jobs with optional filters."""
     db = await get_control_db()
+    await _sync_agent_jobs(db)
     
-    query = """SELECT id, name, type, state, progress, config_json, result_json, 
-                      error, started_by, started_at, completed_at, created_at
+    query = """SELECT id, name, type, state, progress, phase, cancellable, checkpoint_json,
+                      config_json, result_json, error, started_by, started_at, completed_at, created_at
                FROM jobs WHERE 1=1"""
     params = []
     
@@ -212,16 +260,113 @@ async def list_jobs(
             type=row[2],
             state=row[3],
             progress=row[4] or 0,
-            config=json.loads(row[5]) if row[5] else None,
-            result=json.loads(row[6]) if row[6] else None,
-            error=row[7],
-            started_by=row[8],
-            started_at=row[9],
-            completed_at=row[10],
-            created_at=row[11]
+            phase=row[5],
+            cancellable=bool(row[6]),
+            checkpoint=json.loads(row[7]) if row[7] else None,
+            config=json.loads(row[8]) if row[8] else None,
+            result=json.loads(row[9]) if row[9] else None,
+            error=row[10],
+            started_by=row[11],
+            started_at=row[12],
+            completed_at=row[13],
+            created_at=row[14]
         )
         for row in rows
     ]
+
+
+@router.get("/schedules")
+async def list_schedules(user: dict = Depends(get_current_user)):
+    db = await get_control_db()
+    cursor = await db.execute(
+        """SELECT id, name, job_type, config_json, cron_expression, timezone, enabled,
+                  next_run_at, last_run_at, created_by, created_at, updated_at
+           FROM job_schedules ORDER BY name"""
+    )
+    return [
+        {
+            "id": row[0], "name": row[1], "job_type": row[2],
+            "config": json.loads(row[3] or "{}"), "cron_expression": row[4],
+            "timezone": row[5], "enabled": bool(row[6]), "next_run_at": row[7],
+            "last_run_at": row[8], "created_by": row[9], "created_at": row[10],
+            "updated_at": row[11],
+        }
+        for row in await cursor.fetchall()
+    ]
+
+
+@router.post("/schedules", status_code=201)
+async def create_schedule(schedule: ScheduleCreate, user: dict = Depends(require_role("admin"))):
+    if schedule.job_type not in SAFE_SCHEDULED_TYPES:
+        raise HTTPException(status_code=400, detail="Only backup, cleanup, and healthcheck can be scheduled")
+    try:
+        parse_cron(schedule.cron_expression)
+        next_run = next_cron_run(schedule.cron_expression, schedule.timezone).isoformat()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid schedule: {exc}")
+    config = dict(schedule.config)
+    if schedule.job_type == "cleanup":
+        config.update({"dry_run": True, "confirmed": False})
+    schedule_id = str(uuid.uuid4())[:8]
+    now = datetime.now(timezone.utc).isoformat()
+    db = await get_control_db()
+    await db.execute(
+        """INSERT INTO job_schedules
+               (id, name, job_type, config_json, cron_expression, timezone, enabled,
+                next_run_at, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (schedule_id, schedule.name, schedule.job_type, json.dumps(config),
+         schedule.cron_expression, schedule.timezone, int(schedule.enabled),
+         next_run if schedule.enabled else None, user["id"], now, now),
+    )
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, details) VALUES (?, 'job_schedule.create', ?)",
+        (user["id"], json.dumps({"schedule_id": schedule_id, "job_type": schedule.job_type})),
+    )
+    await db.commit()
+    return {"id": schedule_id, "next_run_at": next_run if schedule.enabled else None}
+
+
+@router.put("/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: str,
+    schedule: ScheduleCreate,
+    user: dict = Depends(require_role("admin")),
+):
+    if schedule.job_type not in SAFE_SCHEDULED_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported scheduled job type")
+    try:
+        next_run = next_cron_run(schedule.cron_expression, schedule.timezone).isoformat()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid schedule: {exc}")
+    config = dict(schedule.config)
+    if schedule.job_type == "cleanup":
+        config.update({"dry_run": True, "confirmed": False})
+    db = await get_control_db()
+    cursor = await db.execute(
+        """UPDATE job_schedules SET name=?, job_type=?, config_json=?, cron_expression=?,
+                  timezone=?, enabled=?, next_run_at=?, updated_at=datetime('now') WHERE id=?""",
+        (schedule.name, schedule.job_type, json.dumps(config), schedule.cron_expression,
+         schedule.timezone, int(schedule.enabled), next_run if schedule.enabled else None, schedule_id),
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    await db.commit()
+    return {"id": schedule_id, "next_run_at": next_run if schedule.enabled else None}
+
+
+@router.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str, user: dict = Depends(require_role("admin"))):
+    db = await get_control_db()
+    cursor = await db.execute("DELETE FROM job_schedules WHERE id=?", (schedule_id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, details) VALUES (?, 'job_schedule.delete', ?)",
+        (user["id"], schedule_id),
+    )
+    await db.commit()
+    return {"deleted": True}
 
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -233,8 +378,8 @@ async def get_job(job_id: str, user: dict = Depends(get_current_user)):
     await _sync_job_logs(db, job_id)
     
     cursor = await db.execute(
-        """SELECT id, name, type, state, progress, config_json, result_json,
-                  error, started_by, started_at, completed_at, created_at
+        """SELECT id, name, type, state, progress, phase, cancellable, checkpoint_json,
+                  config_json, result_json, error, started_by, started_at, completed_at, created_at
            FROM jobs WHERE id = ?""",
         (job_id,)
     )
@@ -249,13 +394,16 @@ async def get_job(job_id: str, user: dict = Depends(get_current_user)):
         type=row[2],
         state=row[3],
         progress=row[4] or 0,
-        config=json.loads(row[5]) if row[5] else None,
-        result=json.loads(row[6]) if row[6] else None,
-        error=row[7],
-        started_by=row[8],
-        started_at=row[9],
-        completed_at=row[10],
-        created_at=row[11]
+        phase=row[5],
+        cancellable=bool(row[6]),
+        checkpoint=json.loads(row[7]) if row[7] else None,
+        config=json.loads(row[8]) if row[8] else None,
+        result=json.loads(row[9]) if row[9] else None,
+        error=row[10],
+        started_by=row[11],
+        started_at=row[12],
+        completed_at=row[13],
+        created_at=row[14]
     )
 
 
@@ -267,6 +415,10 @@ async def create_job(
     """Create and queue a new job."""
     if job.type not in JOB_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown job type: {job.type}")
+    if job.type in {"restore", "update"} and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail=f"Only admins can run {job.type} jobs")
+    if job.type == "cleanup" and not (job.config or {}).get("dry_run", True) and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can apply cleanup jobs")
     
     db = await get_control_db()
     
@@ -290,19 +442,25 @@ async def create_job(
     await db.commit()
     
     # Try to start job on agent
+    agent_error = None
     try:
-        config = job.config or {}
+        config = dict(job.config or {})
         config["job_id"] = job_id
-        await agent_client.run_job(job.type, job.name, config)
+        agent_job = await agent_client.run_job(job.type, job.name, config)
         
         # Update state to running
         await db.execute(
-            "UPDATE jobs SET state = 'running', started_at = datetime('now') WHERE id = ?",
-            (job_id,)
+            """UPDATE jobs SET state = ?, progress = ?, phase = ?, cancellable = ?,
+                      started_at = COALESCE(?, datetime('now')), updated_at = datetime('now') WHERE id = ?""",
+            (agent_job.get("state", "pending"), int(agent_job.get("progress", 0)),
+             agent_job.get("phase", "queued"), int(agent_job.get("cancellable", True)),
+             agent_job.get("started_at"), job_id)
         )
         await db.commit()
-    except Exception:
-        pass  # Job will remain pending
+    except Exception as exc:
+        agent_error = f"Agent unavailable; job remains pending: {exc}"
+        await db.execute("UPDATE jobs SET error = ? WHERE id = ?", (agent_error, job_id))
+        await db.commit()
     
     # Broadcast job creation
     await sse_manager.broadcast(Channels.JOBS, "job_created", {
@@ -315,11 +473,14 @@ async def create_job(
         id=job_id,
         name=job.name,
         type=job.type,
-        state="pending",
-        progress=0,
+        state=agent_job.get("state", "pending") if 'agent_job' in locals() else "pending",
+        progress=int(agent_job.get("progress", 0)) if 'agent_job' in locals() else 0,
+        phase=agent_job.get("phase", "queued") if 'agent_job' in locals() else "queued",
+        cancellable=bool(agent_job.get("cancellable", True)) if 'agent_job' in locals() else True,
+        checkpoint=None,
         config=job.config,
         result=None,
-        error=None,
+        error=agent_error,
         started_by=user["id"],
         started_at=None,
         completed_at=None,
@@ -349,15 +510,20 @@ async def run_job(
     
     # Start job on agent
     config = json.loads(row[3]) if row[3] else {}
+    config["job_id"] = job_id
     try:
-        await agent_client.run_job(row[1], row[2], config)
+        agent_job = await agent_client.run_job(row[1], row[2], config)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start job: {str(e)}")
     
     # Update state
     await db.execute(
-        "UPDATE jobs SET state = 'running', started_at = datetime('now') WHERE id = ?",
-        (job_id,)
+        """UPDATE jobs SET state = ?, progress = ?, phase = ?, cancellable = ?,
+                  error = NULL, started_at = COALESCE(?, datetime('now')), updated_at = datetime('now')
+           WHERE id = ?""",
+        (agent_job.get("state", "pending"), int(agent_job.get("progress", 0)),
+         agent_job.get("phase", "queued"), int(agent_job.get("cancellable", True)),
+         agent_job.get("started_at"), job_id)
     )
     
     # Audit log
@@ -397,9 +563,13 @@ async def cancel_job(
     
     # Cancel on agent
     try:
-        await agent_client.cancel_job(job_id)
-    except Exception:
-        pass  # Agent may not be available
+        cancelled = await agent_client.cancel_job(job_id)
+        if not cancelled.get("success"):
+            raise HTTPException(status_code=409, detail=cancelled.get("error", "Job cannot be cancelled"))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Agent unavailable: {exc}")
     
     # Update state
     await db.execute(
@@ -458,8 +628,8 @@ async def stream_job(
             await _sync_job_logs(db, job_id)
 
             job_cursor = await db.execute(
-                """SELECT id, name, type, state, progress, config_json, result_json,
-                          error, started_by, started_at, completed_at, created_at
+                """SELECT id, name, type, state, progress, phase, cancellable, checkpoint_json,
+                          config_json, result_json, error, started_by, started_at, completed_at, created_at
                    FROM jobs WHERE id = ?""",
                 (job_id,)
             )
@@ -484,13 +654,16 @@ async def stream_job(
                 "type": job_row[2],
                 "state": job_row[3],
                 "progress": job_row[4] or 0,
-                "config": json.loads(job_row[5]) if job_row[5] else None,
-                "result": json.loads(job_row[6]) if job_row[6] else None,
-                "error": job_row[7],
-                "started_by": job_row[8],
-                "started_at": job_row[9],
-                "completed_at": job_row[10],
-                "created_at": job_row[11],
+                "phase": job_row[5],
+                "cancellable": bool(job_row[6]),
+                "checkpoint": json.loads(job_row[7]) if job_row[7] else None,
+                "config": json.loads(job_row[8]) if job_row[8] else None,
+                "result": json.loads(job_row[9]) if job_row[9] else None,
+                "error": job_row[10],
+                "started_by": job_row[11],
+                "started_at": job_row[12],
+                "completed_at": job_row[13],
+                "created_at": job_row[14],
             }
 
             payload = json.dumps({"job": job, "logs": logs})

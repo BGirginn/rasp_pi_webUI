@@ -10,6 +10,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from services.discovery import discovery_service
 from services.agent_client import agent_client
+from db import get_control_db
 from .auth import get_current_user, require_role
 import time
 import random
@@ -25,9 +26,9 @@ router = APIRouter()
 _LAST_LED_COLOR: dict = {}
 # Request models
 class VirtualDeviceRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=64)
     ip: str = "192.168.1.100"
-    port: int = 8080
+    port: int = Field(8080, ge=1, le=65535)
 
 class ManualDeviceRequest(BaseModel):
     ip: str
@@ -54,6 +55,89 @@ class LedColorRequest(BaseModel):
 class LedPowerRequest(BaseModel):
     on: bool
     persist: bool = True
+
+
+class MQTTProvisionRequest(BaseModel):
+    device_id: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+    name: str = Field(default="", max_length=80)
+
+
+async def _mqtt_audit(user: dict, action: str, device_id: str = "") -> None:
+    db = await get_control_db()
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, resource_id, resource_type) VALUES (?, ?, ?, 'mqtt_device')",
+        (user["id"], action, device_id or None),
+    )
+    await db.commit()
+
+
+@router.get("/mqtt/status")
+async def mqtt_status(user: dict = Depends(get_current_user)):
+    try:
+        return await agent_client.mqtt_status()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"MQTT provisioning unavailable: {exc}")
+
+
+@router.post("/mqtt/setup")
+async def setup_mqtt(user: dict = Depends(require_role("admin"))):
+    try:
+        result = await agent_client.mqtt_ensure()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"MQTT setup failed: {exc}")
+    await _mqtt_audit(user, "mqtt.setup")
+    return result
+
+
+@router.post("/mqtt/devices", status_code=201)
+async def provision_mqtt_device(
+    request: MQTTProvisionRequest,
+    user: dict = Depends(require_role("admin")),
+):
+    try:
+        result = await agent_client.mqtt_provision(request.device_id, request.name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"MQTT provisioning failed: {exc}")
+    db = await get_control_db()
+    await db.execute(
+        """INSERT INTO mqtt_devices (id, name, username, status, created_by)
+           VALUES (?, ?, ?, 'provisioned', ?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username,
+               status='provisioned', credential_rotated_at=datetime('now')""",
+        (request.device_id, request.name or request.device_id, result["username"], user["id"]),
+    )
+    await db.commit()
+    await _mqtt_audit(user, "mqtt.device.provision", request.device_id)
+    return result
+
+
+@router.post("/mqtt/devices/{device_id}/rotate")
+async def rotate_mqtt_device(device_id: str, user: dict = Depends(require_role("admin"))):
+    try:
+        result = await agent_client.mqtt_rotate(device_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"MQTT rotation failed: {exc}")
+    db = await get_control_db()
+    await db.execute(
+        "UPDATE mqtt_devices SET status='provisioned', credential_rotated_at=datetime('now') WHERE id=?",
+        (device_id,),
+    )
+    await db.commit()
+    await _mqtt_audit(user, "mqtt.device.rotate", device_id)
+    return result
+
+
+@router.delete("/mqtt/devices/{device_id}")
+async def revoke_mqtt_device(device_id: str, user: dict = Depends(require_role("admin"))):
+    try:
+        result = await agent_client.mqtt_revoke(device_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"MQTT revoke failed: {exc}")
+    db = await get_control_db()
+    await db.execute("UPDATE mqtt_devices SET status='revoked' WHERE id=?", (device_id,))
+    await db.commit()
+    await _mqtt_audit(user, "mqtt.device.revoke", device_id)
+    return result
 
 
 LED_HTTP_COMMAND_ENDPOINTS = [
@@ -527,9 +611,14 @@ async def iot_stream(user: dict = Depends(get_current_user)):
 # ==================== Simulation / Testing ====================
 
 @router.post("/devices/virtual")
-async def add_virtual_device(request: VirtualDeviceRequest, user: dict = Depends(get_current_user)):
+async def add_virtual_device(
+    request: VirtualDeviceRequest,
+    user: dict = Depends(require_role("admin", "operator")),
+):
     """Add a virtual device for testing purposes."""
-    device_id = request.name.lower().replace(' ', '-')
+    device_id = _sanitize_device_id(request.name.lower())
+    if not device_id:
+        raise HTTPException(status_code=400, detail="Invalid device name")
     
     # Generate random sensor data
     sensors = [
@@ -551,16 +640,17 @@ async def add_virtual_device(request: VirtualDeviceRequest, user: dict = Depends
     return {"message": f"Virtual device '{request.name}' added", "device_id": device_id}
 
 @router.delete("/devices/virtual/{device_id}")
-async def remove_virtual_device(device_id: str, user: dict = Depends(get_current_user)):
+async def remove_virtual_device(
+    device_id: str,
+    user: dict = Depends(require_role("admin", "operator")),
+):
     """Remove a virtual device."""
-    if device_id in discovery_service.devices:
-        del discovery_service.devices[device_id]
-        discovery_service._broadcast_update()
+    if await discovery_service.remove_device(device_id):
         return {"message": f"Device '{device_id}' removed"}
     raise HTTPException(status_code=404, detail="Device not found")
 
 @router.post("/devices/simulate")
-async def simulate_devices(user: dict = Depends(get_current_user)):
+async def simulate_devices(user: dict = Depends(require_role("admin", "operator"))):
     """Add multiple simulated devices for testing with diverse sensor types."""
     
     # 4 rooms with unique sensor combinations - total 10 different sensor types
@@ -638,15 +728,16 @@ async def simulate_devices(user: dict = Depends(get_current_user)):
     }
 
 @router.post("/devices/clear")
-async def clear_devices(user: dict = Depends(get_current_user)):
-    """Clear all virtual/simulated devices from memory (not from database)."""
-    count = len(discovery_service.devices)
-    discovery_service.devices.clear()
-    discovery_service._broadcast_update()
+async def clear_devices(user: dict = Depends(require_role("admin"))):
+    """Clear all devices and their sensor history."""
+    count = await discovery_service.clear_devices()
     return {"message": f"Cleared {count} devices from active list"}
 
 @router.post("/devices/{device_id}/refresh-sensors")
-async def refresh_device_sensors(device_id: str, user: dict = Depends(get_current_user)):
+async def refresh_device_sensors(
+    device_id: str,
+    user: dict = Depends(require_role("admin", "operator")),
+):
     """Refresh sensor data for a specific device with random values (for testing)."""
     if device_id not in discovery_service.devices:
         raise HTTPException(status_code=404, detail="Device not found")

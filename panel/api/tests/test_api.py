@@ -223,6 +223,34 @@ class TestRateLimiting:
         # Rate limiting headers should be present after enough requests
         # This is a basic test - actual rate limiting needs more requests
 
+    def test_client_ip_uses_last_proxy_hop_and_rejects_direct_spoof(self):
+        from starlette.requests import Request
+        from main import _client_ip
+
+        proxied = Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(b"x-forwarded-for", b"203.0.113.10, 192.0.2.25")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 8080),
+            "scheme": "http",
+            "query_string": b"",
+        })
+        direct = Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(b"x-forwarded-for", b"203.0.113.99")],
+            "client": ("198.51.100.7", 12345),
+            "server": ("127.0.0.1", 8080),
+            "scheme": "http",
+            "query_string": b"",
+        })
+
+        assert _client_ip(proxied) == "192.0.2.25"
+        assert _client_ip(direct) == "198.51.100.7"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

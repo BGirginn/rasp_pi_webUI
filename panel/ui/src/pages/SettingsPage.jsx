@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { User, Shield, Users, Plus, Edit, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle } from 'lucide-react';
+import { User, Shield, Users, Plus, Edit, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle, Send, Laptop } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
@@ -34,6 +34,9 @@ export function SettingsPage() {
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'viewer' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddUserPassword, setShowAddUserPassword] = useState(false);
+  const [telegram, setTelegram] = useState({ token: '', chat_id: '' });
+  const [telegramConfigured, setTelegramConfigured] = useState(false);
+  const [sessions, setSessions] = useState([]);
 
   // Alerts state
   const [alertFilter, setAlertFilter] = useState('all');
@@ -77,6 +80,35 @@ export function SettingsPage() {
     }
   };
 
+  const loadSecurity = async () => {
+    try {
+      const [sessionResponse, telegramResponse] = await Promise.all([
+        api.get('/auth/sessions', { cache: false }),
+        isAdmin ? api.get('/notifications/settings/telegram', { cache: false }) : Promise.resolve({ data: { configured: false } }),
+      ]);
+      setSessions(sessionResponse.data);
+      setTelegramConfigured(Boolean(telegramResponse.data.configured));
+    } catch (err) { console.error('Failed to load security settings', err); }
+  };
+
+  const saveTelegram = async () => {
+    try {
+      await api.put('/notifications/settings/telegram', telegram);
+      setTelegram({ token: '', chat_id: '' });
+      setTelegramConfigured(true);
+    } catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const testTelegram = async () => {
+    try { await api.post('/notifications/settings/telegram/test'); alert('Telegram notification delivered.'); }
+    catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const revokeSession = async (sessionId) => {
+    try { await api.delete(`/auth/sessions/${sessionId}`); await loadSecurity(); }
+    catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
   const tabs = [
     { id: 'profile', label: 'Profile', icon: User },
     ...(isAdmin ? [
@@ -101,7 +133,7 @@ export function SettingsPage() {
               key={tab.id}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => { setActiveTab(tab.id); if (tab.id === 'users') loadUsers(); }}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'users') loadUsers(); if (tab.id === 'security') loadSecurity(); }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm border transition-all ${activeTab === tab.id
                 ? isDarkMode ? 'bg-purple-500/30 border-purple-500 text-purple-300' : 'bg-purple-100 border-purple-500 text-purple-700'
                 : isDarkMode ? 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
@@ -267,6 +299,26 @@ export function SettingsPage() {
               No active sessions
             </p>
           </motion.div>
+          <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-300'} rounded-lg border p-6 lg:col-span-2`}>
+            <div className="mb-4 flex items-center gap-2"><Laptop size={18} /><h3 className="font-semibold">Active sessions</h3></div>
+            <div className="space-y-2">
+              {sessions.map((session) => <div key={session.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm">{session.device_info || 'Unknown device'}</p><p className="text-xs text-gray-500">{session.ip_address || 'Unknown IP'} · expires {new Date(session.expires_at).toLocaleString()}</p></div>
+                <span className={`text-xs ${session.revoked_at ? 'text-red-400' : 'text-green-500'}`}>{session.revoked_at ? 'Revoked' : 'Active'}</span>
+                {!session.revoked_at && <button title="Revoke session" onClick={() => revokeSession(session.id)} className="h-8 rounded-lg border border-red-500/30 px-3 text-xs text-red-400">Revoke</button>}
+              </div>)}
+            </div>
+          </div>
+
+          {isAdmin && <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-300'} rounded-lg border p-6 lg:col-span-2`}>
+            <div className="mb-4 flex items-center gap-2"><Send size={18} /><div><h3 className="font-semibold">Telegram notifications</h3><p className="text-xs text-gray-500">{telegramConfigured ? 'Configured' : 'Not configured'}</p></div></div>
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto_auto]">
+              <input type="password" placeholder="Bot token" value={telegram.token} onChange={(e) => setTelegram({ ...telegram, token: e.target.value })} className={`h-10 rounded-lg border px-3 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-300'}`} />
+              <input placeholder="Chat ID" value={telegram.chat_id} onChange={(e) => setTelegram({ ...telegram, chat_id: e.target.value })} className={`h-10 rounded-lg border px-3 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-300'}`} />
+              <button disabled={!telegram.token || !telegram.chat_id} onClick={saveTelegram} className="h-10 rounded-lg bg-blue-600 px-4 text-white disabled:opacity-50">Save</button>
+              <button disabled={!telegramConfigured} onClick={testTelegram} className="h-10 rounded-lg border px-4 disabled:opacity-50">Test</button>
+            </div>
+          </div>}
         </div>
       )}
 

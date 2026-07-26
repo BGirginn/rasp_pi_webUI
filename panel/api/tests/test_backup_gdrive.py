@@ -130,3 +130,75 @@ def test_gdrive_mutations_require_admin(app_with_viewer):
         assert client.post("/api/backup/encrypted").status_code == 403
         assert client.post("/api/backup/gdrive/auth/start").status_code == 403
         assert client.delete("/api/backup/gdrive/files/file-1").status_code == 403
+        assert client.post("/api/backup/validate", json={"filename": "backup.enc"}).status_code == 403
+        assert client.get("/api/backup/recovery-key").status_code == 403
+
+
+def test_restore_preview_validates_selected_components(monkeypatch, app_with_admin, tmp_path):
+    from routers import backup
+
+    backup.backup_service.backup_dir = tmp_path
+    archive = tmp_path / "backup.enc"
+    archive.write_bytes(b"encrypted")
+    monkeypatch.setattr(
+        backup.agent_client,
+        "inspect_backup",
+        AsyncMock(return_value={
+            "valid": True,
+            "errors": [],
+            "checksum": "a" * 64,
+            "size_bytes": 9,
+            "manifest": {"format_version": 2},
+            "components": ["control_db", "telemetry_db"],
+        }),
+    )
+
+    with TestClient(app_with_admin) as client:
+        response = client.post(
+            "/api/backup/restore-preview",
+            json={"filename": archive.name, "components": ["control_db"]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["selected_components"] == ["control_db"]
+    assert response.json()["requires_maintenance"] is True
+
+
+def test_restore_requires_filename_confirmation(monkeypatch, app_with_admin, tmp_path):
+    from routers import backup
+
+    backup.backup_service.backup_dir = tmp_path
+    (tmp_path / "backup.enc").write_bytes(b"encrypted")
+    with TestClient(app_with_admin) as client:
+        response = client.post(
+            "/api/backup/restore",
+            json={"filename": "backup.enc", "confirmation": "wrong"},
+        )
+    assert response.status_code == 400
+
+
+def test_recovery_key_export_is_no_store(monkeypatch, app_with_admin):
+    from routers import backup
+
+    monkeypatch.setattr(backup.agent_client, "export_backup_key", AsyncMock(return_value="a" * 44))
+    with TestClient(app_with_admin) as client:
+        response = client.get("/api/backup/recovery-key")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "attachment" in response.headers["content-disposition"]
+
+
+def test_local_backup_path_rejects_traversal_and_prefix_sibling(tmp_path):
+    from fastapi import HTTPException
+    from routers.backup import _resolve_local_backup, backup_service
+
+    backup_service.backup_dir = tmp_path / "backups"
+    backup_service.backup_dir.mkdir()
+    sibling = tmp_path / "backups-export"
+    sibling.mkdir()
+    (sibling / "secret.enc").write_bytes(b"secret")
+
+    with pytest.raises(HTTPException) as traversal:
+        _resolve_local_backup("../backups-export/secret.enc")
+
+    assert traversal.value.status_code == 403

@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Settings2, Power, RotateCcw, Ban, Search, Trash2, MonitorSmartphone, ChevronDown } from "lucide-react";
+import { RefreshCw, Wifi, Cable, Network, Download, Upload, Activity, Shield, CheckCircle2, XCircle, Globe, Lock, Unlock, SignalHigh, SignalMedium, SignalLow, SignalZero, Settings2, Power, RotateCcw, Ban, Search, Trash2, MonitorSmartphone, ChevronDown, Bluetooth } from "lucide-react";
 import { useTheme, getThemeColors, } from "../contexts/ThemeContext";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../services/api";
@@ -80,6 +80,10 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
   const [connectivity, setConnectivity] = useState({});
   const [wifiNetworks, setWifiNetworks] = useState([]);
   const [wifiStatus, setWifiStatus] = useState(null);
+  const [networkCheckpoint, setNetworkCheckpoint] = useState(null);
+  const [bluetoothStatus, setBluetoothStatus] = useState(null);
+  const [bluetoothDevices, setBluetoothDevices] = useState([]);
+  const [bluetoothBusy, setBluetoothBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [connectModal, setConnectModal] = useState(null);
@@ -161,6 +165,21 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
     }
   }, []);
 
+  const loadBluetooth = useCallback(async (scan = false) => {
+    setBluetoothBusy(true);
+    try {
+      const status = await api.get('/network/bluetooth/status', { cache: false });
+      setBluetoothStatus(status.data);
+      setBluetoothDevices(status.data.paired_devices || []);
+      if (scan && status.data.enabled) {
+        const discovered = await api.get('/network/bluetooth/scan?seconds=8', { cache: false });
+        setBluetoothDevices(discovered.data.devices || []);
+      }
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    } finally { setBluetoothBusy(false); }
+  }, []);
+
   const loadDnsFilterData = useCallback(async () => {
     setDnsBusy(true);
     setDnsMessage('');
@@ -213,15 +232,17 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
     loadNetworkData();
     if (activeTab === 'wifi') scanWifi();
     if (activeTab === 'dns') loadDnsFilterData();
+    if (activeTab === 'bluetooth') loadBluetooth();
 
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       loadNetworkData();
       if (activeTab === 'wifi') scanWifi();
       if (activeTab === 'dns') loadDnsFilterData();
+      if (activeTab === 'bluetooth') loadBluetooth();
     }, 10000);
     return () => clearInterval(interval);
-  }, [activeTab, loadNetworkData, scanWifi, loadDnsFilterData]);
+  }, [activeTab, loadNetworkData, scanWifi, loadDnsFilterData, loadBluetooth]);
 
   const handleInterfaceAction = async (ifaceName, action) => {
     const rollback = action === 'disable' ? 120 : 0;
@@ -231,14 +252,42 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
     }
 
     try {
-      await api.post(`/network/interfaces/${ifaceName}/action`, {
+      const response = await api.post(`/network/interfaces/${ifaceName}/action`, {
         action,
         rollback_seconds: rollback
       });
+      if (response.data.checkpoint_id) {
+        setNetworkCheckpoint({ id: response.data.checkpoint_id, interface: ifaceName, seconds: rollback });
+      }
       loadNetworkData();
     } catch (err) {
       alert('Action failed: ' + (err.response?.data?.detail || err.message));
     }
+  };
+
+  const checkpointAction = async (action) => {
+    if (!networkCheckpoint) return;
+    try {
+      await api.post(`/network/checkpoints/${action}`, { checkpoint_id: networkCheckpoint.id });
+      setNetworkCheckpoint(null);
+      loadNetworkData();
+    } catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const bluetoothPower = async () => {
+    setBluetoothBusy(true);
+    try {
+      await api.post(`/network/bluetooth/toggle?enable=${!bluetoothStatus?.enabled}`);
+      await loadBluetooth();
+    } catch (err) { alert(err.response?.data?.detail || err.message); setBluetoothBusy(false); }
+  };
+
+  const bluetoothAction = async (action, address) => {
+    setBluetoothBusy(true);
+    try {
+      await api.post(`/network/bluetooth/${action}`, { address });
+      await loadBluetooth();
+    } catch (err) { alert(err.response?.data?.detail || err.message); setBluetoothBusy(false); }
   };
 
   const handleWifiConnect = async (e) => {
@@ -433,6 +482,23 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
           <Ban size={18} />
           DNS FILTER
         </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setActiveTab("bluetooth")}
+          className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold transition-all ${activeTab === "bluetooth"
+            ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30"
+            : isDarkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10" : "bg-white border-gray-200 text-gray-600 shadow-sm hover:border-gray-300"} border`}
+        >
+          <Bluetooth size={18} />
+          BLUETOOTH
+        </motion.button>
+      </div>}
+
+      {networkCheckpoint && <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+        <span className="flex-1">{networkCheckpoint.interface} will automatically restore in {networkCheckpoint.seconds}s unless confirmed.</span>
+        <button onClick={() => checkpointAction('rollback')} className="rounded-lg border border-amber-500/40 px-3 py-2">Rollback now</button>
+        <button onClick={() => checkpointAction('confirm')} className="rounded-lg bg-amber-600 px-3 py-2 text-white">Keep disabled</button>
       </div>}
 
       {/* Content */}
@@ -630,6 +696,27 @@ export function NetworkPage({ initialTab = "interfaces", dnsOnly = false }) {
                   <p className="text-gray-500 font-medium italic">No networks discovered. Click Scan to search.</p>
                 </div>
               )}
+            </div>
+          </motion.div>
+        ) : activeTab === "bluetooth" ? (
+          <motion.div key="bluetooth" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+            <div className={`${isDarkMode ? "bg-black/40 border-white/10" : "bg-white border-gray-200"} flex flex-wrap items-center gap-4 rounded-lg border p-5`}>
+              <Bluetooth size={26} className={bluetoothStatus?.enabled ? 'text-blue-500' : 'text-gray-500'} />
+              <div className="flex-1"><h2 className="font-semibold">Bluetooth adapter</h2><p className="text-sm text-gray-500">{bluetoothStatus?.enabled ? 'Powered on' : 'Powered off'}{bluetoothStatus?.controller ? ` · ${bluetoothStatus.controller}` : ''}</p></div>
+              {isAdmin && <button disabled={bluetoothBusy} onClick={bluetoothPower} className={`h-10 rounded-lg px-4 text-white ${bluetoothStatus?.enabled ? 'bg-red-600' : 'bg-blue-600'}`}><Power className="inline mr-2" size={16} />{bluetoothStatus?.enabled ? 'Turn off' : 'Turn on'}</button>}
+              {isAdmin && bluetoothStatus?.enabled && <button disabled={bluetoothBusy} onClick={() => loadBluetooth(true)} className="h-10 rounded-lg border px-4"><Search className="inline mr-2" size={16} />Scan</button>}
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {bluetoothDevices.map((device) => <div key={device.address} className={`${isDarkMode ? "bg-black/40 border-white/10" : "bg-white border-gray-200"} rounded-lg border p-4`}>
+                <div className="mb-3"><h3 className="font-medium">{device.name}</h3><p className="font-mono text-xs text-gray-500">{device.address}</p></div>
+                {isAdmin && <div className="flex flex-wrap gap-2 text-xs">
+                  {!device.paired && <button onClick={() => bluetoothAction('pair', device.address)} className="rounded-lg bg-blue-600 px-3 py-2 text-white">Pair</button>}
+                  {device.paired && !device.trusted && <button onClick={() => bluetoothAction('trust', device.address)} className="rounded-lg border px-3 py-2">Trust</button>}
+                  {device.connected ? <button onClick={() => bluetoothAction('disconnect', device.address)} className="rounded-lg border px-3 py-2">Disconnect</button> : <button onClick={() => bluetoothAction('connect', device.address)} className="rounded-lg border px-3 py-2">Connect</button>}
+                  {device.paired && <button onClick={() => bluetoothAction('remove', device.address)} className="rounded-lg border border-red-500/30 px-3 py-2 text-red-400">Remove</button>}
+                </div>}
+              </div>)}
+              {!bluetoothDevices.length && <p className="text-sm text-gray-500">No Bluetooth devices found.</p>}
             </div>
           </motion.div>
         ) : (

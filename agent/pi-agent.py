@@ -28,7 +28,11 @@ from rpc.socket_server import SocketServer
 from providers import ProviderManager
 from telemetry.collector import TelemetryCollector
 from jobs.runner import JobRunner
+from jobs.handlers import register_builtin_handlers
 from mqtt.bridge import MQTTBridge
+from mqtt.provisioning import MQTTProvisioner
+from bluetooth_manager import BluetoothManager
+from event_monitor import EventMonitor
 
 # Configure structured logging
 structlog.configure(
@@ -59,12 +63,17 @@ class PiAgent:
         self.config = self._load_config(config_path)
         self.running = False
         self._shutdown_event = asyncio.Event()
+        self._background_tasks = []
         
         # Initialize components
         self.provider_manager = ProviderManager(self.config)
         self.telemetry_collector = TelemetryCollector(self.config)
         self.job_runner = JobRunner(self.config)
+        self.job_handlers = register_builtin_handlers(self.job_runner, self.config)
         self.mqtt_bridge = MQTTBridge(self.config) if self.config.get("mqtt", {}).get("enabled") else None
+        self.mqtt_provisioner = MQTTProvisioner(self.config)
+        self.bluetooth_manager = BluetoothManager()
+        self.event_monitor = EventMonitor(self.provider_manager.discover)
         # Initialize components
         socket_config = self.config.get("socket", {})
         self.socket_server = SocketServer(
@@ -113,6 +122,7 @@ class PiAgent:
             "resource.action": self.provider_manager.execute_action,
             "resource.logs": self.provider_manager.get_logs,
             "resource.stats": self.provider_manager.get_stats,
+            "resource.dependencies": self.provider_manager.get_service_dependencies,
             
             # Telemetry
             "telemetry.current": self.telemetry_collector.get_current,
@@ -121,8 +131,17 @@ class PiAgent:
             # Jobs
             "job.run": self.job_runner.run_job,
             "job.status": self.job_runner.get_status,
+            "job.list": self.job_runner.list_jobs,
             "job.cancel": self.job_runner.cancel_job,
             "job.logs": self.job_runner.get_logs,
+            "backup.inspect": self._inspect_backup,
+            "backup.key.export": self._export_backup_key,
+            "backup.key.import": self._import_backup_key,
+            "mqtt.status": self._mqtt_status,
+            "mqtt.ensure": self._mqtt_ensure,
+            "mqtt.provision": self._mqtt_provision,
+            "mqtt.rotate": self._mqtt_rotate,
+            "mqtt.revoke": self._mqtt_revoke,
             
             # System
             "system.info": self._get_system_info,
@@ -138,6 +157,17 @@ class PiAgent:
             "network.interface.enable": self._interface_enable,
             "network.interface.disable": self._interface_disable,
             "network.interface.restart": self._interface_restart,
+            "network.checkpoint.confirm": self.provider_manager.confirm_network_checkpoint,
+            "network.checkpoint.rollback": self.provider_manager.rollback_network_checkpoint,
+            "network.bluetooth.status": self.bluetooth_manager.status,
+            "network.bluetooth.scan": self.bluetooth_manager.scan,
+            "network.bluetooth.enable": self._bluetooth_enable,
+            "network.bluetooth.disable": self._bluetooth_disable,
+            "network.bluetooth.pair": self.bluetooth_manager.pair,
+            "network.bluetooth.trust": self.bluetooth_manager.trust,
+            "network.bluetooth.connect": self.bluetooth_manager.connect,
+            "network.bluetooth.disconnect": self.bluetooth_manager.disconnect,
+            "network.bluetooth.remove": self.bluetooth_manager.remove,
             "network.connectivity.check": self._check_connectivity,
             "network.dns.get": self._get_dns_config,
             "system.execute": self._execute_command,
@@ -159,6 +189,34 @@ class PiAgent:
         except Exception as e:
             logger.exception("RPC handler error", method=method, error=str(e))
             return {"error": str(e)}
+
+    async def _inspect_backup(self, backup_path: str) -> dict:
+        bundle = self.job_handlers["backup"].bundle
+        return await asyncio.to_thread(bundle.inspect, Path(backup_path))
+
+    async def _export_backup_key(self) -> dict:
+        bundle = self.job_handlers["backup"].bundle
+        return {"key": bundle.export_key()}
+
+    async def _import_backup_key(self, key: str, replace: bool = False) -> dict:
+        bundle = self.job_handlers["backup"].bundle
+        bundle.import_key(key, replace=replace)
+        return {"imported": True}
+
+    async def _mqtt_status(self) -> dict:
+        return await asyncio.to_thread(self.mqtt_provisioner.status)
+
+    async def _mqtt_ensure(self) -> dict:
+        return await asyncio.to_thread(self.mqtt_provisioner.ensure_broker)
+
+    async def _mqtt_provision(self, device_id: str, name: str = "") -> dict:
+        return await asyncio.to_thread(self.mqtt_provisioner.provision, device_id, name)
+
+    async def _mqtt_rotate(self, device_id: str) -> dict:
+        return await asyncio.to_thread(self.mqtt_provisioner.rotate, device_id)
+
+    async def _mqtt_revoke(self, device_id: str) -> dict:
+        return await asyncio.to_thread(self.mqtt_provisioner.revoke, device_id)
     
     async def _get_system_info(self) -> dict:
         """Get system information."""
@@ -233,6 +291,12 @@ class PiAgent:
     async def _interface_restart(self, interface: str) -> dict:
         """Restart a network interface."""
         return await self.provider_manager.restart_interface(interface)
+
+    async def _bluetooth_enable(self) -> dict:
+        return await self.bluetooth_manager.power(True)
+
+    async def _bluetooth_disable(self) -> dict:
+        return await self.bluetooth_manager.power(False)
 
     async def _check_connectivity(self) -> dict:
         """Check LAN/internet/DNS connectivity."""
@@ -335,13 +399,24 @@ class PiAgent:
         await self.provider_manager.start()
         await self.telemetry_collector.start()
         await self.job_runner.start()
+        await self.event_monitor.start()
+
+        mqtt_ready = not self.config.get("mqtt", {}).get("provisioning_enabled", True)
+        if self.config.get("mqtt", {}).get("provisioning_enabled", True):
+            try:
+                await asyncio.to_thread(self.mqtt_provisioner.ensure_broker)
+                mqtt_ready = True
+            except Exception as exc:
+                logger.warning("MQTT broker provisioning unavailable", error=str(exc))
         
-        if self.mqtt_bridge:
+        if self.mqtt_bridge and mqtt_ready:
             await self.mqtt_bridge.start()
         
         # Start background loops
-        asyncio.create_task(self._discovery_loop())
-        asyncio.create_task(self._health_beacon_loop())
+        self._background_tasks = [
+            asyncio.create_task(self._discovery_loop()),
+            asyncio.create_task(self._health_beacon_loop()),
+        ]
         
         logger.info("Pi Agent started successfully")
         
@@ -352,15 +427,30 @@ class PiAgent:
         """Stop the Pi Agent gracefully."""
         logger.info("Stopping Pi Agent")
         self.running = False
-        
+
+        for task in self._background_tasks:
+            task.cancel()
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
         # Stop components
         if self.mqtt_bridge:
-            await self.mqtt_bridge.stop()
-        
-        await self.job_runner.stop()
-        await self.telemetry_collector.stop()
-        await self.provider_manager.stop()
-        await self.socket_server.stop()
+            try:
+                await asyncio.wait_for(self.mqtt_bridge.stop(), timeout=3)
+            except asyncio.TimeoutError:
+                logger.warning("Component shutdown timed out", component="MQTTBridge")
+
+        for component in (
+            self.event_monitor,
+            self.job_runner,
+            self.telemetry_collector,
+            self.provider_manager,
+            self.socket_server,
+        ):
+            try:
+                await asyncio.wait_for(component.stop(), timeout=3)
+            except asyncio.TimeoutError:
+                logger.warning("Component shutdown timed out", component=type(component).__name__)
         
         self._shutdown_event.set()
         logger.info("Pi Agent stopped")
@@ -383,9 +473,10 @@ async def main():
     
     agent = PiAgent(config_path=args.config)
     
-    # Register signal handlers
-    signal.signal(signal.SIGTERM, agent.handle_signal)
-    signal.signal(signal.SIGINT, agent.handle_signal)
+    # Register signal handlers on the active event loop.
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, agent._shutdown_event.set)
+    loop.add_signal_handler(signal.SIGINT, agent._shutdown_event.set)
     
     try:
         await agent.start()

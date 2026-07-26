@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database, GitBranch, Ban } from 'lucide-react';
+import { LayoutDashboard, Settings, Server, Wifi, Terminal, Activity, Monitor, LogOut, Folder, Cpu, Database, GitBranch, Ban, ListTodo, Store, Bell } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -23,6 +23,9 @@ export function Sidebar() {
     { icon: Terminal, label: 'Terminal', active: currentPage === 'terminal', page: 'terminal', restricted: true },
     { icon: Folder, label: 'Files', active: currentPage === 'files', page: 'files', restricted: true },
     { icon: GitBranch, label: 'Projects', active: currentPage === 'projects', page: 'projects' },
+    { icon: ListTodo, label: 'Jobs', active: currentPage === 'jobs', page: 'jobs' },
+    { icon: Store, label: 'App Store', active: currentPage === 'appstore', page: 'appstore' },
+    { icon: Bell, label: 'Alerts', active: currentPage === 'alerts', page: 'alerts' },
     { icon: Database, label: 'Archive', active: currentPage === 'archive', page: 'archive' },
   ];
   const adminItems = [

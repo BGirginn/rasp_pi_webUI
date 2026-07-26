@@ -5,11 +5,12 @@ API endpoints for Docker application store.
 """
 
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from services.appstore_service import appstore_service
 from services.catalog_importer import catalog_importer
+from .auth import get_current_user, require_role
 
 router = APIRouter(prefix="/appstore", tags=["appstore"])
 
@@ -35,13 +36,13 @@ class RefreshCatalogRequest(BaseModel):
 # ============================================================================
 
 @router.get("/catalog")
-async def get_catalog():
+async def get_catalog(user: dict = Depends(get_current_user)):
     """Get the full application catalog."""
     return appstore_service.get_catalog()
 
 
 @router.get("/categories")
-async def get_categories():
+async def get_categories(user: dict = Depends(get_current_user)):
     """Get all app categories."""
     return appstore_service.get_categories()
 
@@ -50,13 +51,14 @@ async def get_categories():
 async def get_apps(
     category: Optional[str] = Query(None, description="Filter by category"),
     search: Optional[str] = Query(None, description="Search apps by name, description, or tags"),
+    user: dict = Depends(get_current_user),
 ):
     """Get available apps with optional filtering."""
     return appstore_service.get_apps(category=category, search=search)
 
 
 @router.get("/apps/{app_id}")
-async def get_app(app_id: str):
+async def get_app(app_id: str, user: dict = Depends(get_current_user)):
     """Get details of a specific app."""
     app = appstore_service.get_app(app_id)
     if not app:
@@ -65,7 +67,10 @@ async def get_app(app_id: str):
 
 
 @router.post("/refresh-catalog")
-async def refresh_catalog(request: RefreshCatalogRequest = None):
+async def refresh_catalog(
+    request: RefreshCatalogRequest = None,
+    user: dict = Depends(require_role("admin")),
+):
     """Refresh app catalog from external sources (Portainer, LinuxServer.io)."""
     sources = request.sources if request else None
     try:
@@ -88,13 +93,13 @@ async def refresh_catalog(request: RefreshCatalogRequest = None):
 # ============================================================================
 
 @router.get("/installed")
-async def get_installed_apps():
+async def get_installed_apps(user: dict = Depends(get_current_user)):
     """Get all installed apps."""
     return appstore_service.get_installed_apps()
 
 
 @router.post("/install")
-async def install_app(request: InstallRequest):
+async def install_app(request: InstallRequest, user: dict = Depends(require_role("admin"))):
     """Install an application."""
     result = await appstore_service.install_app(
         app_id=request.app_id,
@@ -110,7 +115,8 @@ async def install_app(request: InstallRequest):
 @router.post("/uninstall")
 async def uninstall_app(
     request: ActionRequest,
-    remove_data: bool = Query(False, description="Remove app data volumes")
+    remove_data: bool = Query(False, description="Remove app data volumes"),
+    user: dict = Depends(require_role("admin")),
 ):
     """Uninstall an application."""
     result = await appstore_service.uninstall_app(
@@ -129,7 +135,7 @@ async def uninstall_app(
 # ============================================================================
 
 @router.post("/start")
-async def start_app(request: ActionRequest):
+async def start_app(request: ActionRequest, user: dict = Depends(require_role("admin", "operator"))):
     """Start an installed application."""
     result = await appstore_service.start_app(request.app_id)
     
@@ -140,7 +146,7 @@ async def start_app(request: ActionRequest):
 
 
 @router.post("/stop")
-async def stop_app(request: ActionRequest):
+async def stop_app(request: ActionRequest, user: dict = Depends(require_role("admin", "operator"))):
     """Stop an installed application."""
     result = await appstore_service.stop_app(request.app_id)
     
@@ -151,7 +157,7 @@ async def stop_app(request: ActionRequest):
 
 
 @router.post("/restart")
-async def restart_app(request: ActionRequest):
+async def restart_app(request: ActionRequest, user: dict = Depends(require_role("admin", "operator"))):
     """Restart an installed application."""
     result = await appstore_service.restart_app(request.app_id)
     
@@ -168,7 +174,8 @@ async def restart_app(request: ActionRequest):
 @router.get("/logs/{app_id}")
 async def get_app_logs(
     app_id: str,
-    tail: int = Query(100, ge=1, le=1000, description="Number of log lines")
+    tail: int = Query(100, ge=1, le=1000, description="Number of log lines"),
+    user: dict = Depends(get_current_user),
 ):
     """Get logs for an installed application."""
     result = await appstore_service.get_app_logs(app_id, tail=tail)
@@ -180,7 +187,7 @@ async def get_app_logs(
 
 
 @router.get("/stats/{app_id}")
-async def get_app_stats(app_id: str):
+async def get_app_stats(app_id: str, user: dict = Depends(get_current_user)):
     """Get resource stats for an installed application."""
     result = await appstore_service.get_app_stats(app_id)
     

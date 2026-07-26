@@ -40,6 +40,7 @@ async def run_migrations(db_path: str):
             ("004_alert_history", migrate_004_alert_history),
             ("005_standard_user", migrate_005_standard_user),
             ("006_login_lockout", migrate_006_login_lockout),
+            ("007_operations_foundation", migrate_007_operations_foundation),
         ]
         
         # Apply pending migrations
@@ -312,6 +313,145 @@ async def migrate_006_login_lockout(db):
 
     if "locked_until" not in columns:
         await db.execute("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP")
+
+
+async def _add_column_if_missing(db, table: str, column: str, definition: str):
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in await cursor.fetchall()}
+    if column not in existing:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+async def migrate_007_operations_foundation(db):
+    """Add durable operations, provisioning, project, and audit metadata."""
+    for column, definition in (
+        ("phase", "TEXT"),
+        ("cancellable", "INTEGER NOT NULL DEFAULT 1"),
+        ("checkpoint_json", "TEXT"),
+        ("updated_at", "TIMESTAMP"),
+    ):
+        await _add_column_if_missing(db, "jobs", column, definition)
+
+    for column, definition in (
+        ("family_id", "TEXT"),
+        ("parent_id", "TEXT"),
+        ("last_used_at", "TIMESTAMP"),
+        ("revoked_at", "TIMESTAMP"),
+        ("ip_address", "TEXT"),
+    ):
+        await _add_column_if_missing(db, "sessions", column, definition)
+
+    for column in ("previous_hash", "event_hash"):
+        await _add_column_if_missing(db, "audit_log", column, "TEXT")
+
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS job_schedules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            job_type TEXT NOT NULL,
+            config_json TEXT,
+            cron_expression TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'Europe/Istanbul',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            next_run_at TIMESTAMP,
+            last_run_at TIMESTAMP,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS restore_points (
+            id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            source TEXT NOT NULL,
+            manifest_json TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            dedupe_key TEXT,
+            resource_id TEXT,
+            read_at TIMESTAMP,
+            resolved_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS notification_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notification_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            state TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            next_attempt_at TIMESTAMP,
+            delivered_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS mqtt_devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            username TEXT UNIQUE NOT NULL,
+            status TEXT NOT NULL DEFAULT 'provisioned',
+            last_seen_at TIMESTAMP,
+            credential_rotated_at TIMESTAMP,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            root_path TEXT UNIQUE NOT NULL,
+            project_type TEXT NOT NULL DEFAULT 'directory',
+            excludes_json TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS project_snapshots (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            manifest_json TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_job_schedules_next ON job_schedules(enabled, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_active
+            ON notifications(dedupe_key) WHERE dedupe_key IS NOT NULL AND resolved_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_notification_deliveries_retry
+            ON notification_deliveries(state, next_attempt_at);
+        CREATE INDEX IF NOT EXISTS idx_project_snapshots_project
+            ON project_snapshots(project_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_family ON sessions(family_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_event_hash ON audit_log(event_hash);
+        """
+    )
 
 
 if __name__ == "__main__":

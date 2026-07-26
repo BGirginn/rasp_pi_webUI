@@ -5,17 +5,25 @@ Discovers and manages network interfaces (eth, wifi, bluetooth).
 """
 
 import asyncio
+import socket
+import subprocess
 from typing import Dict, List, Optional
 
+import psutil
 import structlog
 
-from .base import BaseProvider, Resource, ActionResult
+from .base import BaseProvider, Resource, ResourceClass, ResourceState, ActionResult
 
 logger = structlog.get_logger(__name__)
 
 
 class NetworkProvider(BaseProvider):
     """Provider for network interfaces using NetworkManager (nmcli)."""
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self._rollback_tasks: Dict[str, asyncio.Task] = {}
+        self._checkpoints: Dict[str, str] = {}
     
     @property
     def name(self) -> str:
@@ -28,19 +36,80 @@ class NetworkProvider(BaseProvider):
     
     async def stop(self) -> None:
         """Cleanup network provider."""
-        pass
+        for task in self._rollback_tasks.values():
+            task.cancel()
+        self._rollback_tasks.clear()
     
     async def discover(self) -> List[Resource]:
         """Discover network interfaces."""
-        # Using simple discovery for now (stub-ish, but listing interfaces via /sys/class/net could be better)
-        # For now, let's keep it minimal as API router falls back to local discovery if this returns empty.
-        # But we should really implement this if we want full agent power.
-        # Let's rely on the API router's fallback for interface listing for now, 
-        # as the user asked for WiFi Scanning specifically.
-        
-        resources = []
-        logger.debug("Network discovery (stub)", interfaces=len(resources))
+        addrs = psutil.net_if_addrs()
+        stats = psutil.net_if_stats()
+        counters = psutil.net_io_counters(pernic=True)
+        gateways = await self._default_gateways()
+        resources: List[Resource] = []
+        for name, addresses in addrs.items():
+            if name == "lo":
+                continue
+            ip = mac = netmask = None
+            for address in addresses:
+                if address.family == socket.AF_INET:
+                    ip, netmask = address.address, address.netmask
+                elif address.family == psutil.AF_LINK:
+                    mac = address.address
+            interface_stats = stats.get(name)
+            io = counters.get(name)
+            interface_type = self._interface_type(name)
+            is_up = bool(interface_stats and interface_stats.isup)
+            resource = Resource(
+                id=name,
+                name=name,
+                type="interface",
+                provider=self.name,
+                resource_class=ResourceClass.SYSTEM,
+                state=ResourceState.RUNNING if is_up else ResourceState.STOPPED,
+                capabilities=["enable", "disable", "restart"],
+                metadata={
+                    "interface_type": interface_type,
+                    "status": "up" if is_up else "down",
+                    "mac": mac,
+                    "ip": ip,
+                    "subnet_mask": netmask,
+                    "gateway": gateways.get(name),
+                    "rx_bytes": io.bytes_recv if io else 0,
+                    "tx_bytes": io.bytes_sent if io else 0,
+                    "speed_mbps": interface_stats.speed if interface_stats and interface_stats.speed > 0 else None,
+                },
+            )
+            resources.append(resource)
+            self._resources[name] = resource
+        logger.debug("Network discovery complete", interfaces=len(resources))
         return resources
+
+    async def _default_gateways(self) -> Dict[str, str]:
+        process = await asyncio.create_subprocess_exec(
+            "ip", "route", "show", "default",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await process.communicate()
+        gateways: Dict[str, str] = {}
+        if process.returncode == 0:
+            for line in stdout.decode().splitlines():
+                parts = line.split()
+                if "dev" in parts and "via" in parts:
+                    gateways[parts[parts.index("dev") + 1]] = parts[parts.index("via") + 1]
+        return gateways
+
+    @staticmethod
+    def _interface_type(name: str) -> str:
+        if name.startswith(("wl", "wlan")):
+            return "wifi"
+        if name.startswith("tailscale"):
+            return "vpn"
+        if name.startswith(("br-", "docker", "virbr")):
+            return "bridge"
+        if name.startswith(("veth", "tun", "tap")):
+            return "virtual"
+        return "ethernet"
     
     async def get_resource(self, resource_id: str) -> Optional[Resource]:
         """Get a specific interface."""
@@ -59,6 +128,7 @@ class NetworkProvider(BaseProvider):
         if action == "scan" and resource_id.startswith("wlan"):
             return await self._scan_wifi(resource_id)
         elif action == "enable":
+            self._cancel_rollback(resource_id)
             # If it's a wifi interface, enable wifi radio
             if resource_id.startswith("wlan"):
                 return await self._enable_wifi()
@@ -67,21 +137,51 @@ class NetworkProvider(BaseProvider):
         elif action == "disable":
             # If it's a wifi interface, disable wifi radio
             if resource_id.startswith("wlan"):
-                return await self._disable_wifi()
+                return await self._disable_wifi(params.get("rollback_seconds", 0))
             else:
-                return await self._disable_interface(resource_id)
+                return await self._disable_interface(
+                    resource_id, params.get("rollback_seconds", 0)
+                )
+        elif action == "restart":
+            return await self._restart_interface(resource_id)
         elif action == "status":
             return await self._get_wifi_status()
         elif action == "connect":
             return await self._connect_wifi(params.get("ssid"), params.get("password"), params.get("hidden", False))
         elif action == "disconnect":
             return await self._disconnect_wifi()
+        elif action == "checkpoint_confirm":
+            return await self.confirm_checkpoint(params.get("checkpoint_id", ""))
+        elif action == "checkpoint_rollback":
+            return await self.rollback_checkpoint(params.get("checkpoint_id", ""))
             
         return ActionResult(
             success=False,
             message=f"Action '{action}' not implemented for {resource_id}",
             error="NOT_IMPLEMENTED"
         )
+
+    def _cancel_rollback(self, resource_id: str) -> None:
+        task = self._rollback_tasks.pop(resource_id, None)
+        if task and task is not asyncio.current_task():
+            task.cancel()
+
+    def _schedule_rollback(self, resource_id: str, delay: int, enable_callback) -> None:
+        if delay <= 0:
+            return
+        self._cancel_rollback(resource_id)
+
+        async def restore() -> None:
+            try:
+                await asyncio.sleep(delay)
+                await enable_callback()
+            except asyncio.CancelledError:
+                raise
+            finally:
+                if self._rollback_tasks.get(resource_id) is asyncio.current_task():
+                    self._rollback_tasks.pop(resource_id, None)
+
+        self._rollback_tasks[resource_id] = asyncio.create_task(restore())
 
     async def _run_nmcli(self, args: List[str]) -> tuple:
         """Helper to run nmcli commands."""
@@ -103,14 +203,26 @@ class NetworkProvider(BaseProvider):
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
 
-    async def _disable_wifi(self) -> ActionResult:
+    async def _disable_wifi(self, rollback_seconds: int = 0) -> ActionResult:
         """Disable WiFi radio."""
         try:
+            checkpoint = await self._create_checkpoint(["wlan0"], rollback_seconds)
             rc, out, err = await self._run_nmcli(["radio", "wifi", "off"])
             if rc != 0:
+                await self.rollback_checkpoint(checkpoint)
                 return ActionResult(False, f"Failed to disable WiFi: {err}", error=err)
+            # NetworkManager checkpoints restore device connectivity. Keep the
+            # radio timer as a second guard because radio state is host-global.
+            self._schedule_rollback("wlan0", rollback_seconds, self._enable_wifi)
             logger.info("WiFi disabled")
-            return ActionResult(True, "WiFi disabled")
+            return ActionResult(
+                True,
+                "WiFi disabled",
+                data={
+                    "rollback_seconds": rollback_seconds,
+                    "checkpoint_id": checkpoint,
+                },
+            )
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
 
@@ -125,14 +237,38 @@ class NetworkProvider(BaseProvider):
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
 
-    async def _disable_interface(self, interface: str) -> ActionResult:
+    async def _disable_interface(self, interface: str, rollback_seconds: int = 0) -> ActionResult:
         """Disable a network interface."""
         try:
+            checkpoint = await self._create_checkpoint([interface], rollback_seconds)
             rc, out, err = await self._run_nmcli(["device", "disconnect", interface])
             if rc != 0:
+                await self.rollback_checkpoint(checkpoint)
                 return ActionResult(False, f"Failed to disable interface {interface}: {err}", error=err)
             logger.info("Interface disabled", interface=interface)
-            return ActionResult(True, f"Interface {interface} disabled")
+            return ActionResult(
+                True,
+                f"Interface {interface} disabled",
+                data={"rollback_seconds": rollback_seconds, "checkpoint_id": checkpoint},
+            )
+        except Exception as e:
+            return ActionResult(False, str(e), error=str(e))
+
+    async def _restart_interface(self, interface: str) -> ActionResult:
+        """Reconnect an interface and report failures instead of false success."""
+        try:
+            checkpoint = await self._create_checkpoint([interface], 60)
+            rc, _, err = await self._run_nmcli(["device", "disconnect", interface])
+            if rc != 0:
+                await self.rollback_checkpoint(checkpoint)
+                return ActionResult(False, f"Failed to disconnect {interface}: {err}", error=err)
+            await asyncio.sleep(1)
+            rc, _, err = await self._run_nmcli(["device", "connect", interface])
+            if rc != 0:
+                await self.rollback_checkpoint(checkpoint)
+                return ActionResult(False, f"Failed to reconnect {interface}: {err}", error=err)
+            await self.confirm_checkpoint(checkpoint)
+            return ActionResult(True, f"Interface {interface} restarted")
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
 
@@ -234,6 +370,63 @@ class NetworkProvider(BaseProvider):
             return ActionResult(True, "WiFi disconnected")
         except Exception as e:
             return ActionResult(False, str(e), error=str(e))
+
+    async def _create_checkpoint(self, interfaces: List[str], timeout: int) -> str:
+        if timeout <= 0:
+            raise ValueError("A positive rollback timeout is required")
+
+        def create() -> str:
+            import dbus
+
+            bus = dbus.SystemBus()
+            manager_object = bus.get_object("org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager")
+            manager = dbus.Interface(manager_object, "org.freedesktop.NetworkManager")
+            device_paths = []
+            for interface in interfaces:
+                result = subprocess.run(
+                    ["nmcli", "-g", "GENERAL.DBUS-PATH", "device", "show", interface],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    raise RuntimeError(f"NetworkManager device not found: {interface}")
+                device_paths.append(dbus.ObjectPath(result.stdout.strip()))
+            return str(manager.CheckpointCreate(device_paths, int(timeout), 1))
+
+        checkpoint = await asyncio.to_thread(create)
+        self._checkpoints[checkpoint] = checkpoint
+        return checkpoint
+
+    async def confirm_checkpoint(self, checkpoint_id: str) -> ActionResult:
+        return await self._checkpoint_action(checkpoint_id, rollback=False)
+
+    async def rollback_checkpoint(self, checkpoint_id: str) -> ActionResult:
+        return await self._checkpoint_action(checkpoint_id, rollback=True)
+
+    async def _checkpoint_action(self, checkpoint_id: str, rollback: bool) -> ActionResult:
+        if not checkpoint_id or not checkpoint_id.startswith("/org/freedesktop/NetworkManager/Checkpoint/"):
+            return ActionResult(False, "Invalid checkpoint", error="INVALID_CHECKPOINT")
+
+        def apply() -> None:
+            import dbus
+
+            bus = dbus.SystemBus()
+            obj = bus.get_object("org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager")
+            manager = dbus.Interface(obj, "org.freedesktop.NetworkManager")
+            if rollback:
+                manager.CheckpointRollback(dbus.ObjectPath(checkpoint_id))
+            else:
+                manager.CheckpointDestroy(dbus.ObjectPath(checkpoint_id))
+
+        try:
+            await asyncio.to_thread(apply)
+            self._checkpoints.pop(checkpoint_id, None)
+            action = "rolled back" if rollback else "confirmed"
+            return ActionResult(True, f"Network checkpoint {action}")
+        except Exception as exc:
+            return ActionResult(False, str(exc), error=str(exc))
         
     async def _scan_wifi(self, interface: str) -> ActionResult:
         """Scan for WiFi networks using nmcli."""

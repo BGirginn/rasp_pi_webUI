@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 from db import get_control_db
 from services.agent_client import agent_client
@@ -110,7 +110,8 @@ class CommandRequest(BaseModel):
     mode: str = "safe"  # safe or risky
     timeout: int = 30  # seconds
     
-    @validator("command")
+    @field_validator("command")
+    @classmethod
     def validate_command(cls, v):
         if len(v) > 1000:
             raise ValueError("Command too long (max 1000 chars)")

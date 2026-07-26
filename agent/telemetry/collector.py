@@ -5,8 +5,10 @@ Collects system metrics at configured intervals and stores them in SQLite.
 """
 
 import asyncio
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -32,7 +34,7 @@ class TelemetryCollector:
     def __init__(self, config: dict):
         self.config = config.get("telemetry", {})
         self._db_path = self.config.get("db_path", "/data/telemetry.db")
-        self._interval = max(5, self.config.get("interval", 30))
+        self._interval = max(30, self.config.get("interval", 30))
         self._batch_size = self.config.get("batch_size", 60)
         
         self._running = False
@@ -144,6 +146,27 @@ class TelemetryCollector:
 
             await db.commit()
             logger.info("Telemetry database initialized", path=self._db_path)
+
+        self._make_database_group_writable()
+
+    def _make_database_group_writable(self) -> None:
+        """Allow the unprivileged panel process to share the agent database."""
+        db_path = Path(self._db_path)
+        try:
+            data_gid = db_path.parent.stat().st_gid
+            for path in db_path.parent.glob(f"{db_path.name}*"):
+                if not path.is_file():
+                    continue
+                os.chown(path, -1, data_gid)
+                mode = path.stat().st_mode
+                if mode & 0o060 != 0o060:
+                    path.chmod(mode | 0o660)
+        except OSError as exc:
+            logger.warning(
+                "Could not update telemetry database permissions",
+                path=self._db_path,
+                error=str(exc),
+            )
     
     async def _collection_loop(self) -> None:
         """Main collection loop."""

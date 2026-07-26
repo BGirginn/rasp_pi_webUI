@@ -5,7 +5,7 @@ Handles metrics queries, live telemetry streaming, and dashboard data.
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -71,15 +71,39 @@ async def get_current_metrics(user: dict = Depends(get_current_user)):
 
     try:
         telemetry = await agent_client.get_current_telemetry()
+        telemetry = _with_metric_aliases(telemetry)
         _current_metrics_cache["data"] = telemetry
         _current_metrics_cache["expires_at"] = time.monotonic() + _CURRENT_METRICS_TTL_SECONDS
         return telemetry
     except Exception:
         # Fallback: Get real metrics from local system
         telemetry = await _get_local_system_metrics()
+        telemetry = _with_metric_aliases(telemetry)
         _current_metrics_cache["data"] = telemetry
         _current_metrics_cache["expires_at"] = time.monotonic() + _CURRENT_METRICS_TTL_SECONDS
         return telemetry
+
+
+def _with_metric_aliases(telemetry: Dict) -> Dict:
+    """Expose canonical disk keys and legacy aliases during schema migration."""
+    result = dict(telemetry)
+    metrics = dict(result.get("metrics") or {})
+    aliases = {
+        "disk.root.used_pct": ("disk._root.used_pct", "disk._root.pct"),
+        "disk.root.used_gb": ("disk._root.used_gb",),
+        "disk.root.total_gb": ("disk._root.total_gb",),
+    }
+    for canonical, legacy_keys in aliases.items():
+        value = metrics.get(canonical)
+        if value is None:
+            value = next((metrics[key] for key in legacy_keys if key in metrics), None)
+        if value is None:
+            continue
+        metrics[canonical] = value
+        for legacy_key in legacy_keys:
+            metrics[legacy_key] = value
+    result["metrics"] = metrics
+    return result
 
 
 async def _get_local_system_metrics() -> Dict:
@@ -294,7 +318,7 @@ async def _get_local_system_metrics() -> Dict:
     machine = f"{cpu_model} ({arch})"
     
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "degrade_mode": False,
         "source": "host" if host_root else "container",
         "system": {
@@ -358,8 +382,71 @@ async def get_dashboard_data(user: dict = Depends(get_current_user)):
         ),
         resource_counts=resource_counts,
         alert_counts=alert_counts,
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
+
+
+@router.get("/capacity-forecast")
+async def capacity_forecast(
+    days: int = Query(30, ge=3, le=90),
+    user: dict = Depends(get_current_user),
+):
+    """Estimate when root disk reaches 90% using historical growth."""
+    db = await get_telemetry_db()
+    cutoff = int(time.time()) - days * 86400
+    metric_names = ("disk.root.used_gb", "disk._root.used_gb")
+    cursor = await db.execute(
+        """SELECT (ts / 3600) * 3600 AS bucket, AVG(value)
+           FROM metrics_raw
+           WHERE metric IN (?, ?) AND ts >= ?
+           GROUP BY bucket ORDER BY bucket""",
+        (*metric_names, cutoff),
+    )
+    points = [(float(row[0]), float(row[1])) for row in await cursor.fetchall()]
+    current = await get_current_metrics(user)
+    metrics = current.get("metrics", {})
+    used_gb = float(metrics.get("disk.root.used_gb", metrics.get("disk._root.used_gb", 0)) or 0)
+    total_gb = float(metrics.get("disk.root.total_gb", metrics.get("disk._root.total_gb", 0)) or 0)
+
+    result = {
+        "metric": "disk.root.used_gb",
+        "used_gb": used_gb,
+        "total_gb": total_gb,
+        "threshold_gb": round(total_gb * 0.9, 2),
+        "sample_count": len(points),
+        "window_days": days,
+        "daily_growth_gb": None,
+        "days_to_threshold": None,
+        "confidence": 0.0,
+        "status": "insufficient_data",
+    }
+    if len(points) < 6 or points[-1][0] - points[0][0] < 21600 or total_gb <= 0:
+        return result
+
+    x_origin = points[0][0]
+    xs = [(point[0] - x_origin) / 86400 for point in points]
+    ys = [point[1] for point in points]
+    x_mean = sum(xs) / len(xs)
+    y_mean = sum(ys) / len(ys)
+    denominator = sum((x - x_mean) ** 2 for x in xs)
+    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / denominator if denominator else 0
+    predictions = [y_mean + slope * (x - x_mean) for x in xs]
+    total_variance = sum((y - y_mean) ** 2 for y in ys)
+    residual_variance = sum((y - prediction) ** 2 for y, prediction in zip(ys, predictions))
+    confidence = max(0.0, min(1.0, 1 - residual_variance / total_variance)) if total_variance else 0.0
+    result.update({"daily_growth_gb": round(slope, 4), "confidence": round(confidence, 3)})
+    threshold = total_gb * 0.9
+    if used_gb >= threshold:
+        result.update({"days_to_threshold": 0, "status": "critical"})
+    elif slope > 0.001:
+        remaining_days = max(0.0, (threshold - used_gb) / slope)
+        result.update({
+            "days_to_threshold": round(remaining_days, 1),
+            "status": "warning" if remaining_days <= 30 else "healthy",
+        })
+    else:
+        result["status"] = "stable"
+    return result
 
 
 @router.get("/metrics", response_model=List[MetricsResponse])

@@ -19,6 +19,7 @@ import subprocess
 
 from config import settings
 from db import get_control_db
+from services.audit_chain import row_dict
 
 router = APIRouter()
 security = HTTPBearer()
@@ -280,15 +281,19 @@ async def login(request: LoginRequest, response: Response, req: Request):
     session_id = str(uuid.uuid4())
     expires_at = datetime.utcnow() + timedelta(days=settings.jwt_refresh_token_expire_days)
     
+    family_id = str(uuid.uuid4())
     await db.execute(
-        "DELETE FROM sessions WHERE expires_at <= datetime('now') OR user_id = ?",
-        (user_id,),
+        "DELETE FROM sessions WHERE expires_at <= datetime('now')",
     )
     await db.execute(
-        """INSERT INTO sessions (id, user_id, refresh_token_hash, device_info, expires_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (session_id, user_id, hash_refresh_token(refresh_token), req.headers.get("User-Agent", ""), expires_at)
+        """INSERT INTO sessions
+           (id, user_id, refresh_token_hash, device_info, expires_at, family_id,
+            last_used_at, ip_address)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)""",
+        (session_id, user_id, hash_refresh_token(refresh_token), req.headers.get("User-Agent", ""),
+         expires_at, family_id, req.client.host if req.client else None)
     )
+    await db.execute("UPDATE users SET last_login=datetime('now') WHERE id=?", (user_id,))
     await _reset_login_failures(db, user_id)
     await db.commit()
     
@@ -317,7 +322,7 @@ async def login(request: LoginRequest, response: Response, req: Request):
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_token(request: Request):
+async def refresh_token(request: Request, response: Response):
     """Refresh access token using refresh token cookie."""
     refresh_token = request.cookies.get("refresh_token")
     
@@ -328,24 +333,70 @@ async def refresh_token(request: Request):
     
     # Find valid session
     cursor = await db.execute(
-        """SELECT s.id, s.user_id, s.refresh_token_hash, u.role
+        """SELECT s.id, s.user_id, s.refresh_token_hash, u.role,
+                  s.family_id, s.revoked_at, s.device_info
            FROM sessions s
            JOIN users u ON s.user_id = u.id
-           WHERE s.expires_at > datetime('now') AND s.refresh_token_hash = ?""",
+           WHERE s.refresh_token_hash = ?""",
         (hash_refresh_token(refresh_token),),
     )
     row = await cursor.fetchone()
-    valid_session = {"id": row[0], "user_id": row[1], "role": row[3]} if row else None
-    
-    if not valid_session:
+    if not row:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    session = {
+        "id": row[0], "user_id": row[1], "role": row[3],
+        "family_id": row[4] or row[0], "revoked_at": row[5], "device_info": row[6],
+    }
+    if session["revoked_at"]:
+        await db.execute(
+            "UPDATE sessions SET revoked_at=COALESCE(revoked_at, datetime('now')) WHERE family_id=?",
+            (session["family_id"],),
+        )
+        await db.execute(
+            "INSERT INTO audit_log (user_id, action, details, ip_address) VALUES (?, 'refresh_token_reuse', ?, ?)",
+            (session["user_id"], f"family_id: {session['family_id']}", request.client.host if request.client else None),
+        )
+        await db.commit()
+        response.delete_cookie("refresh_token")
+        raise HTTPException(status_code=401, detail="Refresh token reuse detected; session family revoked")
+
+    cursor = await db.execute(
+        "SELECT expires_at > datetime('now') FROM sessions WHERE id=?", (session["id"],)
+    )
+    if not (await cursor.fetchone())[0]:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    new_refresh_token = create_refresh_token()
+    new_session_id = str(uuid.uuid4())
+    expires_at = datetime.utcnow() + timedelta(days=settings.jwt_refresh_token_expire_days)
+    await db.execute(
+        "UPDATE sessions SET revoked_at=datetime('now'), last_used_at=datetime('now') WHERE id=?",
+        (session["id"],),
+    )
+    await db.execute(
+        """INSERT INTO sessions
+           (id, user_id, refresh_token_hash, device_info, expires_at, family_id,
+            parent_id, last_used_at, ip_address)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)""",
+        (new_session_id, session["user_id"], hash_refresh_token(new_refresh_token),
+         session["device_info"] or request.headers.get("User-Agent", ""), expires_at,
+         session["family_id"], session["id"], request.client.host if request.client else None),
+    )
     
     # Create new access token
     access_token = create_access_token({
-        "sub": str(valid_session["user_id"]),
-        "role": valid_session["role"]
+        "sub": str(session["user_id"]),
+        "role": session["role"]
     })
-    
+    await db.commit()
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=(request.headers.get("x-forwarded-proto", request.url.scheme) == "https"),
+        samesite="strict",
+        max_age=settings.jwt_refresh_token_expire_days * 86400,
+    )
     return RefreshResponse(
         access_token=access_token,
         expires_in=settings.jwt_access_token_expire_minutes * 60
@@ -353,12 +404,17 @@ async def refresh_token(request: Request):
 
 
 @router.post("/logout")
-async def logout(response: Response, user: dict = Depends(get_current_user)):
+async def logout(request: Request, response: Response, user: dict = Depends(get_current_user)):
     """Logout and invalidate refresh token."""
     db = await get_control_db()
     
-    # Delete user's sessions
-    await db.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+    refresh_token = request.cookies.get("refresh_token")
+    if refresh_token:
+        await db.execute(
+            """UPDATE sessions SET revoked_at=COALESCE(revoked_at, datetime('now'))
+               WHERE user_id=? AND refresh_token_hash=?""",
+            (user["id"], hash_refresh_token(refresh_token)),
+        )
     await db.commit()
     
     # Clear cookie
@@ -372,6 +428,31 @@ async def logout(response: Response, user: dict = Depends(get_current_user)):
     await db.commit()
     
     return {"message": "Logged out successfully"}
+
+
+@router.get("/sessions")
+async def list_sessions(user: dict = Depends(get_current_user)):
+    db = await get_control_db()
+    cursor = await db.execute(
+        """SELECT id, device_info, ip_address, last_used_at, expires_at, revoked_at, created_at
+           FROM sessions WHERE user_id=? ORDER BY created_at DESC""",
+        (user["id"],),
+    )
+    fields = ("id", "device_info", "ip_address", "last_used_at", "expires_at", "revoked_at", "created_at")
+    return [row_dict(row, fields) for row in await cursor.fetchall()]
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(session_id: str, user: dict = Depends(get_current_user)):
+    db = await get_control_db()
+    result = await db.execute(
+        "UPDATE sessions SET revoked_at=COALESCE(revoked_at, datetime('now')) WHERE id=? AND user_id=?",
+        (session_id, user["id"]),
+    )
+    await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"revoked": True}
 
 
 @router.get("/me", response_model=UserResponse)

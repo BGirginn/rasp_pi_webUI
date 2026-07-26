@@ -274,3 +274,28 @@ class SystemdProvider(BaseProvider):
             "memory_mb": round(memory_bytes / (1024 * 1024), 2),
             "cpu_time_seconds": round(cpu_ns / 1_000_000_000, 2),
         }
+
+    async def get_dependency_graph(self, resource_id: str) -> Dict:
+        """Return direct systemd ordering and requirement relationships."""
+        result = await self._run_command([
+            "systemctl", "show", resource_id,
+            "--property=Id,Requires,Wants,After,Before,PartOf,RequiredBy,WantedBy",
+        ])
+        if result["returncode"] != 0:
+            raise RuntimeError(result["stderr"] or f"Service not found: {resource_id}")
+        properties: Dict[str, str] = {}
+        for line in result["stdout"].splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                properties[key] = value
+        root = properties.get("Id") or resource_id
+        relation_keys = ("Requires", "Wants", "After", "Before", "PartOf", "RequiredBy", "WantedBy")
+        edges = []
+        nodes = {root}
+        for relation in relation_keys:
+            for target in properties.get(relation, "").split():
+                if not target.endswith((".service", ".target", ".socket", ".mount", ".timer")):
+                    continue
+                nodes.add(target)
+                edges.append({"source": root, "target": target, "relation": relation.lower()})
+        return {"root": root, "nodes": sorted(nodes), "edges": edges}

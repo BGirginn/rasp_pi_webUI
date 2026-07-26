@@ -1,5 +1,6 @@
 from routers.resources import _classify_service, _state_from_systemd
 from routers.auth import hash_refresh_token
+from routers.telemetry import _with_metric_aliases
 
 
 def test_adguard_is_manageable_application():
@@ -23,3 +24,13 @@ def test_refresh_token_hash_supports_indexed_lookup():
     assert hash_refresh_token(token) == hash_refresh_token(token)
     assert hash_refresh_token(token) != token
     assert len(hash_refresh_token(token)) == 64
+
+
+def test_canonical_disk_metrics_are_available_to_legacy_dashboard():
+    telemetry = _with_metric_aliases(
+        {"metrics": {"disk.root.used_pct": 42, "disk.root.total_gb": 58}}
+    )
+
+    assert telemetry["metrics"]["disk._root.used_pct"] == 42
+    assert telemetry["metrics"]["disk._root.pct"] == 42
+    assert telemetry["metrics"]["disk._root.total_gb"] == 58

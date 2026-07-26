@@ -19,6 +19,8 @@ readonly NC='\033[0m'
 readonly PROJECT_DIR="/opt/pi-control"
 readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
+readonly RELEASES_DIR="$PROJECT_DIR/releases"
+readonly CURRENT_LINK="$PROJECT_DIR/current"
 readonly SERVICE_ENV_FILE="$CONFIG_DIR/pi-control.env"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -200,7 +202,7 @@ install_dependencies() {
     info "Installing Python, curl, rsync, SQLite and base packages"
     run_cmd apt-get install -y \
         python3 python3-pip python3-venv python3-dev \
-        curl rsync sqlite3 gnupg ca-certificates \
+        curl rsync sqlite3 gnupg ca-certificates unattended-upgrades mosquitto mosquitto-clients \
         debian-keyring debian-archive-keyring apt-transport-https
 
     info "Checking Node.js runtime"
@@ -269,7 +271,7 @@ install_tailscale() {
 create_directories() {
     section "Creating application directories..."
 
-    mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
+    mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR" "$RELEASES_DIR" "$PROJECT_DIR/backups"
     chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR"
     chmod 755 "$PROJECT_DIR"
 
@@ -307,6 +309,7 @@ setup_python() {
     run_cmd sudo -u "$INSTALL_USER" python3 -m venv venv
     run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install --upgrade pip
     run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install -r "$PROJECT_DIR/panel/api/requirements.txt"
+    run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install -r "$PROJECT_DIR/agent/requirements.txt"
 
     success "Python virtual environment is ready."
 }
@@ -324,6 +327,29 @@ build_ui() {
     fi
 
     success "Frontend build completed."
+}
+
+prepare_release_layout() {
+    local release_id release_dir temporary_link
+    release_id="install-$(date +%Y%m%d-%H%M%S)"
+    release_dir="$RELEASES_DIR/$release_id"
+    temporary_link="$PROJECT_DIR/.current-$release_id"
+
+    section "Preparing atomic release layout..."
+    mkdir -p "$release_dir"
+    run_cmd rsync -a \
+        --exclude '.git' \
+        --exclude 'venv' \
+        --exclude 'node_modules' \
+        --exclude 'backups' \
+        --exclude 'releases' \
+        --exclude 'current' \
+        "$PROJECT_DIR/" "$release_dir/"
+    ln -s ../../venv "$release_dir/venv"
+    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$release_dir"
+    ln -s "$release_dir" "$temporary_link"
+    mv -Tf "$temporary_link" "$CURRENT_LINK"
+    success "Release activated at $release_dir"
 }
 
 write_service_env_file() {
@@ -368,15 +394,15 @@ After=network.target
 Type=simple
 User=$INSTALL_USER
 Group=$INSTALL_GROUP
-WorkingDirectory=/opt/pi-control/panel/api
-Environment=PYTHONPATH=/opt/pi-control/panel/api
+WorkingDirectory=/opt/pi-control/current/panel/api
+Environment=PYTHONPATH=/opt/pi-control/current/panel/api
 Environment=DATABASE_PATH=/var/lib/pi-control/control.db
 Environment=TELEMETRY_DB_PATH=/var/lib/pi-control/telemetry.db
 Environment=AGENT_SOCKET=/run/pi-agent/agent.sock
 Environment=JWT_SECRET_FILE=/etc/pi-control/jwt_secret
 Environment=API_DEBUG=false
 EnvironmentFile=-$SERVICE_ENV_FILE
-ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+ExecStart=/opt/pi-control/current/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5
 TimeoutStopSec=5
@@ -393,12 +419,69 @@ WantedBy=multi-user.target
 EOF
 
     success "Systemd service created."
+
+    cat > /etc/systemd/system/pi-agent.service <<EOF
+[Unit]
+Description=Pi Control Panel Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/pi-control/current/agent
+ExecStart=/opt/pi-control/current/venv/bin/python3 /opt/pi-control/current/agent/pi-agent.py --config /opt/pi-control/current/agent/config.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
+RuntimeDirectory=pi-agent
+RuntimeDirectoryMode=0755
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-$SERVICE_ENV_FILE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-agent
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    success "Agent systemd service created."
 }
 
 configure_caddy() {
     section "Configuring Caddy..."
 
-    cp "$PROJECT_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
+    cp "$CURRENT_LINK/caddy/Caddyfile" /etc/caddy/Caddyfile
+
+    local hostname_value lan_addresses tailscale_dns tailscale_ip
+    hostname_value="$(hostname -s 2>/dev/null || echo raspberrypi)"
+    lan_addresses="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Ev '^(100\.|169\.254\.|172\.1[7-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)' || true)"
+    tailscale_dns=""
+    tailscale_ip=""
+    if command -v tailscale >/dev/null 2>&1; then
+        tailscale_dns="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
+        tailscale_ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+    fi
+
+    {
+        printf 'https://%s.local' "$hostname_value"
+        while IFS= read -r address; do
+            [[ -n "$address" ]] && printf ', https://%s' "$address"
+        done <<< "$lan_addresses"
+        printf ' {\n\ttls internal\n\timport panel_app\n}\n'
+        if [[ -n "$tailscale_dns" ]]; then
+            printf '\nhttps://%s {\n\ttls internal\n\timport panel_app\n}\n' "$tailscale_dns"
+        fi
+        if [[ -n "$tailscale_ip" ]]; then
+            printf '\nhttp://%s {\n\timport panel_app\n}\n' "$tailscale_ip"
+        fi
+    } > /etc/caddy/pi-control-sites.caddy
+
+    run_cmd caddy validate --config /etc/caddy/Caddyfile
 
     success "Caddy configuration updated."
 }
@@ -408,6 +491,8 @@ start_services() {
 
     run_cmd systemctl daemon-reload
     run_cmd systemctl enable pi-control
+    run_cmd systemctl enable pi-agent
+    run_cmd systemctl restart pi-agent
     run_cmd systemctl restart pi-control
     run_cmd systemctl enable caddy
     run_cmd systemctl restart caddy
@@ -442,7 +527,7 @@ print_summary() {
     echo -e "${GREEN}  Installation Complete${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo ""
-    echo -e "${BLUE}Access:${NC} http://$pi_ip"
+    echo -e "${BLUE}Access:${NC} https://$pi_ip"
     echo ""
     echo -e "${BLUE}Initial admin login:${NC}"
     echo "  This is used only when the database does not already contain an admin user."
@@ -482,6 +567,7 @@ main() {
     copy_project_files
     setup_python
     build_ui
+    prepare_release_layout
     generate_secrets
     create_systemd_service
     configure_caddy

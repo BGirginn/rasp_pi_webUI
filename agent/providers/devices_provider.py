@@ -208,17 +208,31 @@ class DevicesProvider(BaseProvider):
     
     async def _is_usb_storage(self, device_dir: Path) -> bool:
         """Check if USB device is a mass storage device."""
-        return any(path.is_dir() for path in device_dir.glob("**/block"))
+        return bool(self._usb_function_directories(device_dir, "block"))
+
+    def _usb_function_directories(self, device_dir: Path, function: str) -> List[Path]:
+        """Return function directories owned by this physical USB device."""
+        paths = []
+        direct_path = device_dir / function
+        if direct_path.is_dir():
+            paths.append(direct_path)
+
+        interface_prefix = f"{device_dir.name}:"
+        for interface_dir in device_dir.iterdir():
+            if not interface_dir.is_dir() or not interface_dir.name.startswith(interface_prefix):
+                continue
+            paths.extend(path for path in interface_dir.glob(f"**/{function}") if path.is_dir())
+        return paths
 
     def _get_usb_functions(self, device_dir: Path):
         """Classify a physical USB device from the kernel functions it exposes."""
         function_paths = {
-            "network": list(device_dir.glob("**/net")),
-            "storage": list(device_dir.glob("**/block")),
-            "serial": list(device_dir.glob("**/tty")),
-            "video": list(device_dir.glob("**/video4linux")),
-            "input": list(device_dir.glob("**/input")),
-            "audio": list(device_dir.glob("**/sound")),
+            "network": self._usb_function_directories(device_dir, "net"),
+            "storage": self._usb_function_directories(device_dir, "block"),
+            "serial": self._usb_function_directories(device_dir, "tty"),
+            "video": self._usb_function_directories(device_dir, "video4linux"),
+            "input": self._usb_function_directories(device_dir, "input"),
+            "audio": self._usb_function_directories(device_dir, "sound"),
         }
         endpoints = {}
         for function, paths in function_paths.items():
@@ -248,16 +262,15 @@ class DevicesProvider(BaseProvider):
         """Get mount point for USB storage device."""
         try:
             # Find the block device name (e.g., sda, sdb)
-            for block_path in device_dir.glob("**/block"):
-                if block_path.is_dir():
-                    for block_name in block_path.iterdir():
-                        # Check /proc/mounts for mount point
-                        mounts = Path("/proc/mounts").read_text()
-                        for line in mounts.split("\n"):
-                            if block_name.name in line:
-                                parts = line.split()
-                                if len(parts) >= 2:
-                                    return parts[1]
+            for block_path in self._usb_function_directories(device_dir, "block"):
+                for block_name in block_path.iterdir():
+                    # Check /proc/mounts for mount point
+                    mounts = Path("/proc/mounts").read_text()
+                    for line in mounts.split("\n"):
+                        if block_name.name in line:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                return parts[1]
         except Exception:
             pass
         return None

@@ -7,7 +7,9 @@ Full implementation in Sprint 7.
 
 import asyncio
 import json
-from datetime import datetime
+import ssl
+import uuid
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 import structlog
@@ -30,11 +32,14 @@ class MQTTBridge:
         self._port = self.config.get("port", 1883)
         self._username = self.config.get("username", "panel")
         self._password = self._load_password()
+        self._ca_file = self.config.get("ca_file")
         
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._devices: Dict[str, Dict] = {}
         self._telemetry_callback: Optional[Callable] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._pending_commands: Dict[str, asyncio.Future] = {}
     
     def _load_password(self) -> Optional[str]:
         """Load MQTT password from file or config."""
@@ -57,7 +62,8 @@ class MQTTBridge:
             logger.warning("paho-mqtt not available, MQTT bridge disabled")
             return
         
-        self._client = mqtt.Client(client_id="pi-control-panel")
+        self._loop = asyncio.get_running_loop()
+        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="pi-control-panel")
         
         # Set callbacks
         self._client.on_connect = self._on_connect
@@ -67,6 +73,10 @@ class MQTTBridge:
         # Set credentials
         if self._username and self._password:
             self._client.username_pw_set(self._username, self._password)
+        if self.config.get("tls", False):
+            if not self._ca_file:
+                raise RuntimeError("MQTT TLS is enabled but ca_file is missing")
+            self._client.tls_set(ca_certs=self._ca_file, cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS_CLIENT)
         
         # Connect
         try:
@@ -79,10 +89,15 @@ class MQTTBridge:
     async def stop(self) -> None:
         """Stop MQTT connection."""
         if self._client:
-            self._client.loop_stop()
             self._client.disconnect()
+            self._client.loop_stop()
             self._client = None
         self._connected = False
+        for future in self._pending_commands.values():
+            if not future.done():
+                future.cancel()
+        self._pending_commands.clear()
+        self._loop = None
         logger.info("MQTT bridge stopped")
     
     def _on_connect(self, client, userdata, flags, rc):
@@ -95,9 +110,11 @@ class MQTTBridge:
             topics = self.config.get("topics", {})
             telemetry_topic = topics.get("devices", "devices/+/telemetry")
             status_topic = topics.get("status", "devices/+/status")
+            result_topic = topics.get("command_results", "pi-control/v1/devices/+/command-result")
             
             client.subscribe(telemetry_topic)
             client.subscribe(status_topic)
+            client.subscribe(result_topic, qos=1)
             logger.debug("Subscribed to topics", telemetry=telemetry_topic, status=status_topic)
         else:
             logger.error("MQTT connection failed", rc=rc)
@@ -114,11 +131,11 @@ class MQTTBridge:
         """Handle incoming MQTT message."""
         try:
             topic_parts = msg.topic.split("/")
-            if len(topic_parts) < 3:
+            if len(topic_parts) != 5 or topic_parts[:3] != ["pi-control", "v1", "devices"]:
                 return
             
-            device_id = topic_parts[1]
-            message_type = topic_parts[2]
+            device_id = topic_parts[3]
+            message_type = topic_parts[4]
             
             payload = json.loads(msg.payload.decode("utf-8"))
             
@@ -126,6 +143,8 @@ class MQTTBridge:
                 self._handle_telemetry(device_id, payload)
             elif message_type == "status":
                 self._handle_status(device_id, payload)
+            elif message_type == "command-result":
+                self._handle_command_result(payload)
             
         except json.JSONDecodeError:
             logger.warning("Invalid JSON in MQTT message", topic=msg.topic)
@@ -165,27 +184,51 @@ class MQTTBridge:
         if not self._connected or not self._client:
             return {"success": False, "error": "MQTT not connected"}
         
-        topic = f"devices/{device_id}/command"
+        topic_template = self.config.get("topics", {}).get(
+            "commands", "pi-control/v1/devices/{device_id}/command"
+        )
+        topic = topic_template.format(device_id=device_id)
+        command_id = str(uuid.uuid4())
         message = {
+            "command_id": command_id,
             "command": command,
             "payload": payload or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         try:
+            future = self._loop.create_future()
+            self._pending_commands[command_id] = future
             result = await asyncio.wait_for(
-                asyncio.to_thread(self._client.publish, topic, json.dumps(message), 1),
+                asyncio.to_thread(self._publish_and_wait, topic, message),
                 timeout=5.0
             )
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 logger.info("Command sent", device=device_id, command=command)
-                return {"success": True, "message": f"Command '{command}' sent to {device_id}"}
+                try:
+                    command_result = await asyncio.wait_for(future, timeout=5.0)
+                    return {"success": True, "acknowledged": True, "command_id": command_id, "result": command_result}
+                except asyncio.TimeoutError:
+                    return {"success": True, "acknowledged": False, "command_id": command_id, "message": "Command published; result timeout"}
             else:
                 return {"success": False, "error": f"Publish failed: {result.rc}"}
         except asyncio.TimeoutError:
             return {"success": False, "error": "MQTT publish timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            self._pending_commands.pop(command_id, None)
+
+    def _publish_and_wait(self, topic: str, message: Dict):
+        result = self._client.publish(topic, json.dumps(message), qos=1)
+        result.wait_for_publish(timeout=4.0)
+        return result
+
+    def _handle_command_result(self, payload: Dict) -> None:
+        command_id = payload.get("command_id")
+        future = self._pending_commands.get(str(command_id))
+        if future and not future.done() and self._loop:
+            self._loop.call_soon_threadsafe(future.set_result, payload)
     
     def get_devices(self) -> List[Dict]:
         """Get list of known devices."""

@@ -6,7 +6,7 @@ Provides real-time updates for telemetry, logs, and resource changes.
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, Set
 from dataclasses import dataclass, field
 
@@ -80,7 +80,7 @@ class SSEManager:
             "event": event,
             "channel": channel,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         async with self._lock:
@@ -101,7 +101,7 @@ class SSEManager:
             message = {
                 "event": event,
                 "data": data,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             await client.queue.put(message)
     

@@ -7,6 +7,7 @@ from datetime import datetime
 from db import get_control_db
 from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
+from services.notification_service import notification_service
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,15 @@ class AlertManager:
             "value": value,
             "fired_at": now
         })
+        await notification_service.create(
+            kind="alert",
+            severity=severity,
+            title=rule_name,
+            message=message,
+            channels=["in_app", "telegram"],
+            dedupe_key=f"alert:{rule_id}",
+            resource_id=rule_id,
+        )
         logger.warning(f"Alert Fired: {message}")
 
     async def _resolve_alert_if_active(self, db, rule_id):
@@ -154,6 +164,7 @@ class AlertManager:
             await db.commit()
             
             await sse_manager.broadcast(Channels.ALERTS, "alert_resolved", {"alert_id": alert_id})
+            await notification_service.resolve_dedupe(f"alert:{rule_id}")
             logger.info(f"Alert Resolved: {alert_id}")
 
     def _flatten_telemetry(self, data, prefix=''):

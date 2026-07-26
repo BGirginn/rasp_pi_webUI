@@ -25,12 +25,13 @@ readonly NC='\033[0m'
 
 # Directories
 readonly PROJECT_DIR="/opt/pi-control"
+readonly RELEASE_DIR="$PROJECT_DIR/current"
 readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
 
 # Endpoints
 readonly API_BASE="http://127.0.0.1:8080"
-readonly WEB_BASE="http://127.0.0.1"
+readonly WEB_BASE="https://$(hostname -I | awk '{print $1}')"
 
 # Counters
 PASSED=0
@@ -57,17 +58,17 @@ print_section() {
 
 check_pass() {
     echo -e "  ${GREEN}✓${NC} $1"
-    ((PASSED++))
+    ((PASSED += 1))
 }
 
 check_fail() {
     echo -e "  ${RED}✗${NC} $1"
-    ((FAILED++))
+    ((FAILED += 1))
 }
 
 check_warn() {
     echo -e "  ${YELLOW}⚠${NC} $1"
-    ((WARNINGS++))
+    ((WARNINGS += 1))
 }
 
 check_info() {
@@ -103,12 +104,14 @@ check_services() {
         journalctl -u pi-control -n 5 --no-pager 2>/dev/null | sed 's/^/    /' || true
     fi
     
-    # Caddy service
-    if systemctl is-active --quiet caddy 2>/dev/null; then
-        check_pass "Caddy service is running"
-    else
-        check_fail "Caddy service is not running"
-    fi
+    local service
+    for service in pi-agent caddy mosquitto; do
+        if systemctl is-active --quiet "$service" 2>/dev/null; then
+            check_pass "$service service is running"
+        else
+            check_fail "$service service is not running"
+        fi
+    done
 }
 
 # ============================================================================
@@ -138,28 +141,26 @@ check_api() {
         fi
     fi
     
-    # Docs endpoint
-    if curl -sf --max-time 5 "$API_BASE/api/docs" > /dev/null 2>&1; then
+    # Docs are intentionally disabled when API_DEBUG=false.
+    local docs_status
+    docs_status=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$API_BASE/api/docs" 2>/dev/null || echo "000")
+    if [[ "$docs_status" == "200" ]]; then
         check_pass "API docs endpoint accessible"
+    elif [[ "$docs_status" == "404" ]]; then
+        check_pass "API docs disabled in production"
     else
-        check_warn "API docs endpoint not accessible"
+        check_warn "API docs endpoint returned HTTP $docs_status"
     fi
     
     # Authentication endpoint
-    local auth_response
-    if auth_response=$(curl -sf --max-time 5 -X POST "$API_BASE/api/auth/login" \
+    local auth_status
+    auth_status=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X POST "$API_BASE/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d '{"username":"test","password":"test"}' 2>/dev/null); then
-        check_pass "Auth endpoint responding"
-    elif curl -sf --max-time 5 -X POST "$API_BASE/api/auth/login" 2>&1 | grep -q "422\|401\|400"; then
-        check_pass "Auth endpoint responding (validation working)"
+        -d '{"username":"__health_check__","password":"invalid-health-check-password"}' 2>/dev/null || echo "000")
+    if [[ "$auth_status" == "400" || "$auth_status" == "401" || "$auth_status" == "422" ]]; then
+        check_pass "Auth endpoint responding (invalid credentials rejected)"
     else
-        # Try with GET to see if endpoint exists
-        if curl -sf --max-time 5 -X OPTIONS "$API_BASE/api/auth/login" > /dev/null 2>&1; then
-            check_pass "Auth endpoint exists"
-        else
-            check_warn "Auth endpoint not responding"
-        fi
+        check_warn "Auth endpoint returned HTTP $auth_status"
     fi
 }
 
@@ -172,7 +173,7 @@ check_web() {
     
     # Main page
     local web_response
-    if web_response=$(curl -sf --max-time 5 "$WEB_BASE/" 2>/dev/null); then
+    if web_response=$(curl -ksf --max-time 5 "$WEB_BASE/" 2>/dev/null); then
         if echo "$web_response" | grep -q "html"; then
             check_pass "Web interface accessible"
         else
@@ -183,11 +184,11 @@ check_web() {
     fi
     
     # Check for static assets
-    if [[ -d "$PROJECT_DIR/panel/ui/dist" ]]; then
+    if [[ -d "$RELEASE_DIR/panel/ui/dist" ]]; then
         check_pass "Frontend build exists"
         
         local file_count
-        file_count=$(find "$PROJECT_DIR/panel/ui/dist" -type f | wc -l)
+        file_count=$(find "$RELEASE_DIR/panel/ui/dist" -type f | wc -l)
         check_info "Static files: $file_count"
     else
         check_fail "Frontend build missing"
@@ -289,7 +290,7 @@ check_network() {
     fi
     
     # Port checks
-    local ports=("80" "8080")
+    local ports=("80" "443" "8080" "8883")
     for port in "${ports[@]}"; do
         if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
             check_pass "Port $port is listening"
@@ -381,13 +382,13 @@ print_summary() {
     local local_ip
     local_ip=$(hostname -I | awk '{print $1}')
     echo -e "  ${BOLD}🌐 Access your dashboard:${NC}"
-    echo -e "     Local: ${CYAN}http://$local_ip${NC}"
+    echo -e "     Local: ${CYAN}https://$local_ip${NC}"
     
     if command -v tailscale &>/dev/null && tailscale status &>/dev/null 2>&1; then
-        local ts_ip
-        ts_ip=$(tailscale ip -4 2>/dev/null || echo "")
-        if [[ -n "$ts_ip" ]]; then
-            echo -e "     Tailscale: ${CYAN}http://$ts_ip${NC}"
+        local ts_dns
+        ts_dns=$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)
+        if [[ -n "$ts_dns" ]]; then
+            echo -e "     Tailscale: ${CYAN}https://$ts_dns${NC}"
         fi
     fi
     

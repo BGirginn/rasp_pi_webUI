@@ -5,8 +5,10 @@ Main entry point for the Panel API server.
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict, deque
+import ipaddress
+import os
 from time import monotonic
 
 import structlog
@@ -20,12 +22,16 @@ from slowapi.util import get_remote_address
 from config import settings
 from db import init_db, close_db
 from db.migrations import run_migrations
-from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests, dns_filter
+from routers import auth, resources, telemetry, logs, jobs, alerts, network, devices, admin_console, terminal, system, files, iot, archive, backup, sse, audit, manifests, dns_filter, notifications, projects, appstore
 from services.agent_client import agent_client
 from services.alert_manager import alert_manager
 from services.telemetry_collector import telemetry_collector
 from services.discovery import discovery_service
 from services.gdrive_backup import backup_service
+from services.job_scheduler import job_scheduler
+from services.resource_event_bridge import resource_event_bridge
+from services.notification_service import notification_service
+from services.audit_chain import audit_chain_service
 
 # ... existing code ...
 
@@ -57,10 +63,15 @@ _rate_windows = defaultdict(deque)
 
 
 def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
     forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    return request.client.host if request.client else "unknown"
+    if peer in {"127.0.0.1", "::1"} and forwarded_for:
+        candidate = forwarded_for.rsplit(",", 1)[-1].strip()
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            pass
+    return peer
 
 
 def _check_rate_limit(key: str, limit: int, window_seconds: int = 60) -> bool:
@@ -80,6 +91,11 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Pi Control Panel API", version="1.0.0")
     
+    # Refresh paths before migrations so test/reload environments cannot migrate
+    # a stale import-time location.
+    settings.database_path = os.getenv("DATABASE_PATH", settings.database_path)
+    settings.telemetry_db_path = os.getenv("TELEMETRY_DB_PATH", settings.telemetry_db_path)
+
     # Run database migrations
     await run_migrations(settings.database_path)
     
@@ -95,11 +111,19 @@ async def lifespan(app: FastAPI):
     await telemetry_collector.start()
     await discovery_service.start()
     await backup_service.start_scheduler()
+    await job_scheduler.start()
+    await resource_event_bridge.start()
+    await notification_service.start()
+    await audit_chain_service.start()
 
     yield
 
     # Shutdown
     logger.info("Shutting down Pi Control Panel API")
+    await audit_chain_service.stop()
+    await notification_service.stop()
+    await resource_event_bridge.stop()
+    await job_scheduler.stop()
     await backup_service.stop_scheduler()
     await discovery_service.stop()
     await telemetry_collector.stop()
@@ -137,7 +161,7 @@ if settings.cors_origins_list:
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all incoming requests."""
-    start_time = datetime.utcnow()
+    start_time = datetime.now(timezone.utc)
     path = request.url.path
     client_ip = _client_ip(request)
 
@@ -161,7 +185,7 @@ async def log_requests(request: Request, call_next):
     elif "text/html" in response.headers.get("content-type", "").lower():
         response.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
     
-    duration_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+    duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
     
     logger.info(
         "Request completed",
@@ -206,6 +230,9 @@ app.include_router(manifests.router, prefix="/api/manifests", tags=["Manifests"]
 app.include_router(iot.router, prefix="/api/iot", tags=["IoT"])
 app.include_router(archive.router, prefix="/api/archive", tags=["Archive"])
 app.include_router(backup.router, prefix="/api/backup", tags=["Backup"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
+app.include_router(appstore.router, prefix="/api", tags=["App Store"])
 
 
 # Health check endpoint
@@ -214,7 +241,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0"
     }
 

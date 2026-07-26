@@ -270,6 +270,22 @@ async def list_unmanaged_resources(user: dict = Depends(get_current_user)):
     ]
 
 
+@router.get("/{resource_id}/dependencies")
+async def get_resource_dependencies(
+    resource_id: str,
+    user: dict = Depends(get_current_user),
+):
+    service_name = resource_id.removeprefix("systemd-")
+    if not service_name.endswith(".service"):
+        service_name = f"{service_name}.service"
+    try:
+        return await agent_client.call(
+            "resource.dependencies", {"resource_id": service_name}
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Dependency graph unavailable: {exc}")
+
+
 @router.get("/{resource_id}", response_model=ResourceResponse)
 async def get_resource(resource_id: str, user: dict = Depends(get_current_user)):
     """Get a specific resource."""
