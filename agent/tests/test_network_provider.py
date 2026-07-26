@@ -77,7 +77,7 @@ async def test_wifi_status_parses_connection_and_ip():
             (0, "enabled\n", ""),
             (0, "wlan0:wifi:connected:Lab WiFi\neth0:ethernet:connected:Wired\n", ""),
             (0, "IP4.ADDRESS[1]:192.168.1.5/24\n", ""),
-            (0, "*:78:5180\n:50:2412\n", ""),
+            (0, "*:78:5180 MHz\n:50:2412 MHz\n", ""),
         ]
     )
 

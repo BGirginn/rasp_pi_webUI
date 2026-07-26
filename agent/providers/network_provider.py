@@ -312,9 +312,12 @@ class NetworkProvider(BaseProvider):
                                         if wifi_parts[1].isdigit()
                                         else None
                                     )
+                                    raw_frequency = wifi_parts[2].strip()
                                     frequency = (
-                                        f"{wifi_parts[2]} MHz" if wifi_parts[2] else None
-                                    )
+                                        raw_frequency
+                                        if raw_frequency.lower().endswith("mhz")
+                                        else f"{raw_frequency} MHz"
+                                    ) if raw_frequency else None
                                     break
                         break
             
