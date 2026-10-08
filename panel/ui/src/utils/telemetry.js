@@ -23,3 +23,16 @@ export function getPowerRails(metrics) {
   });
   return Array.from(rails.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
+
+export function summarizeTelemetry(rows, metrics) {
+  return Object.fromEntries(metrics.map(({ key }) => {
+    const values = rows.map((row) => row[key]).filter(Number.isFinite);
+    return [key, {
+      count: values.length,
+      latest: values.at(-1),
+      average: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined,
+      min: values.length ? Math.min(...values) : undefined,
+      max: values.length ? Math.max(...values) : undefined,
+    }];
+  }));
+}

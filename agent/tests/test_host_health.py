@@ -12,10 +12,18 @@ from telemetry import host_health
 
 @pytest.mark.asyncio
 async def test_agent_persists_health_with_existing_metrics(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
     import aiosqlite
 
+    import telemetry.collector as collector_module
     from telemetry.collector import TelemetryCollector
 
+    monkeypatch.setattr(collector_module.psutil, "net_io_counters", Mock(return_value={
+        "lo": SimpleNamespace(bytes_recv=999, bytes_sent=999),
+        "eth0": SimpleNamespace(bytes_recv=100, bytes_sent=30),
+        "wlan0": SimpleNamespace(bytes_recv=200, bytes_sent=50),
+    }))
     health = {
         "host.net.internet_connected": 0.0,
         "host.power.on": 1.0,
@@ -29,6 +37,9 @@ async def test_agent_persists_health_with_existing_metrics(monkeypatch, tmp_path
     collector = TelemetryCollector({"telemetry": {"db_path": str(db_path)}})
     await collector._init_db()
     readings = await collector._collect_metrics()
+    values = {reading["metric"]: reading["value"] for reading in readings}
+    assert values["host.net.rx_bytes"] == 300
+    assert values["host.net.tx_bytes"] == 80
     collector._batch = readings
     await collector._flush_batch()
     async with aiosqlite.connect(db_path) as db:

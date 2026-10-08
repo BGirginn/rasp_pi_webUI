@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakTelemetryGaps, formatObservedState, getPowerRails } from './telemetry';
+import { breakTelemetryGaps, formatObservedState, getPowerRails, summarizeTelemetry } from './telemetry';
 
 describe('observed host telemetry', () => {
   it('shows unknown when the Pi cannot be observed', () => {
@@ -22,5 +22,14 @@ describe('observed host telemetry', () => {
       'host.power.input_voltage_v': 5,
       'host.power.pmic.bad.current_a': NaN,
     })).toEqual([{ name: 'vdd_core', voltage_v: 0.75, current_a: 0 }]);
+  });
+});
+
+describe('history statistics', () => {
+  it('preserves zero and excludes gaps, nulls and non-finite samples', () => {
+    const result = summarizeTelemetry([{ cpu: 0 }, {}, { cpu: null }, { cpu: NaN }, { cpu: 20 }], [{ key: 'cpu' }, { key: 'disk' }]);
+    expect(result.cpu).toEqual({ count: 2, latest: 20, average: 10, min: 0, max: 20 });
+    expect(result.disk.count).toBe(0);
+    expect(result.disk.average).toBeUndefined();
   });
 });

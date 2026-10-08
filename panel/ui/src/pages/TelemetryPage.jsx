@@ -26,10 +26,10 @@ import {
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
 import { formatBytes, formatSpeed, formatUptime } from '../utils/format';
-import { breakTelemetryGaps, formatObservedState, getPowerRails } from '../utils/telemetry';
+import { breakTelemetryGaps, formatObservedState, getPowerRails, summarizeTelemetry } from '../utils/telemetry';
 
 const timeRanges = [
-  { label: 'Live', value: 'live', seconds: 300, source: 'raw', step: 5, refreshMs: 5000 },
+  { label: 'Live', value: 'live', seconds: 300, source: 'raw', step: 30, refreshMs: 5000 },
   { label: '1 Hour', value: '1h', seconds: 3600, source: 'raw', step: 30, refreshMs: 30000 },
   { label: '6 Hours', value: '6h', seconds: 21600, source: 'raw', step: 120, refreshMs: 30000 },
   { label: '1 Day', value: '1d', seconds: 86400, source: 'raw', step: 300, refreshMs: 60000 },
@@ -46,7 +46,7 @@ const historyMetricConfigs = [
   { key: 'sysCurrent', label: '3V3 SYS Rail Current', apiMetric: 'host.power.pmic.3v3_sys.current_a', color: '#be123c', axis: 'current', unit: 'A', decimals: 4 },
   { key: 'cpu', label: 'CPU', apiMetric: 'host.cpu.pct_total', color: '#2563eb', unit: '%', axis: 'percent', decimals: 1 },
   { key: 'memory', label: 'Memory', apiMetric: 'host.mem.pct', color: '#16a34a', unit: '%', axis: 'percent', decimals: 1 },
-  { key: 'disk', label: 'Disk', apiMetric: 'disk._root.used_pct', color: '#f59e0b', unit: '%', axis: 'percent', decimals: 1 },
+  { key: 'disk', label: 'Disk', apiMetric: 'disk.root.used_pct', color: '#f59e0b', unit: '%', axis: 'percent', decimals: 1 },
   { key: 'temperature', label: 'Temperature', apiMetric: 'host.temp.cpu_c', color: '#ef4444', unit: '°C', axis: 'temperature', decimals: 1 },
   { key: 'load1', label: 'Load 1m', apiMetric: 'host.load.1m', color: '#7c3aed', axis: 'load', decimals: 2 },
   { key: 'load5', label: 'Load 5m', apiMetric: 'host.load.5m', color: '#a855f7', axis: 'load', decimals: 2, dash: '6 4' },
@@ -89,32 +89,20 @@ function formatTooltipTime(ts) {
   return new Date(ts * 1000).toLocaleString('tr-TR');
 }
 
-function toRatePoints(points) {
-  if (!points?.length) {
-    return [];
-  }
-
-  return points.map((point, index) => {
-    if (index === 0) {
-      return { ts: point.ts, value: 0 };
-    }
-
-    const previous = points[index - 1];
+function toRatePoints(points, step) {
+  return points.slice(1).flatMap((point, index) => {
+    const previous = points[index];
     const deltaTs = point.ts - previous.ts;
-    if (deltaTs <= 0) {
-      return { ts: point.ts, value: 0 };
-    }
-
-    return {
-      ts: point.ts,
-      value: Math.max((point.value - previous.value) / deltaTs, 0),
-    };
+    const deltaValue = point.value - previous.value;
+    // Counter resets and recording outages cannot establish a measured rate.
+    if (deltaTs <= 0 || deltaTs > step * 3 || deltaValue < 0) return [];
+    return [{ ts: point.ts, value: deltaValue / deltaTs }];
   });
 }
 
 function formatHistoryValue(metric, value) {
   if (value == null || !Number.isFinite(value)) {
-    return '-';
+    return '—';
   }
 
   if (metric.format === 'speed') {
@@ -141,18 +129,19 @@ export function TelemetryPage() {
   const [telemetry, setTelemetry] = useState(null);
   const [history, setHistory] = useState([]);
   const [selectedMetricKeys, setSelectedMetricKeys] = useState(
-    historyMetricConfigs.map((metric) => metric.key)
+    historyMetricConfigs.filter((metric) => !['state', 'voltage', 'current'].includes(metric.axis)).map((metric) => metric.key)
   );
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
   const [currentUnavailable, setCurrentUnavailable] = useState(false);
   const hasHistoryDataRef = useRef(false);
   const telemetryHashRef = useRef('');
   const historyHashRef = useRef('');
   const telemetryInFlightRef = useRef(false);
-  const historyInFlightRef = useRef(false);
+  const historyInFlightRef = useRef(null);
   const { theme, isDarkMode } = useTheme();
   const themeColors = getThemeColors(theme);
 
@@ -189,11 +178,12 @@ export function TelemetryPage() {
   }, []);
 
   const loadHistory = useCallback(async () => {
-    if (historyInFlightRef.current) {
+    if (historyInFlightRef.current?.range === activeRange) {
       return;
     }
 
-    historyInFlightRef.current = true;
+    const request = { range: activeRange };
+    historyInFlightRef.current = request;
     const end = Math.floor(Date.now() / 1000);
     const start = end - activeRangeConfig.seconds;
     const endpoint = activeRangeConfig.source === 'summary'
@@ -213,6 +203,7 @@ export function TelemetryPage() {
         step: activeRangeConfig.step,
       });
 
+      if (historyInFlightRef.current !== request) return;
       const dataMap = new Map();
 
       response.data.forEach((series) => {
@@ -222,8 +213,8 @@ export function TelemetryPage() {
         }
 
         const sourcePoints = metric.transform === 'rate'
-          ? toRatePoints(series.points || [])
-          : (series.points || []);
+          ? toRatePoints((series.points || []).filter((point) => Number.isFinite(point.value)), activeRangeConfig.step)
+          : (series.points || []).filter((point) => Number.isFinite(point.value));
 
         sourcePoints.forEach((point) => {
           if (!dataMap.has(point.ts)) {
@@ -247,14 +238,16 @@ export function TelemetryPage() {
         setHistory(mergedRows);
       }
       hasHistoryDataRef.current = mergedRows.length > 0;
+      setHistoryError(null);
     } catch (err) {
+      if (historyInFlightRef.current !== request) return;
       console.error('Failed to load history:', err);
-      setError('History data unavailable');
+      setHistoryError('History data unavailable. Refresh to retry.');
     } finally {
-      if (shouldShowLoader) {
+      if (historyInFlightRef.current === request) {
         setHistoryLoading(false);
+        historyInFlightRef.current = null;
       }
-      historyInFlightRef.current = false;
     }
   }, [activeRange, activeRangeConfig]);
 
@@ -266,6 +259,9 @@ export function TelemetryPage() {
   useEffect(() => {
     hasHistoryDataRef.current = false;
     historyHashRef.current = '';
+    setHistory([]);
+    setHistoryLoading(true);
+    setHistoryError(null);
     loadCurrentTelemetry();
     loadHistory();
 
@@ -308,6 +304,10 @@ export function TelemetryPage() {
       { label: 'Temperature', value: currentMetrics['host.temp.cpu_c'] || 0, unit: '°C', icon: Thermometer, color: 'red', barValue: Math.min((currentMetrics['host.temp.cpu_c'] || 0) * 1.2, 100) },
     ];
   }, [telemetry]);
+
+  const powerRails = currentUnavailable ? [] : getPowerRails(telemetry?.metrics);
+  const historySummaries = useMemo(() => summarizeTelemetry(history, historyMetricConfigs), [history]);
+  const powerMetricConfigs = historyMetricConfigs.filter((metric) => ['voltage', 'current'].includes(metric.axis));
 
   const allMetricsSelected = selectedMetricKeys.length === historyMetricConfigs.length;
 
@@ -444,22 +444,28 @@ export function TelemetryPage() {
           <div><span className="text-gray-500">Input Voltage</span><p className="text-xl font-bold">{currentUnavailable || telemetry?.metrics?.['host.power.input_voltage_v'] == null ? 'Unavailable' : `${telemetry.metrics['host.power.input_voltage_v'].toFixed(3)} V`}</p></div>
         </div>
         <p className="text-sm text-gray-500 mb-4">Missing samples mean unknown status. A powered-off Pi cannot record itself. PMIC rail currents exclude USB and direct 5 V loads; they are not total supply current.</p>
-        {currentUnavailable || !getPowerRails(telemetry?.metrics).length ? (
+        <div className="flex items-baseline justify-between gap-3 mb-3">
+          <h4 className={`font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Power rail measurements</h4>
+          <span className="text-xs text-gray-500">{telemetry?.timestamp ? `Updated ${new Date(telemetry.timestamp).toLocaleTimeString('tr-TR')}` : 'Awaiting measurements'}</span>
+        </div>
+        {powerRails.length === 0 ? (
           <p className="text-sm text-gray-500">PMIC measurements unavailable</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead><tr className="text-gray-500"><th className="py-2">PMIC Rail</th><th>Voltage (V)</th><th>Current (A)</th></tr></thead>
-              <tbody>{getPowerRails(telemetry?.metrics).map((rail) => (
-                <tr key={rail.name} className={isDarkMode ? 'border-t border-white/10' : 'border-t border-gray-100'}>
-                  <td className="py-2 font-mono">{rail.name.toUpperCase()}</td>
-                  <td>{rail.voltage_v?.toFixed(3) ?? '—'}</td>
-                  <td>{rail.current_a?.toFixed(4) ?? '—'}</td>
+            <table aria-label="Power rail measurements" className={`w-full text-sm ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+              <thead><tr className={`text-xs uppercase tracking-wide ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-600'}`}><th scope="col" className="p-3 text-left">PMIC Rail</th><th scope="col" className="p-3 text-right">Voltage · V</th><th scope="col" className="p-3 text-right">Current · mA</th><th scope="col" className="p-3 text-right">Calculated · mW</th></tr></thead>
+              <tbody>{powerRails.map((rail) => (
+                <tr key={rail.name} className={isDarkMode ? 'border-t border-white/10 even:bg-white/[0.025]' : 'border-t border-gray-100 even:bg-gray-50/60'}>
+                  <th scope="row" className="p-3 text-left font-mono font-medium">{rail.name.toUpperCase().replaceAll('_', ' ')}</th>
+                  <td className="p-3 text-right font-mono tabular-nums">{rail.voltage_v?.toFixed(3) ?? '—'}</td>
+                  <td className="p-3 text-right font-mono tabular-nums">{rail.current_a == null ? '—' : (rail.current_a * 1000).toFixed(1)}</td>
+                  <td className="p-3 text-right font-mono tabular-nums">{rail.voltage_v == null || rail.current_a == null ? '—' : (rail.voltage_v * rail.current_a * 1000).toFixed(1)}</td>
                 </tr>
               ))}</tbody>
             </table>
           </div>
         )}
+        <p className="text-xs text-gray-500 mt-3">Calculated rail power = voltage × current. — means no measurement; rail power is not the total USB-C input power.</p>
       </div>
 
       {error && (
@@ -468,6 +474,34 @@ export function TelemetryPage() {
           <span className="text-sm font-medium">{error}</span>
         </div>
       )}
+
+      <section aria-label="Power history" className={`rounded-[32px] p-6 border mb-8 ${isDarkMode ? 'bg-black/40 border-white/10 text-gray-200' : 'bg-white border-gray-200 text-gray-800'}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+          <div>
+            <h3 className="text-xl font-bold">Power History</h3>
+            <p className="text-sm text-gray-500 mt-1">Input voltage and measured rail currents · {activeRangeConfig.label}</p>
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs font-semibold">
+            {powerMetricConfigs.map((metric) => <span key={metric.key} className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: metric.color }} />{metric.label}</span>)}
+          </div>
+        </div>
+        <div className="h-72 w-full">
+          {historyLoading ? <p role="status">Loading power history…</p> : historyError ? <p role="alert">{historyError}</p> : !powerMetricConfigs.some((metric) => historySummaries[metric.key].count) ? (
+            <p className="text-gray-500">No measured power history available for this range</p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={history} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'} />
+                <XAxis dataKey="time" fontSize={11} minTickGap={24} stroke="#6b7280" />
+                <YAxis yAxisId="voltage" domain={['auto', 'auto']} tickFormatter={(value) => `${value.toFixed(2)} V`} width={64} fontSize={11} stroke="#d97706" />
+                <YAxis yAxisId="current" orientation="right" domain={[0, 'auto']} tickFormatter={(value) => `${(value * 1000).toFixed(0)} mA`} width={74} fontSize={11} stroke="#e11d48" />
+                <Tooltip content={<CustomTooltip />} />
+                {powerMetricConfigs.map((metric) => <Line key={metric.key} dataKey={metric.key} yAxisId={metric.axis} stroke={metric.color} strokeWidth={2} type="linear" dot={historySummaries[metric.key].count === 1 ? { r: 4 } : false} connectNulls={false} isAnimationActive={false} />)}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {loading ? (
@@ -543,7 +577,7 @@ export function TelemetryPage() {
                 System Performance History
               </h3>
               <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                System metrics, internet reachability and measured power rails up to 90 days. State buckets show the fraction of observed on / connected samples.
+                Recorded system metrics up to 90 days. Live samples are collected every 30 seconds; missing intervals stay empty.
               </p>
             </div>
           </div>
@@ -597,7 +631,9 @@ export function TelemetryPage() {
         <div className="h-[460px] w-full">
           {historyLoading ? (
             <div className={`h-full w-full rounded-3xl animate-pulse ${isDarkMode ? 'bg-white/5' : 'bg-gray-100'}`} />
-          ) : history.length === 0 ? (
+          ) : historyError ? (
+            <p role="alert" className="text-red-500">{historyError}</p>
+          ) : !visibleMetricConfigs.some((metric) => historySummaries[metric.key].count) ? (
             <div className={`h-full flex items-center justify-center rounded-3xl border ${isDarkMode ? 'border-white/10 text-gray-400' : 'border-gray-200 text-gray-500'}`}>
               No historical telemetry available for this range
             </div>
@@ -644,7 +680,7 @@ export function TelemetryPage() {
                     stroke={metric.color}
                     strokeWidth={metric.axis === 'percent' || metric.key === 'temperature' ? 2.5 : 1.8}
                     strokeDasharray={metric.dash}
-                    dot={false}
+                    dot={historySummaries[metric.key].count === 1 ? { r: 4 } : false}
                     connectNulls={false}
                     isAnimationActive={false}
                   />
@@ -653,6 +689,22 @@ export function TelemetryPage() {
             </ResponsiveContainer>
           )}
         </div>
+        {!historyLoading && !historyError && history.length > 0 && (
+          <div className="overflow-x-auto mt-6">
+            <table aria-label="System performance statistics" className={`w-full text-sm ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+              <thead><tr className="text-xs text-gray-500"><th scope="col" className="py-3 text-left">Metric</th>{['Latest', 'Average', 'Minimum', 'Maximum', 'Samples'].map((label) => <th scope="col" className="p-3 text-right" key={label}>{label}</th>)}</tr></thead>
+              <tbody>{visibleMetricConfigs.map((metric) => {
+                const stats = historySummaries[metric.key];
+                return <tr key={metric.key} className={isDarkMode ? 'border-t border-white/10' : 'border-t border-gray-100'}>
+                  <th scope="row" className="py-3 text-left font-medium">{metric.label}</th>
+                  {[stats.latest, stats.average, stats.min, stats.max].map((value, index) => <td key={index} className="p-3 text-right font-mono tabular-nums whitespace-nowrap">{formatHistoryValue(metric, value)}</td>)}
+                  <td className="p-3 text-right font-mono tabular-nums">{stats.count}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+            <p className="text-xs text-gray-500 mt-3">Statistics use available chart samples in the selected range. Missing measurements are shown as —.</p>
+          </div>
+        )}
       </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

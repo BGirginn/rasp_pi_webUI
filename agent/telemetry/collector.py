@@ -275,6 +275,13 @@ class TelemetryCollector:
                 {"ts": ts, "metric": f"net.{iface}.tx_bytes", "labels": {"iface": iface}, "value": counters.bytes_sent},
             ])
         
+        # Match the host-wide counters consumed by the performance history UI.
+        active_counters = [counters for iface, counters in net_io.items() if iface != "lo"]
+        metrics.extend([
+            {"ts": ts, "metric": "host.net.rx_bytes", "labels": None, "value": sum(c.bytes_recv for c in active_counters)},
+            {"ts": ts, "metric": "host.net.tx_bytes", "labels": None, "value": sum(c.bytes_sent for c in active_counters)},
+        ])
+
         # Temperature (Raspberry Pi specific)
         try:
             temps = psutil.sensors_temperatures()

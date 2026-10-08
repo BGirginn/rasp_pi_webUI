@@ -50,3 +50,21 @@ fraction), not continuous proof of uptime between samples.
 
 Existing retention policies still apply: numeric measurements are sampled, not
 unlimited waveform capture. No schema change or database reset is required.
+
+## Reading the telemetry page
+
+Power History separates input voltage (V, left axis) from the measured core and
+3V3 SYS rail currents (mA, right axis). The rail table shows all available rails
+in V and mA; calculated mW is voltage times current for that rail, not total
+USB-C consumption. A dash means the corresponding measurement is unavailable.
+
+Live history uses 30-second buckets, matching the agent's minimum collection
+interval. Gaps longer than three buckets break the plotted line; a lone recorded
+sample remains visible as a point. System Performance statistics show the latest,
+average, minimum, maximum and available chart sample count for the selected range.
+Disk history uses the canonical `disk.root.used_pct` metric. The agent also records
+`host.net.rx_bytes` and `host.net.tx_bytes`, summing non-loopback interface counters.
+These include virtual interfaces, so they are not physical-link-only traffic.
+RX/TX history needs two counter samples; resets and extended gaps have no rate.
+Older deployments did not persist these aggregate counters, so earlier ranges can
+show no RX/TX history. Existing per-interface records are preserved.
