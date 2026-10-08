@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { User, Shield, Users, Plus, Edit, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle } from 'lucide-react';
+import { User, Shield, Users, Plus, Trash2, Eye, EyeOff, Bell, Settings, RefreshCw, CheckCircle, Send, Laptop } from 'lucide-react';
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
@@ -34,13 +34,19 @@ export function SettingsPage() {
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'viewer' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddUserPassword, setShowAddUserPassword] = useState(false);
+  const [telegram, setTelegram] = useState({ token: '', chat_id: '' });
+  const [telegramConfigured, setTelegramConfigured] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [totpSetup, setTotpSetup] = useState(null);
+  const [totpCode, setTotpCode] = useState('');
 
   // Alerts state
   const [alertFilter, setAlertFilter] = useState('all');
   const [alertType, setAlertType] = useState('alerts');
 
   const { theme, isDarkMode } = useTheme();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, refreshUser } = useAuth();
   const themeColors = getThemeColors(theme);
 
   // Fetch users when tab changes to 'users'
@@ -77,6 +83,86 @@ export function SettingsPage() {
     }
   };
 
+  const loadSecurity = async () => {
+    try {
+      const [sessionResponse, telegramResponse] = await Promise.all([
+        api.get('/auth/sessions', { cache: false }),
+        isAdmin ? api.get('/notifications/settings/telegram', { cache: false }) : Promise.resolve({ data: { configured: false } }),
+      ]);
+      setSessions(sessionResponse.data);
+      setTelegramConfigured(Boolean(telegramResponse.data.configured));
+    } catch (err) { console.error('Failed to load security settings', err); }
+  };
+
+  const saveTelegram = async () => {
+    try {
+      await api.put('/notifications/settings/telegram', telegram);
+      setTelegram({ token: '', chat_id: '' });
+      setTelegramConfigured(true);
+    } catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const testTelegram = async () => {
+    try { await api.post('/notifications/settings/telegram/test'); alert('Telegram notification delivered.'); }
+    catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const revokeSession = async (sessionId) => {
+    try { await api.delete(`/auth/sessions/${sessionId}`); await loadSecurity(); }
+    catch (err) { alert(err.response?.data?.detail || err.message); }
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) return alert('New password must be at least 8 characters.');
+    if (newPassword !== confirmPassword) return alert('New passwords do not match.');
+    setSavingPassword(true);
+    try {
+      await api.post('/auth/password/change', {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      alert('Password changed successfully.');
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const startTotpSetup = async () => {
+    try {
+      const response = await api.post('/auth/totp/setup');
+      setTotpSetup(response.data);
+      setTotpCode('');
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const verifyTotp = async () => {
+    try {
+      await api.post('/auth/totp/verify', { code: totpCode });
+      setTotpSetup(null);
+      setTotpCode('');
+      await refreshUser();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
+  };
+
+  const disableTotp = async () => {
+    if (!confirm('Disable two-factor authentication?')) return;
+    try {
+      await api.post('/auth/totp/disable');
+      await refreshUser();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message);
+    }
+  };
+
   const tabs = [
     { id: 'profile', label: 'Profile', icon: User },
     ...(isAdmin ? [
@@ -101,7 +187,7 @@ export function SettingsPage() {
               key={tab.id}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => { setActiveTab(tab.id); if (tab.id === 'users') loadUsers(); }}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'users') loadUsers(); if (tab.id === 'security') loadSecurity(); }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm border transition-all ${activeTab === tab.id
                 ? isDarkMode ? 'bg-purple-500/30 border-purple-500 text-purple-300' : 'bg-purple-100 border-purple-500 text-purple-700'
                 : isDarkMode ? 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
@@ -143,20 +229,6 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Email
-                  </label>
-                  <button className={`text-xs flex items-center gap-1 ${isDarkMode ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-700'}`}>
-                    <Edit size={12} />
-                    Edit
-                  </button>
-                </div>
-                <div className={`px-4 py-3 rounded-lg ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'} border ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
-                  Not set
-                </div>
-              </div>
             </div>
           </motion.div>
 
@@ -235,8 +307,14 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className={`w-full px-6 py-3 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border mt-4`}>
-                Change Password
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                disabled={savingPassword || !currentPassword || !newPassword || !confirmPassword}
+                onClick={changePassword}
+                className={`w-full px-6 py-3 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border mt-4 disabled:opacity-50`}
+              >
+                {savingPassword ? 'Changing...' : 'Change Password'}
               </motion.button>
             </div>
           </motion.div>
@@ -254,9 +332,32 @@ export function SettingsPage() {
             <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-6`}>
               Add an extra layer of security to your account by enabling two-factor authentication.
             </p>
-            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className={`px-6 py-2 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border`}>
-              Enable 2FA
-            </motion.button>
+            {user?.has_totp ? (
+              <button onClick={disableTotp} className="rounded-lg border border-red-500/40 px-6 py-2 text-red-400">
+                Disable 2FA
+              </button>
+            ) : totpSetup ? (
+              <div className="space-y-3">
+                <p className="break-all rounded-lg border border-white/10 p-3 font-mono text-xs">{totpSetup.secret}</p>
+                <a className="block break-all text-xs text-blue-400 underline" href={totpSetup.provisioning_uri}>Open authenticator setup link</a>
+                <div className="flex gap-2">
+                  <input
+                    aria-label="TOTP verification code"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={totpCode}
+                    onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className={`h-10 w-36 rounded-lg border px-3 font-mono ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-300'}`}
+                    placeholder="000000"
+                  />
+                  <button disabled={totpCode.length !== 6} onClick={verifyTotp} className="rounded-lg bg-purple-600 px-5 py-2 text-white disabled:opacity-50">Verify</button>
+                </div>
+              </div>
+            ) : (
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={startTotpSetup} className={`px-6 py-2 rounded-lg ${isDarkMode ? 'bg-purple-500/20 border-purple-500/50 text-purple-400' : 'bg-purple-500 border-purple-600 text-white'} border`}>
+                Enable 2FA
+              </motion.button>
+            )}
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className={`${isDarkMode ? 'bg-black/40' : 'bg-white'} backdrop-blur-xl rounded-2xl p-6 border ${isDarkMode ? 'border-white/10' : 'border-gray-300'}`}>
@@ -264,9 +365,29 @@ export function SettingsPage() {
               Active Sessions
             </h3>
             <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              No active sessions
+              {sessions.filter((session) => !session.revoked_at).length} active session(s)
             </p>
           </motion.div>
+          <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-300'} rounded-lg border p-6 lg:col-span-2`}>
+            <div className="mb-4 flex items-center gap-2"><Laptop size={18} /><h3 className="font-semibold">Active sessions</h3></div>
+            <div className="space-y-2">
+              {sessions.map((session) => <div key={session.id} className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${isDarkMode ? 'border-white/10' : 'border-gray-200'}`}>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm">{session.device_info || 'Unknown device'}</p><p className="text-xs text-gray-500">{session.ip_address || 'Unknown IP'} · expires {new Date(session.expires_at).toLocaleString()}</p></div>
+                <span className={`text-xs ${session.revoked_at ? 'text-red-400' : 'text-green-500'}`}>{session.revoked_at ? 'Revoked' : 'Active'}</span>
+                {!session.revoked_at && <button title="Revoke session" onClick={() => revokeSession(session.id)} className="h-8 rounded-lg border border-red-500/30 px-3 text-xs text-red-400">Revoke</button>}
+              </div>)}
+            </div>
+          </div>
+
+          {isAdmin && <div className={`${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-300'} rounded-lg border p-6 lg:col-span-2`}>
+            <div className="mb-4 flex items-center gap-2"><Send size={18} /><div><h3 className="font-semibold">Telegram notifications</h3><p className="text-xs text-gray-500">{telegramConfigured ? 'Configured' : 'Not configured'}</p></div></div>
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto_auto]">
+              <input type="password" placeholder="Bot token" value={telegram.token} onChange={(e) => setTelegram({ ...telegram, token: e.target.value })} className={`h-10 rounded-lg border px-3 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-300'}`} />
+              <input placeholder="Chat ID" value={telegram.chat_id} onChange={(e) => setTelegram({ ...telegram, chat_id: e.target.value })} className={`h-10 rounded-lg border px-3 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-300'}`} />
+              <button disabled={!telegram.token || !telegram.chat_id} onClick={saveTelegram} className="h-10 rounded-lg bg-blue-600 px-4 text-white disabled:opacity-50">Save</button>
+              <button disabled={!telegramConfigured} onClick={testTelegram} className="h-10 rounded-lg border px-4 disabled:opacity-50">Test</button>
+            </div>
+          </div>}
         </div>
       )}
 

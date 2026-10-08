@@ -206,7 +206,7 @@ class BaseProvider(ABC):
         if resource_class == ResourceClass.CORE:
             return ["logs", "stats"]  # Read-only
         elif resource_class == ResourceClass.SYSTEM:
-            return ["logs", "stats", "restart", "enable", "disable"]
+            return ["logs", "stats", "start", "stop", "restart", "enable", "disable"]
         elif resource_class == ResourceClass.APP:
             return ["logs", "stats", "start", "stop", "restart", "update", "backup", "restore"]
         elif resource_class == ResourceClass.DEVICE:

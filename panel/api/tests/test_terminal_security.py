@@ -115,6 +115,8 @@ class TestRestrictedCommandValidation:
             "systemctl status ../../../etc/passwd",
             "systemctl restart $(whoami)",
             "systemctl status service;rm -rf /",
+            "systemctl restart ssh nginx",
+            "journalctl -u ssh --output=json",
         ]
         
         for cmd in invalid:
@@ -236,6 +238,30 @@ class TestSecurityScenarios:
         
         # Verify the limit exists
         assert settings.terminal_max_message_size == 4096
+
+    @pytest.mark.asyncio
+    async def test_legacy_exec_uses_restricted_allowlist(self):
+        from routers.terminal import CommandRequest, execute_command
+
+        response = await execute_command(
+            CommandRequest(command="touch /tmp/legacy-terminal-bypass"),
+            user={"id": 1, "role": "admin"},
+        )
+
+        assert response.exit_code == 1
+        assert response.output.startswith("Command blocked:")
+
+    @pytest.mark.asyncio
+    async def test_legacy_exec_keeps_safe_mobile_commands(self):
+        from routers.terminal import CommandRequest, execute_command
+
+        response = await execute_command(
+            CommandRequest(command="whoami"),
+            user={"id": 1, "role": "admin"},
+        )
+
+        assert response.exit_code == 0
+        assert response.output.strip()
 
 
 if __name__ == "__main__":

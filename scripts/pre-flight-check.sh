@@ -4,7 +4,7 @@
 # ============================================================================
 # Validates that a Raspberry Pi meets all requirements before installation.
 #
-# Usage: ./scripts/pre-flight-check.sh [--profile full|local]
+# Usage: ./scripts/pre-flight-check.sh
 #
 # Exit codes:
 #   0 - All checks passed
@@ -26,9 +26,6 @@ readonly NC='\033[0m'
 # Counters
 ERRORS=0
 WARNINGS=0
-INSTALL_PROFILE="full"
-WEB_PORT="${WEB_PORT:-8088}"
-WITH_ADGUARD=false
 
 # Minimum requirements
 readonly MIN_RAM_MB=900        # ~1GB with some tolerance
@@ -70,92 +67,6 @@ check_warn() {
 
 check_info() {
     echo -e "  ${BLUE}ℹ${NC} $1"
-}
-
-print_usage() {
-    cat <<'EOF'
-Usage: ./scripts/pre-flight-check.sh [OPTIONS]
-
-Options:
-  --profile MODE    Installation profile: full or local (default: full)
-  --web-port PORT   Web UI port exposed by Caddy (default: 8088)
-  --with-adguard    Check AdGuard Home DNS filtering requirements
-  --no-tailscale    Alias for --profile local
-  -h, --help        Show this help text
-EOF
-}
-
-set_install_profile() {
-    local profile="$1"
-
-    case "$profile" in
-        full|local)
-            INSTALL_PROFILE="$profile"
-            ;;
-        *)
-            echo -e "  ${RED}Invalid profile:${NC} $profile"
-            echo "  Valid profiles: full, local"
-            exit 1
-            ;;
-    esac
-}
-
-set_web_port() {
-    local port="$1"
-
-    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
-        echo -e "  ${RED}Invalid web port:${NC} $port"
-        echo "  Use a port number between 1 and 65535."
-        exit 1
-    fi
-
-    WEB_PORT="$port"
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --profile)
-                if [[ $# -lt 2 ]]; then
-                    echo -e "  ${RED}--profile requires a value:${NC} full or local"
-                    exit 1
-                fi
-                set_install_profile "$2"
-                shift
-                ;;
-            --profile=*)
-                set_install_profile "${1#*=}"
-                ;;
-            --web-port)
-                if [[ $# -lt 2 ]]; then
-                    echo -e "  ${RED}--web-port requires a numeric value${NC}"
-                    exit 1
-                fi
-                set_web_port "$2"
-                shift
-                ;;
-            --web-port=*)
-                set_web_port "${1#*=}"
-                ;;
-            --with-adguard)
-                WITH_ADGUARD=true
-                ;;
-            --no-tailscale)
-                set_install_profile "local"
-                ;;
-            -h|--help)
-                print_usage
-                exit 0
-                ;;
-            *)
-                echo -e "  ${RED}Unknown option:${NC} $1"
-                echo ""
-                print_usage
-                exit 1
-                ;;
-        esac
-        shift
-    done
 }
 
 # ============================================================================
@@ -445,8 +356,8 @@ check_network() {
 check_ports() {
     print_section "Port Availability"
     
-    local ports=("$WEB_PORT" "8080" "8081")
-    local port_names=("Web" "API" "Health")
+    local ports=("80" "443" "8080" "8081")
+    local port_names=("HTTP" "HTTPS" "API" "Health")
     
     for i in "${!ports[@]}"; do
         local port="${ports[$i]}"
@@ -459,6 +370,10 @@ check_ports() {
             # Check if it's our services
             if [[ "$process" == *"caddy"* ]] || [[ "$process" == *"uvicorn"* ]]; then
                 check_pass "Port $port ($name): In use by Pi Control Panel"
+            elif [[ "$port" =~ ^(80|443|8081)$ ]] && systemctl is-active --quiet caddy 2>/dev/null; then
+                check_pass "Port $port ($name): In use by Caddy"
+            elif [[ "$port" == "8080" ]] && systemctl is-active --quiet pi-control 2>/dev/null; then
+                check_pass "Port $port ($name): In use by Pi Control Panel"
             else
                 check_warn "Port $port ($name): In use by $process"
             fi
@@ -466,21 +381,6 @@ check_ports() {
             check_pass "Port $port ($name): Available"
         fi
     done
-
-    if [[ "$WITH_ADGUARD" == true ]]; then
-        if ss -tulnp 2>/dev/null | grep -q ':53 ' || netstat -tulnp 2>/dev/null | grep -q ':53 '; then
-            local dns_process
-            dns_process=$(ss -tulnp 2>/dev/null | grep ':53 ' | awk '{print $NF}' | head -1 || echo "unknown")
-            if [[ "$dns_process" == *"AdGuardHome"* ]]; then
-                check_pass "Port 53 (DNS): In use by AdGuard Home"
-            else
-                check_fail "Port 53 (DNS): In use by $dns_process"
-                check_info "Common conflicts: systemd-resolved, dnsmasq, pihole-FTL. Free port 53 before using --with-adguard."
-            fi
-        else
-            check_pass "Port 53 (DNS): Available"
-        fi
-    fi
 }
 
 # ============================================================================
@@ -548,11 +448,7 @@ print_summary() {
     
     if [[ $ERRORS -eq 0 ]]; then
         echo -e "  ${CYAN}To install, run:${NC}"
-        local adguard_flag=""
-        if [[ "$WITH_ADGUARD" == true ]]; then
-            adguard_flag=" --with-adguard"
-        fi
-        echo -e "  ${BOLD}sudo ./install.sh --profile $INSTALL_PROFILE --web-port $WEB_PORT$adguard_flag${NC}"
+        echo -e "  ${BOLD}sudo ./install.sh${NC}"
         echo ""
     fi
 }
@@ -562,12 +458,7 @@ print_summary() {
 # ============================================================================
 
 main() {
-    parse_args "$@"
-
     print_header
-    check_info "Profile: $INSTALL_PROFILE"
-    check_info "Web port: $WEB_PORT"
-    check_info "AdGuard Home: $WITH_ADGUARD"
     
     # Run all checks
     check_raspberry_pi
@@ -577,9 +468,7 @@ main() {
     check_python
     check_nodejs
     check_caddy
-    if [[ "$INSTALL_PROFILE" == "full" ]]; then
-        check_tailscale
-    fi
+    check_tailscale
     check_network
     check_ports
     check_existing_installation

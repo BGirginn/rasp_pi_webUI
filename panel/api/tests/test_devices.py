@@ -38,6 +38,26 @@ class TestDeviceResponseModel:
         assert d.telemetry["temp"] == 25.5
         assert d.last_seen == "2025-01-01T00:00:00"
 
+    def test_storage_contract(self):
+        from routers.devices import DeviceResponse
+
+        device = DeviceResponse(
+            id="usb-storage",
+            name="Flash",
+            type="storage",
+            state="online",
+            storage={
+                "device_path": "/dev/sda",
+                "size_bytes": 32000000000,
+                "read_only": False,
+                "partitions": [],
+            },
+            allowed_actions=["mount", "unmount", "eject"],
+        )
+
+        assert device.storage["size_bytes"] == 32000000000
+        assert "eject" in device.allowed_actions
+
     def test_all_device_types(self):
         from routers.devices import DeviceResponse
         for dtype in ["usb", "serial", "gpio", "esp", "bluetooth"]:
@@ -221,6 +241,40 @@ class TestGPIOLocalStatus:
             assert pins[0]["pull"] == "up"
             assert pins[1]["pin"] == 3
             assert pins[1]["mode"] == "input"
+
+
+@pytest.mark.asyncio
+async def test_prepare_usb_job_config_uses_server_discovery(monkeypatch):
+    from unittest.mock import AsyncMock
+    from routers import devices
+
+    monkeypatch.setattr(
+        devices,
+        "_get_cached_devices",
+        AsyncMock(return_value=[{
+            "id": "usb-1",
+            "storage": {
+                "device_path": "/dev/sda",
+                "fingerprint": "server-fingerprint",
+                "transport": "usb",
+                "removable": True,
+            },
+        }]),
+    )
+
+    config = await devices.prepare_usb_job_config(
+        "usb_format",
+        {
+            "device_id": "usb-1",
+            "device_path": "/dev/mmcblk0",
+            "fingerprint": "attacker",
+            "filesystem": "exfat",
+            "confirmation": "ERASE usb-1",
+        },
+    )
+
+    assert config["device_path"] == "/dev/sda"
+    assert config["fingerprint"] == "server-fingerprint"
 
 
 if __name__ == "__main__":

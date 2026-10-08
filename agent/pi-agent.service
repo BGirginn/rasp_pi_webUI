@@ -1,45 +1,26 @@
 [Unit]
 Description=Pi Control Panel Agent
 Documentation=https://github.com/bgirginn/rasp_pi_webUI
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/opt/pi-control/agent
+WorkingDirectory=/opt/pi-control/current/agent
 
-# Main process
-ExecStart=/opt/pi-control/venv/bin/python3 /opt/pi-control/agent/pi-agent.py
-ExecReload=/bin/kill -HUP $MAINPID
-
-# Restart policy
+ExecStart=/opt/pi-control/current/venv/bin/python3 /opt/pi-control/current/agent/pi-agent.py --config /opt/pi-control/current/agent/config.yaml
 Restart=on-failure
-RestartSec=10s
-StartLimitInterval=5min
-StartLimitBurst=5
-
-# Watchdog
-WatchdogSec=60
-
-# Environment
-Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/opt/pi-control/.env
-
-# Minimal Security/Permissions (Permissive for troubleshooting)
-# NoNewPrivileges=false
-# PrivateTmp=false
-# ProtectSystem=false
-
-# Socket directory
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
 RuntimeDirectory=pi-agent
 RuntimeDirectoryMode=0755
-
-# Capabilities
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE
-AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_PTRACE
-
-# Logging
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/pi-control/pi-control.env
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pi-agent

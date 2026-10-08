@@ -19,10 +19,12 @@ export function ServicesPage() {
   const { isOperator } = useAuth();
   const themeColors = getThemeColors(theme);
 
-  const loadServices = useCallback(async ({ silent = false } = {}) => {
+  const loadServices = useCallback(async ({ silent = false, refresh = false } = {}) => {
     if (!silent && hasLoadedServicesRef.current) setRefreshing(true);
     try {
-      const response = await api.get('/resources');
+      const response = await api.get(refresh ? '/resources?refresh=true' : '/resources', {
+        cache: !refresh,
+      });
       const nextServices = response.data || [];
       const nextHash = JSON.stringify(nextServices);
       if (nextHash !== servicesHashRef.current) {
@@ -47,7 +49,7 @@ export function ServicesPage() {
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       loadServices({ silent: true });
-    }, 30000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [loadServices]);
 
@@ -57,7 +59,7 @@ export function ServicesPage() {
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeoutMs) {
-      const nextServices = await loadServices({ silent: true });
+      const nextServices = await loadServices({ silent: true, refresh: true });
       const updatedService = nextServices.find((s) => s.id === serviceId);
 
       if (updatedService) {
@@ -123,7 +125,13 @@ export function ServicesPage() {
     }));
 
     try {
-      await api.post(`/resources/${serviceId}/action`, { action });
+      const response = await api.post(`/resources/${serviceId}/action`, { action });
+      const confirmedResource = response.data?.data?.resource;
+      if (confirmedResource) {
+        setServices((current) => current.map((item) => (
+          item.id === serviceId ? confirmedResource : item
+        )));
+      }
       const result = await monitorServiceTransition(serviceId, targetState);
 
       if (!result.success) {
@@ -181,7 +189,7 @@ export function ServicesPage() {
           return next;
         });
       }, 4000);
-      loadServices({ silent: true });
+      loadServices({ silent: true, refresh: true });
       alert(`Action failed: ${err.response?.data?.detail || err.message}`);
     }
   };
@@ -245,19 +253,16 @@ export function ServicesPage() {
   };
 
   const getActionPermissions = (service, serviceState = service.state) => {
-    const canManage = isOperator;
-    const isCore = service.resource_class === 'CORE';
-    const isSystem = service.resource_class === 'SYSTEM';
-    const isApp = service.resource_class === 'APP';
-
-    const canRestart = canManage && !isCore;
-    const canStartStop = canManage && isApp && !isSystem;
+    const allowed = new Set(service.allowed_actions || []);
+    const canRestart = isOperator && allowed.has('restart');
+    const canStart = isOperator && allowed.has('start');
+    const canStop = isOperator && allowed.has('stop');
 
     return {
       canRestart,
-      canStartStop,
-      canStart: canStartStop && !['running', 'starting', 'restarting', 'stopping'].includes(serviceState),
-      canStop: canStartStop && serviceState === 'running',
+      canStartStop: canStart || canStop,
+      canStart: canStart && !['running', 'starting', 'restarting', 'stopping'].includes(serviceState),
+      canStop: canStop && serviceState === 'running',
     };
   };
 
@@ -365,7 +370,7 @@ export function ServicesPage() {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={loadServices}
+            onClick={() => loadServices({ refresh: true })}
             disabled={refreshing}
             className={`p-2 rounded-xl ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-sm'} border transition-all disabled:opacity-50`}
           >
@@ -470,6 +475,7 @@ export function ServicesPage() {
                       <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStateStyles(displayState)}`}>
                         {getStatusIcon(displayState)}
                         {formatStateLabel(displayState)}
+                        {!progress && service.sub_state && <span>({service.sub_state})</span>}
                       </div>
                     </div>
 

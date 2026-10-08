@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from db import get_control_db
 from services.sse import sse_manager, Channels
 from .auth import get_current_user, require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -109,7 +110,7 @@ async def create_alert_rule(
     
     rule_id = str(uuid.uuid4())[:8]
     notify_json = json.dumps(rule.notify_channels) if rule.notify_channels else None
-    now = datetime.utcnow().isoformat()
+    now = utc_now().isoformat()
     
     await db.execute(
         """INSERT INTO alert_rules 
@@ -133,7 +134,7 @@ async def create_alert_rule(
         id=rule_id,
         enabled=True,
         created_at=now,
-        **rule.dict()
+        **rule.model_dump()
     )
 
 
@@ -166,8 +167,8 @@ async def update_alert_rule(
     return AlertRuleResponse(
         id=rule_id,
         enabled=True,
-        created_at=datetime.utcnow().isoformat(),
-        **rule.dict()
+        created_at=utc_now().isoformat(),
+        **rule.model_dump()
     )
 
 
@@ -353,8 +354,8 @@ async def resolve_alert(
     )
     
     # Add to history
-    fired_at = datetime.fromisoformat(row[5]) if row[5] else datetime.utcnow()
-    duration = int((datetime.utcnow() - fired_at).total_seconds())
+    fired_at = datetime.fromisoformat(row[5]) if row[5] else utc_now()
+    duration = int((utc_now() - fired_at).total_seconds())
     
     await db.execute(
         """INSERT INTO alert_history 
@@ -387,7 +388,7 @@ async def alert_history(
     """Get alert history."""
     db = await get_control_db()
     
-    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    since = (utc_now() - timedelta(days=days)).isoformat()
     
     query = """SELECT alert_id, rule_id, rule_name, severity, message, 
                       value, fired_at, resolved_at, duration_seconds

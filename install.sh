@@ -19,58 +19,30 @@ readonly NC='\033[0m'
 readonly PROJECT_DIR="/opt/pi-control"
 readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
+readonly RELEASES_DIR="$PROJECT_DIR/releases"
+readonly CURRENT_LINK="$PROJECT_DIR/current"
 readonly SERVICE_ENV_FILE="$CONFIG_DIR/pi-control.env"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly PROJECT_RSYNC_EXCLUDES=(
-    --exclude 'node_modules'
-    --exclude '__pycache__'
-    --exclude '.mypy_cache'
-    --exclude '.pytest_cache'
-    --exclude '*.pyc'
-    --exclude '.DS_Store'
-    --exclude '.git'
-    --exclude '.venv'
-    --exclude 'venv'
-    --exclude '.env'
-    --exclude '*.db'
-    --exclude '*.db-shm'
-    --exclude '*.db-wal'
-    --exclude 'dist'
-)
-
 SKIP_PREFLIGHT=false
+SKIP_TAILSCALE=false
 UPGRADE_MODE=false
 VERBOSE=false
-INSTALL_PROFILE="full"
-WEB_PORT="${WEB_PORT:-8088}"
-WITH_ADGUARD=false
 
 INSTALL_USER="${SUDO_USER:-}"
 INSTALL_GROUP=""
-DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin}"
+DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-}"
 
 print_usage() {
     cat <<'EOF'
 Usage: sudo ./install.sh [OPTIONS]
 
 Options:
-  --profile MODE      Installation profile: full or local (default: full)
-  --web-port PORT     Web UI port exposed by Caddy (default: 8088)
-  --with-adguard     Install and configure AdGuard Home DNS filtering
   --skip-preflight   Skip scripts/pre-flight-check.sh
-  --no-tailscale     Alias for --profile local
+  --no-tailscale     Skip Tailscale installation and next-step prompts
   --upgrade          Run scripts/update.sh instead of a full install
   --verbose          Show full apt/pip/npm output
   -h, --help         Show this help text
-
-Profiles:
-  full               Install the full system and include Tailscale setup
-  local              Install the same system for LAN access only, without Tailscale
-
-Environment:
-  DEFAULT_ADMIN_PASSWORD    Initial admin password (default: admin)
-  WEB_PORT                  Default value for --web-port
 EOF
 }
 
@@ -119,69 +91,14 @@ run_shell() {
     fi
 }
 
-set_install_profile() {
-    local profile="$1"
-
-    case "$profile" in
-        full)
-            INSTALL_PROFILE="full"
-            ;;
-        local)
-            INSTALL_PROFILE="local"
-            ;;
-        *)
-            fail "Invalid profile: $profile"
-            echo "  Valid profiles: full, local"
-            exit 1
-            ;;
-    esac
-}
-
-set_web_port() {
-    local port="$1"
-
-    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
-        fail "Invalid web port: $port"
-        echo "  Use a port number between 1 and 65535."
-        exit 1
-    fi
-
-    WEB_PORT="$port"
-}
-
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --profile)
-                if [[ $# -lt 2 ]]; then
-                    fail "--profile requires a value: full or local"
-                    exit 1
-                fi
-                set_install_profile "$2"
-                shift
-                ;;
-            --profile=*)
-                set_install_profile "${1#*=}"
-                ;;
-            --web-port)
-                if [[ $# -lt 2 ]]; then
-                    fail "--web-port requires a numeric value"
-                    exit 1
-                fi
-                set_web_port "$2"
-                shift
-                ;;
-            --web-port=*)
-                set_web_port "${1#*=}"
-                ;;
-            --with-adguard)
-                WITH_ADGUARD=true
-                ;;
             --skip-preflight)
                 SKIP_PREFLIGHT=true
                 ;;
             --no-tailscale)
-                set_install_profile "local"
+                SKIP_TAILSCALE=true
                 ;;
             --upgrade)
                 UPGRADE_MODE=true
@@ -223,7 +140,6 @@ ensure_sudo_context() {
 
 run_preflight_check() {
     local preflight_script="$SCRIPT_DIR/scripts/pre-flight-check.sh"
-    local preflight_args=(--profile "$INSTALL_PROFILE" --web-port "$WEB_PORT")
     local status=0
 
     if [[ "$SKIP_PREFLIGHT" == true ]]; then
@@ -238,11 +154,7 @@ run_preflight_check() {
         exit 1
     fi
 
-    if [[ "$WITH_ADGUARD" == true ]]; then
-        preflight_args+=(--with-adguard)
-    fi
-
-    if bash "$preflight_script" "${preflight_args[@]}"; then
+    if bash "$preflight_script"; then
         success "Pre-flight checks passed."
         return
     fi
@@ -290,8 +202,9 @@ install_dependencies() {
     info "Installing Python, curl, rsync, SQLite and base packages"
     run_cmd apt-get install -y \
         python3 python3-pip python3-venv python3-dev \
-        curl rsync sqlite3 gnupg ca-certificates \
-        debian-keyring debian-archive-keyring apt-transport-https
+        curl rsync sqlite3 gnupg ca-certificates unattended-upgrades mosquitto mosquitto-clients \
+        debian-keyring debian-archive-keyring apt-transport-https \
+        util-linux dosfstools exfatprogs e2fsprogs udisks2
 
     info "Checking Node.js runtime"
     if command -v node >/dev/null 2>&1; then
@@ -322,8 +235,8 @@ install_dependencies() {
 install_tailscale() {
     local ts_ip=""
 
-    if [[ "$INSTALL_PROFILE" == "local" ]]; then
-        info "Local profile selected; skipping remote access setup."
+    if [[ "$SKIP_TAILSCALE" == true ]]; then
+        warn "Skipping Tailscale installation."
         return
     fi
 
@@ -359,10 +272,9 @@ install_tailscale() {
 create_directories() {
     section "Creating application directories..."
 
-    mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
-    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR"
+    mkdir -p "$PROJECT_DIR" "$DATA_DIR" "$CONFIG_DIR" "$RELEASES_DIR" "$PROJECT_DIR/backups"
+    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR" "$DATA_DIR"
     chmod 755 "$PROJECT_DIR"
-    chmod 700 "$CONFIG_DIR"
 
     success "Application directories are ready."
 }
@@ -370,7 +282,16 @@ create_directories() {
 copy_project_files() {
     section "Copying project files..."
 
-    run_cmd rsync -a "${PROJECT_RSYNC_EXCLUDES[@]}" "$SCRIPT_DIR/" "$PROJECT_DIR/"
+    run_cmd rsync -a \
+        --exclude 'node_modules' \
+        --exclude '__pycache__' \
+        --exclude '*.pyc' \
+        --exclude '.git' \
+        --exclude 'venv' \
+        --exclude '.env' \
+        --exclude '*.db' \
+        --exclude 'dist' \
+        "$SCRIPT_DIR/" "$PROJECT_DIR/"
 
     chown -R "$INSTALL_USER:$INSTALL_GROUP" "$PROJECT_DIR"
 
@@ -389,6 +310,7 @@ setup_python() {
     run_cmd sudo -u "$INSTALL_USER" python3 -m venv venv
     run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install --upgrade pip
     run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install -r "$PROJECT_DIR/panel/api/requirements.txt"
+    run_cmd sudo -u "$INSTALL_USER" "$PROJECT_DIR/venv/bin/pip" install -r "$PROJECT_DIR/agent/requirements.txt"
 
     success "Python virtual environment is ready."
 }
@@ -398,38 +320,52 @@ build_ui() {
 
     cd "$PROJECT_DIR/panel/ui"
     if [[ "$VERBOSE" == true ]]; then
-        sudo -u "$INSTALL_USER" npm install --no-audit --no-fund
+        sudo -u "$INSTALL_USER" npm install
         sudo -u "$INSTALL_USER" npm run build
     else
-        sudo -u "$INSTALL_USER" npm install --no-audit --no-fund --silent >/dev/null 2>&1
+        sudo -u "$INSTALL_USER" npm install --silent >/dev/null 2>&1
         sudo -u "$INSTALL_USER" npm run build >/dev/null 2>&1
     fi
 
     success "Frontend build completed."
 }
 
+prepare_release_layout() {
+    local release_id release_dir temporary_link
+    release_id="install-$(date +%Y%m%d-%H%M%S)"
+    release_dir="$RELEASES_DIR/$release_id"
+    temporary_link="$PROJECT_DIR/.current-$release_id"
+
+    section "Preparing atomic release layout..."
+    mkdir -p "$release_dir"
+    run_cmd rsync -a \
+        --exclude '.git' \
+        --exclude 'venv' \
+        --exclude 'node_modules' \
+        --exclude 'backups' \
+        --exclude 'releases' \
+        --exclude 'current' \
+        "$PROJECT_DIR/" "$release_dir/"
+    ln -s ../../venv "$release_dir/venv"
+    chown -R "$INSTALL_USER:$INSTALL_GROUP" "$release_dir"
+    ln -s "$release_dir" "$temporary_link"
+    mv -Tf "$temporary_link" "$CURRENT_LINK"
+    success "Release activated at $release_dir"
+}
+
 write_service_env_file() {
-    local escaped_password=""
-    local tmp_env=""
+    local escaped_password
 
-    tmp_env="$(mktemp)"
-    if [[ -f "$SERVICE_ENV_FILE" ]]; then
-        grep -v '^DEFAULT_ADMIN_PASSWORD=' "$SERVICE_ENV_FILE" > "$tmp_env" || true
-    fi
-
-    if [[ -n "$DEFAULT_ADMIN_PASSWORD_VALUE" ]]; then
-        escaped_password="${DEFAULT_ADMIN_PASSWORD_VALUE//\\/\\\\}"
-        escaped_password="${escaped_password//\"/\\\"}"
-        printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" >> "$tmp_env"
+    if [[ -z "$DEFAULT_ADMIN_PASSWORD_VALUE" ]]; then
+        DEFAULT_ADMIN_PASSWORD_VALUE="$(openssl rand -hex 18)"
+        info "Generated a random initial admin password."
+    else
         info "Using DEFAULT_ADMIN_PASSWORD for the initial admin seed."
     fi
-
-    if [[ -s "$tmp_env" ]]; then
-        mv "$tmp_env" "$SERVICE_ENV_FILE"
-        chmod 600 "$SERVICE_ENV_FILE"
-    else
-        rm -f "$tmp_env" "$SERVICE_ENV_FILE"
-    fi
+    escaped_password="${DEFAULT_ADMIN_PASSWORD_VALUE//\\/\\\\}"
+    escaped_password="${escaped_password//\"/\\\"}"
+    printf 'DEFAULT_ADMIN_PASSWORD="%s"\n' "$escaped_password" > "$SERVICE_ENV_FILE"
+    chmod 600 "$SERVICE_ENV_FILE"
 }
 
 generate_secrets() {
@@ -442,7 +378,6 @@ generate_secrets() {
     else
         info "JWT secret already exists."
     fi
-    chown "$INSTALL_USER:$INSTALL_GROUP" "$CONFIG_DIR/jwt_secret"
 
     write_service_env_file
     success "Runtime secrets are configured."
@@ -459,17 +394,18 @@ After=network.target
 
 [Service]
 Type=simple
+UMask=0077
 User=$INSTALL_USER
 Group=$INSTALL_GROUP
-WorkingDirectory=/opt/pi-control/panel/api
-Environment=PYTHONPATH=/opt/pi-control/panel/api
+WorkingDirectory=/opt/pi-control/current/panel/api
+Environment=PYTHONPATH=/opt/pi-control/current/panel/api
 Environment=DATABASE_PATH=/var/lib/pi-control/control.db
 Environment=TELEMETRY_DB_PATH=/var/lib/pi-control/telemetry.db
 Environment=AGENT_SOCKET=/run/pi-agent/agent.sock
 Environment=JWT_SECRET_FILE=/etc/pi-control/jwt_secret
 Environment=API_DEBUG=false
 EnvironmentFile=-$SERVICE_ENV_FILE
-ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+ExecStart=/opt/pi-control/current/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5
 TimeoutStopSec=5
@@ -478,7 +414,7 @@ KillMode=mixed
 # Security hardening
 ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/var/lib/pi-control /opt/pi-control /etc/pi-control
+ReadWritePaths=/var/lib/pi-control /opt/pi-control
 PrivateTmp=true
 
 [Install]
@@ -486,33 +422,71 @@ WantedBy=multi-user.target
 EOF
 
     success "Systemd service created."
+
+    cat > /etc/systemd/system/pi-agent.service <<EOF
+[Unit]
+Description=Pi Control Panel Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/pi-control/current/agent
+ExecStart=/opt/pi-control/current/venv/bin/python3 /opt/pi-control/current/agent/pi-agent.py --config /opt/pi-control/current/agent/config.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
+RuntimeDirectory=pi-agent
+RuntimeDirectoryMode=0755
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-$SERVICE_ENV_FILE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-agent
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    success "Agent systemd service created."
 }
 
 configure_caddy() {
     section "Configuring Caddy..."
 
-    sed "0,/^:[0-9][0-9]* {/s//:${WEB_PORT} {/" "$PROJECT_DIR/caddy/Caddyfile" > /etc/caddy/Caddyfile
+    cp "$CURRENT_LINK/caddy/Caddyfile" /etc/caddy/Caddyfile
+
+    local hostname_value lan_addresses tailscale_dns tailscale_ip
+    hostname_value="$(hostname -s 2>/dev/null || echo raspberrypi)"
+    lan_addresses="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Ev '^(100\.|169\.254\.|172\.1[7-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)' || true)"
+    tailscale_dns=""
+    tailscale_ip=""
+    if command -v tailscale >/dev/null 2>&1; then
+        tailscale_dns="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
+        tailscale_ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+    fi
+
+    {
+        printf 'https://%s.local' "$hostname_value"
+        while IFS= read -r address; do
+            [[ -n "$address" ]] && printf ', https://%s' "$address"
+        done <<< "$lan_addresses"
+        printf ' {\n\ttls internal\n\timport panel_app\n}\n'
+        if [[ -n "$tailscale_dns" ]]; then
+            printf '\nhttps://%s {\n\ttls internal\n\timport panel_app\n}\n' "$tailscale_dns"
+        fi
+        if [[ -n "$tailscale_ip" ]]; then
+            printf '\nhttp://%s {\n\timport panel_app\n}\n' "$tailscale_ip"
+        fi
+    } > /etc/caddy/pi-control-sites.caddy
+
+    run_cmd caddy validate --config /etc/caddy/Caddyfile
 
     success "Caddy configuration updated."
-}
-
-install_adguard_home() {
-    local adguard_script="$PROJECT_DIR/scripts/adguard-home.sh"
-
-    if [[ "$WITH_ADGUARD" != true ]]; then
-        info "AdGuard Home DNS filtering not requested; skipping."
-        return
-    fi
-
-    section "Installing AdGuard Home DNS filtering..."
-
-    if [[ ! -f "$adguard_script" ]]; then
-        fail "Missing AdGuard installer helper: $adguard_script"
-        exit 1
-    fi
-
-    bash "$adguard_script" install
-    success "AdGuard Home DNS filtering is ready."
 }
 
 start_services() {
@@ -520,6 +494,8 @@ start_services() {
 
     run_cmd systemctl daemon-reload
     run_cmd systemctl enable pi-control
+    run_cmd systemctl enable pi-agent
+    run_cmd systemctl restart pi-agent
     run_cmd systemctl restart pi-control
     run_cmd systemctl enable caddy
     run_cmd systemctl restart caddy
@@ -530,13 +506,11 @@ start_services() {
 health_check() {
     section "Running health check..."
 
-    for _ in {1..30}; do
-        if curl -sf http://localhost:8080/api/health >/dev/null; then
-            success "API health check passed."
-            return 0
-        fi
-        sleep 2
-    done
+    sleep 5
+    if curl -sf http://localhost:8080/api/health >/dev/null; then
+        success "API health check passed."
+        return 0
+    fi
 
     fail "API is not responding on http://localhost:8080/api/health"
     echo "  Recent pi-control logs:"
@@ -556,31 +530,17 @@ print_summary() {
     echo -e "${GREEN}  Installation Complete${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo ""
-    echo -e "${BLUE}Profile:${NC} $INSTALL_PROFILE"
-    echo -e "${BLUE}AdGuard Home:${NC} $WITH_ADGUARD"
-    echo ""
-    echo -e "${BLUE}Connection:${NC}"
-    echo "  Open this link from a device on the same network:"
-    echo "  http://$pi_ip:$WEB_PORT"
+    echo -e "${BLUE}Access:${NC} https://$pi_ip"
     echo ""
     echo -e "${BLUE}Initial admin login:${NC}"
     echo "  This is used only when the database does not already contain an admin user."
     echo "  Username: admin"
     echo "  Password: $DEFAULT_ADMIN_PASSWORD_VALUE"
     echo ""
-    echo "  You can sign in with the username and password above."
-    echo ""
     echo -e "${YELLOW}Change the admin password after the first login.${NC}"
-    if [[ "$INSTALL_PROFILE" == "full" ]]; then
+    if [[ "$SKIP_TAILSCALE" == false ]]; then
         echo -e "${BLUE}Tailscale:${NC}"
         echo "  If the device is not connected yet, run: sudo tailscale up"
-        echo ""
-    fi
-    if [[ "$WITH_ADGUARD" == true ]]; then
-        echo -e "${BLUE}DNS filtering:${NC}"
-        echo "  Set your router DHCP DNS server to this Pi IP to protect the whole LAN:"
-        echo "  $pi_ip"
-        echo "  AdGuard Home web/API listens locally on 127.0.0.1:3000."
         echo ""
     fi
     echo -e "${BLUE}Useful commands:${NC}"
@@ -600,9 +560,6 @@ main() {
 
     print_header
     info "Installation user: $INSTALL_USER"
-    info "Install profile: $INSTALL_PROFILE"
-    info "Web port: $WEB_PORT"
-    info "AdGuard Home: $WITH_ADGUARD"
     info "Install directory: $PROJECT_DIR"
     echo ""
 
@@ -613,14 +570,15 @@ main() {
     copy_project_files
     setup_python
     build_ui
+    prepare_release_layout
     generate_secrets
-    install_adguard_home
     create_systemd_service
     configure_caddy
     start_services
 
     if health_check; then
         print_summary
+        rm -f "$SERVICE_ENV_FILE"
     else
         fail "Installation completed but the health check failed."
         [[ "$VERBOSE" == true ]] || echo "  Re-run with --verbose for full command output."

@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
-  <img src="https://img.shields.io/badge/access-Full%20or%20Local-0A66C2" alt="Access profiles">
+  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
   <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
 </p>
 
@@ -28,14 +28,14 @@
 Pi Control Panel is a production-ready web platform that lets you monitor and manage Raspberry Pi devices from a single interface.
 
 - Real-time system telemetry (CPU, RAM, disk, temperature, load, RX/TX)
-- Internet reachability, observed Pi running state, and measured PMIC power rails ([details and measurement limits](docs/HOST_TELEMETRY.md))
+- Internet reachability, observed Pi running state and measured PMIC power rails ([measurement limits](docs/HOST_TELEMETRY.md))
 - systemd service management and core operational commands
 - USB/Serial/IoT device discovery and control
 - Browser-based terminal (with security layers)
 - Alert rules, audit logs, archiving, and backups
 - Local daily export and retention archiving flow
 
-> Access model: `full` profile includes Tailscale setup for private remote access; `local` profile skips Tailscale entirely and serves the same panel on the LAN. Neither profile is intended for direct public internet exposure.
+> Security model: Tailscale-first by default and not directly exposed to the public internet.
 
 ---
 
@@ -70,11 +70,11 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 |---|---|
 | UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
 | API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
-| Agent | Python-based system agent, Unix socket RPC, psutil, systemd, MQTT |
+| Agent | Python-based system agent, Unix socket RPC, psutil, docker, MQTT |
 | Data | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Testing & Quality | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
-| Infrastructure | systemd services, full/local access profiles, script-based deployment |
+| Infrastructure | systemd services, Tailscale access, script-based deployment |
 
 ---
 
@@ -82,13 +82,13 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 
 ```mermaid
 flowchart TD
-    A[Client Browser] --> B[Caddy :8088]
+    A[Client Browser] --> B[Caddy :80]
     B --> C[FastAPI API :8080]
     C --> D[(control.db)]
     C --> E[(telemetry.db)]
     C --> F[Pi Agent via Unix Socket]
     C --> G[SSE Stream]
-    F --> H[System / Devices / Services / MQTT]
+    F --> H[System / Devices / Docker / MQTT]
 ```
 
 Core flow:
@@ -120,100 +120,50 @@ Core flow:
 
 ## Installation
 
-### Local Installation (LAN only, no Tailscale)
-
-Use this profile when the panel should run only inside the same local network. It installs the full Pi Control Panel stack, but it does not install, check, or prompt for Tailscale.
-
-Direct install on a fresh Pi:
+### 1) Remote Deployment (Mac/Linux -> Pi)
 
 ```bash
-sudo apt update
-sudo apt install -y git
-
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-
-chmod +x install.sh
-sudo ./install.sh --profile local
+./deploy-native.sh pi@<tailscale-ip-or-lan-ip>
 ```
 
-Remote deploy from Mac/Linux over LAN:
+In this flow, the script:
+
+- Tests SSH connection
+- Syncs project files to target via rsync
+- Runs `install.sh` on target
+- Performs API health check
+
+### 2) Direct Installation on Pi
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-./deploy-native.sh --profile local pi@<lan-ip>
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Common options:
+
+```bash
+sudo ./install.sh --skip-preflight
+sudo ./install.sh --no-tailscale
+sudo ./install.sh --upgrade
 ```
 
 After installation:
 
-- UI: `http://<pi-ip>:8088`
-- API health: `http://<pi-ip>:8088/api/health`
-- Initial username: `admin`
-- Initial password: `admin`
-- Custom web port: `sudo ./install.sh --profile local --web-port <port>`
-
-### Full Installation (Tailscale remote access)
-
-Use this profile when the panel should also support private remote access through Tailscale. It installs the same application stack as local mode and includes the Tailscale setup flow.
-
-Direct install on a Pi:
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-
-chmod +x install.sh
-sudo ./install.sh --profile full
-```
-
-Remote deploy from Mac/Linux:
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-./deploy-native.sh --profile full pi@<tailscale-ip-or-lan-ip>
-```
-
-After installation:
-
-- UI: `http://<pi-ip>:8088`
-- API health: `http://<pi-ip>:8088/api/health`
-- Initial username: `admin`
-- Initial password: `admin`
-- If Tailscale is not connected yet, run `sudo tailscale up`
-- Custom web port: `sudo ./install.sh --profile full --web-port <port>`
-
-Notes:
-
-- `sudo ./install.sh` defaults to the `full` profile.
-- `sudo ./install.sh --no-tailscale` is kept as a backwards-compatible alias for `--profile local`.
-- The installer prints the exact connection link and initial login after a successful install.
-
-### Optional DNS Filtering (AdGuard Home)
-
-Install AdGuard Home alongside the panel when you want LAN-wide DNS filtering for ads, trackers, malware, and phishing domains:
-
-```bash
-sudo ./install.sh --profile local --with-adguard
-# or remote:
-./deploy-native.sh --profile local --with-adguard pi@<lan-ip>
-```
-
-After installation, set your router or DHCP server DNS address to the Raspberry Pi IP printed by the installer. The project does not change router settings automatically. AdGuard Home listens for DNS on `0.0.0.0:53`; its native web/API interface is bound to `127.0.0.1:3000` and is managed through the Pi Control Panel `Network > DNS Filter` tab.
-
-Default policy:
-
-- Ad/tracker filtering: enabled
-- Malware/phishing protection: enabled through Cloudflare security DoH upstream
-- Adult content filtering: disabled by default
-- DHCP server mode, DNS hijacking, and per-device parental profiles are outside the v1 scope
-
-DNS filtering cannot guarantee removal of every ad. First-party ads, some app-embedded ads, and clients using their own encrypted DNS may bypass local DNS filtering.
+- UI: `http://<pi-ip>`
+- API health: `http://<pi-ip>/api/health`
+- API docs (if debug enabled): `http://<pi-ip>/api/docs`
 
 ---
 
 ## Local Development
+
+For the synchronized local/Pi workflow and portable test setup, see
+[Source synchronization](docs/SOURCE_SYNC.md).
 
 ### API (FastAPI)
 
@@ -258,29 +208,19 @@ Common variables:
 | `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket path |
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret file |
 | `API_DEBUG` | `false` | Enables debug and docs |
-| `ADGUARD_BASE_URL` | `http://127.0.0.1:3000/control` | Local AdGuard Home API URL |
-| `ADGUARD_ADMIN_USER` | `pi-control` | Panel-managed AdGuard API user |
-| `ADGUARD_ADMIN_PASSWORD` | generated by installer | Panel-managed AdGuard API password |
-| `WEB_PORT` | `8088` | Caddy web UI port used by install/check scripts |
 | `PANEL_ALLOW_LAN` | `false` | LAN access mode |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Daily export hour |
-| `BACKUP_DAILY_EXPORT_MINUTE` | `0` | Daily export minute |
-| `BACKUP_RETENTION_DAYS` | `90` | Local and Google Drive backup file retention |
-| `BACKUP_GDRIVE_ENABLED` | `false` | Google Drive backup starts inactive until OAuth is completed |
-| `BACKUP_GDRIVE_FOLDER_NAME` | `Pi Control Backups` | Google Drive folder for encrypted backups |
-| `BACKUP_GDRIVE_CLIENT_FILE` | `/etc/pi-control/gdrive_oauth_client.json` | Stored Google OAuth client config |
-| `BACKUP_GDRIVE_TOKEN_FILE` | `/etc/pi-control/gdrive_token.json` | Stored Google OAuth token |
-| `BACKUP_ENCRYPTION_KEY_FILE` | `/etc/pi-control/backup_encryption.key` | Local AES-256-GCM backup encryption key |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Daily export minute |
 
 Default admin at first startup:
 
 - username: `admin`
-- password: `admin`
+- password: `admin123`
 
 Override default password during install:
 
 ```bash
-sudo DEFAULT_ADMIN_PASSWORD='a-strong-password' ./install.sh --profile local
+sudo DEFAULT_ADMIN_PASSWORD='a-strong-password' ./install.sh
 ```
 
 ---
@@ -307,36 +247,26 @@ sudo systemctl restart caddy
 sudo ./scripts/update.sh
 ```
 
-### Encrypted Google Drive Backups
-
-Archive > Backups can create encrypted backup packages and upload them to Google Drive after an admin completes the OAuth setup. Upload the Google OAuth client JSON in the panel, start authorization, open the verification URL, and approve access with the target Gmail account.
-
-- Schedule: every day at `00:00` Pi local time by default.
-- Contents: consistent SQLite snapshots of `control.db` and `telemetry.db`, plus existing JSON/CSV export files.
-- Format: `pi-control_backup_YYYY-MM-DD_HHMMSS.tar.gz.enc`.
-- Retention: local and Google Drive backup files older than `BACKUP_RETENTION_DAYS` are deleted; only Pi Control backup filenames are targeted.
-- Drive scope: `https://www.googleapis.com/auth/drive.file`.
-
-Drive never receives plain database or export files. The encrypted archives can only be restored with the key stored in `BACKUP_ENCRYPTION_KEY_FILE`; if that key is lost, existing Drive backups cannot be decrypted.
+Note: Google Drive backup integration is temporarily disabled.
 
 ---
 
 ## Latest Update Notes
 
-**Current date:** 2026-05-11
+**Current date:** 2026-03-27
 
 - Improved metric selection/filter flow in telemetry history.
 - Added stabilizations to reduce unnecessary UI resets during live metric refresh.
 - Refined category-based styling in Devices and strengthened dedupe behavior for repeated records.
 - Improved resilience in API background service startup and logging flows.
 - Simplified and accelerated install/update scripts for operational usage.
-- Added encrypted Google Drive backup setup with OAuth, daily `00:00` scheduling, and 90-day local/cloud backup retention.
+- Google Drive backup system is temporarily removed (local backup remains active).
 
 ---
 
 ## TODO
 
-- [ ] Add a first-class restore flow for encrypted backup packages.
+- [ ] Re-enable Google Drive backup integration with a new flow.
 
 ---
 
@@ -355,9 +285,9 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 
 If dashboard is not accessible:
 
-1. Verify services with `sudo systemctl status pi-control caddy`.
-2. Test `http://<pi-ip>:8088/api/health`.
-3. For full profile, check `tailscale status`; for local profile, confirm your browser is on the same LAN as the Pi.
+1. Check connection with `tailscale status`.
+2. Verify services with `sudo systemctl status pi-control caddy`.
+3. Test `http://<pi-ip>/api/health`.
 
 ---
 
@@ -384,7 +314,7 @@ MIT License - see [LICENSE](./LICENSE) for details.
   <img src="https://img.shields.io/badge/platform-Raspberry%20Pi-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-4F46E5" alt="Frontend">
-  <img src="https://img.shields.io/badge/access-Full%20or%20Local-0A66C2" alt="Access profiles">
+  <img src="https://img.shields.io/badge/security-Tailscale%20First-0A66C2" alt="Security">
   <img src="https://img.shields.io/badge/license-MIT-2563EB" alt="License">
 </p>
 
@@ -395,14 +325,13 @@ MIT License - see [LICENSE](./LICENSE) for details.
 Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmenizi saglayan production-ready bir web platformudur.
 
 - Gercek zamanli sistem telemetrisi (CPU, RAM, disk, sicaklik, load, RX/TX)
-- Internet erisimi, gozlenen Pi calisma durumu ve olculen PMIC guc hatlari ([ayrintilar ve olcum sinirlari](docs/HOST_TELEMETRY.md))
 - systemd servis yonetimi ve temel operasyon komutlari
 - USB/Serial/IoT cihaz kesfi ve kontrolu
 - Tarayici uzerinden terminal (guvenlik katmanlariyla)
 - Alarm kurallari, audit izleri, arsiv ve yedekleme
 - Lokal gunluk export ve retention arsivleme akisi
 
-> Erisim modeli: `full` profili ozel uzak erisim icin Tailscale kurulumunu dahil eder; `local` profili Tailscale'i tamamen atlar ve ayni paneli LAN uzerinde servis eder. Iki profil de dogrudan public internet acilimi icin tasarlanmamistir.
+> Guvenlik modeli: varsayilan olarak Tailscale-first ve internete dogrudan acik degil.
 
 ---
 
@@ -437,11 +366,11 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 |---|---|
 | UI | React 18, Vite 5, Tailwind CSS, Recharts, Radix UI, XTerm |
 | API | FastAPI, Uvicorn, Pydantic v2, aiosqlite, slowapi, SSE |
-| Agent | Python tabanli sistem agenti, Unix socket RPC, psutil, systemd, MQTT |
+| Agent | Python tabanli sistem agenti, Unix socket RPC, psutil, docker, MQTT |
 | Veri | SQLite (`control.db`, `telemetry.db`) |
 | Reverse Proxy | Caddy |
 | Test ve Kalite | Vitest, Testing Library, Pytest, Ruff, Black, MyPy, ESLint |
-| Altyapi | systemd servisleri, full/local erisim profilleri, script tabanli deployment |
+| Altyapi | systemd servisleri, Tailscale erisimi, script tabanli deployment |
 
 ---
 
@@ -449,13 +378,13 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 
 ```mermaid
 flowchart TD
-    A[Client Browser] --> B[Caddy :8088]
+    A[Client Browser] --> B[Caddy :80]
     B --> C[FastAPI API :8080]
     C --> D[(control.db)]
     C --> E[(telemetry.db)]
     C --> F[Pi Agent via Unix Socket]
     C --> G[SSE Stream]
-    F --> H[System / Devices / Services / MQTT]
+    F --> H[System / Devices / Docker / MQTT]
 ```
 
 Temel calisma modeli:
@@ -487,89 +416,43 @@ Temel calisma modeli:
 
 ## Kurulum
 
-### Local Kurulum (sadece LAN, Tailscale yok)
-
-Panel sadece ayni yerel ag icinde calisacaksa bu profili kullanin. Tum Pi Control Panel stack'i kurulur, ancak Tailscale kurulmaz, kontrol edilmez ve Tailscale icin prompt verilmez.
-
-Sifir Pi uzerinde dogrudan kurulum:
+### 1) Uzak Deployment (Mac/Linux -> Pi)
 
 ```bash
-sudo apt update
-sudo apt install -y git
-
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-
-chmod +x install.sh
-sudo ./install.sh --profile local
+./deploy-native.sh pi@<tailscale-ip-veya-lan-ip>
 ```
 
-Mac/Linux uzerinden LAN ile uzak deploy:
+Bu akista script:
+
+- SSH baglantisini test eder
+- proje dosyalarini rsync ile hedefe tasir
+- hedefte `install.sh` calistirir
+- API health kontrolu yapar
+
+### 2) Pi Uzerinde Dogrudan Kurulum
 
 ```bash
 git clone https://github.com/BGirginn/rasp_pi_webUI.git
 cd rasp_pi_webUI
-./deploy-native.sh --profile local pi@<lan-ip>
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Sik kullanilan opsiyonlar:
+
+```bash
+sudo ./install.sh --skip-preflight
+sudo ./install.sh --no-tailscale
+sudo ./install.sh --upgrade
 ```
 
 Kurulum sonrasi:
 
-- UI: `http://<pi-ip>:8088`
-- API health: `http://<pi-ip>:8088/api/health`
-- Ilk kullanici adi: `admin`
-- Ilk sifre: `admin`
-- Ozel web portu: `sudo ./install.sh --profile local --web-port <port>`
-
-### Full Kurulum (Tailscale ile uzak erisim)
-
-Panel Tailscale uzerinden ozel uzak erisim de desteklesin istiyorsaniz bu profili kullanin. Local profil ile ayni uygulama stack'i kurulur ve ek olarak Tailscale kurulum akisi dahil edilir.
-
-Pi uzerinde dogrudan kurulum:
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-
-chmod +x install.sh
-sudo ./install.sh --profile full
-```
-
-Mac/Linux uzerinden uzak deploy:
-
-```bash
-git clone https://github.com/BGirginn/rasp_pi_webUI.git
-cd rasp_pi_webUI
-./deploy-native.sh --profile full pi@<tailscale-ip-veya-lan-ip>
-```
-
-Kurulum sonrasi:
-
-- UI: `http://<pi-ip>:8088`
-- API health: `http://<pi-ip>:8088/api/health`
-- Ilk kullanici adi: `admin`
-- Ilk sifre: `admin`
-- Tailscale bagli degilse `sudo tailscale up` calistirin
-- Ozel web portu: `sudo ./install.sh --profile full --web-port <port>`
-
-Notlar:
-
-- `sudo ./install.sh` varsayilan olarak `full` profilini kullanir.
-- `sudo ./install.sh --no-tailscale`, geriye uyumluluk icin `--profile local` alias'i olarak kalir.
-- Basarili kurulumdan sonra installer terminalde net baglanti linkini ve ilk giris bilgisini yazar.
-
-### Opsiyonel DNS Filtreleme (AdGuard Home)
-
-LAN genelinde reklam, takip, malware ve phishing domainlerini DNS seviyesinde filtrelemek icin panelle birlikte AdGuard Home kurabilirsiniz:
-
-```bash
-sudo ./install.sh --profile local --with-adguard
-# veya remote:
-./deploy-native.sh --profile local --with-adguard pi@<lan-ip>
-```
-
-Kurulumdan sonra router/DHCP DNS adresini installer'in yazdigi Raspberry Pi IP adresine ayarlayin. Proje router ayarlarini otomatik degistirmez. AdGuard Home DNS icin `0.0.0.0:53` dinler; kendi web/API arayuzu sadece `127.0.0.1:3000` uzerindedir ve panelde `Network > DNS Filter` sekmesinden yonetilir.
-
-Varsayilan politika: reklam/takip ve malware/phishing korumasi acik, yetiskin icerik filtresi kapali. DHCP server modu, DNS hijack ve cihaz bazli parental profil v1 kapsaminda degildir. DNS filtreleme her reklami garanti etmez; birinci taraf reklamlar, uygulama ici reklamlar ve kendi sifreli DNS'ini kullanan istemciler filtreyi asabilir.
+- UI: `http://<pi-ip>`
+- API health: `http://<pi-ip>/api/health`
+- API docs (debug aciksa): `http://<pi-ip>/api/docs`
 
 ---
 
@@ -618,29 +501,19 @@ Sik kullanilan degiskenler:
 | `AGENT_SOCKET` | `/run/pi-agent/agent.sock` | API-Agent RPC socket yolu |
 | `JWT_SECRET_FILE` | `/etc/pi-control/jwt_secret` | JWT secret dosyasi |
 | `API_DEBUG` | `false` | Debug ve docs aktivasyonu |
-| `ADGUARD_BASE_URL` | `http://127.0.0.1:3000/control` | Yerel AdGuard Home API adresi |
-| `ADGUARD_ADMIN_USER` | `pi-control` | Panelin yonettigi AdGuard API kullanicisi |
-| `ADGUARD_ADMIN_PASSWORD` | installer uretir | Panelin yonettigi AdGuard API sifresi |
-| `WEB_PORT` | `8088` | Install/check scriptlerinin kullandigi Caddy web UI portu |
 | `PANEL_ALLOW_LAN` | `false` | LAN erisim modu |
 | `BACKUP_DAILY_EXPORT_HOUR` | `0` | Gunluk export saati |
-| `BACKUP_DAILY_EXPORT_MINUTE` | `0` | Gunluk export dakikasi |
-| `BACKUP_RETENTION_DAYS` | `90` | Local ve Google Drive backup dosyasi saklama suresi |
-| `BACKUP_GDRIVE_ENABLED` | `false` | OAuth tamamlanana kadar Google Drive backup pasif baslar |
-| `BACKUP_GDRIVE_FOLDER_NAME` | `Pi Control Backups` | Sifreli yedeklerin Google Drive klasoru |
-| `BACKUP_GDRIVE_CLIENT_FILE` | `/etc/pi-control/gdrive_oauth_client.json` | Saklanan Google OAuth client config dosyasi |
-| `BACKUP_GDRIVE_TOKEN_FILE` | `/etc/pi-control/gdrive_token.json` | Saklanan Google OAuth token dosyasi |
-| `BACKUP_ENCRYPTION_KEY_FILE` | `/etc/pi-control/backup_encryption.key` | Yerel AES-256-GCM backup sifreleme anahtari |
+| `BACKUP_DAILY_EXPORT_MINUTE` | `5` | Gunluk export dakikasi |
 
 Ilk acilista varsayilan admin:
 
 - kullanici: `admin`
-- sifre: `admin`
+- sifre: `admin123`
 
 Kurulumda sifre override:
 
 ```bash
-sudo DEFAULT_ADMIN_PASSWORD='guclu-bir-sifre' ./install.sh --profile local
+sudo DEFAULT_ADMIN_PASSWORD='guclu-bir-sifre' ./install.sh
 ```
 
 ---
@@ -667,36 +540,26 @@ sudo systemctl restart caddy
 sudo ./scripts/update.sh
 ```
 
-### Sifreli Google Drive Yedekleri
-
-Archive > Backups ekrani, admin OAuth kurulumunu tamamladiktan sonra sifreli yedek paketi olusturup Google Drive'a yukleyebilir. Panelde Google OAuth client JSON dosyasini yukleyin, yetkilendirmeyi baslatin, verification URL'yi acin ve hedef Gmail hesabi ile izni onaylayin.
-
-- Zamanlama: varsayilan olarak Pi local saatine gore her gun `00:00`.
-- Icerik: `control.db` ve `telemetry.db` icin tutarli SQLite snapshotlari, ayrica mevcut JSON/CSV export dosyalari.
-- Format: `pi-control_backup_YYYY-MM-DD_HHMMSS.tar.gz.enc`.
-- Saklama: `BACKUP_RETENTION_DAYS` degerinden eski local ve Google Drive backup dosyalari silinir; sadece Pi Control backup dosya adlari hedeflenir.
-- Drive scope: `https://www.googleapis.com/auth/drive.file`.
-
-Drive'a duz veritabani veya duz export dosyasi yuklenmez. Sifreli arsivler sadece `BACKUP_ENCRYPTION_KEY_FILE` icindeki anahtarla acilabilir; bu anahtar kaybolursa mevcut Drive yedekleri geri acilamaz.
+Not: Google Drive backup entegrasyonu gecici olarak devre disidir.
 
 ---
 
 ## Son Guncelleme Notlari
 
-**Guncel tarih:** 2026-05-11
+**Guncel tarih:** 2026-03-27
 
 - Telemetry history ekraninda metrik bazli secim/filtre akisi iyilestirildi.
 - Canli metrik yenilemelerinde gereksiz UI resetlerini azaltan stabilizasyonlar eklendi.
 - Devices ekraninda kategori tabanli stil yapisi netlestirildi ve tekrar eden kayitlara karsi dedupe mantigi guclendirildi.
 - API tarafinda background servis baslatma ve loglama akislarinda dayaniklilik artirildi.
 - Kurulum/guncelleme scriptleri operasyonel kullanim icin sadelestirildi ve hizlandirildi.
-- OAuth destekli sifreli Google Drive backup akisi, gunluk `00:00` zamanlama ve 90 gunluk local/cloud backup saklama eklendi.
+- Google Drive backup sistemi gecici olarak kaldirildi (local backup aktif).
 
 ---
 
 ## TODO
 
-- [ ] Sifreli backup paketleri icin panelden restore akisi eklemek.
+- [ ] Google Drive backup entegrasyonunu yeni akisla tekrar devreye almak.
 
 ---
 
@@ -715,9 +578,9 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 
 Dashboard acilmiyorsa:
 
-1. `sudo systemctl status pi-control caddy` ile servis durumlarini dogrulayin.
-2. `http://<pi-ip>:8088/api/health` yanitini test edin.
-3. Full profilde `tailscale status` kontrol edin; local profilde tarayicinin Pi ile ayni LAN'da oldugunu dogrulayin.
+1. `tailscale status` ile baglantiyi kontrol edin.
+2. `sudo systemctl status pi-control caddy` ile servis durumlarini dogrulayin.
+3. `http://<pi-ip>/api/health` yanitini test edin.
 
 ---
 

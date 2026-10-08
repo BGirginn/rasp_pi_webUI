@@ -7,7 +7,7 @@ Manages all resource providers and coordinates discovery, actions, and state.
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from time import monotonic
 from typing import Any, Dict, List, Optional
 
@@ -124,7 +124,7 @@ class ProviderManager:
         self._last_snapshot_hash = current_hash
         
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "hash": current_hash,
             "changed": changed,
             "resources": resources,
@@ -167,6 +167,12 @@ class ProviderManager:
     ) -> ActionResult:
         """Execute an action on a resource."""
         resource = self._resources.get(resource_id)
+        if not resource and resource_id.endswith(".service"):
+            provider = self._providers.get("systemd")
+            if provider:
+                resource = await provider.get_resource(resource_id)
+                if resource:
+                    self._resources[resource.id] = resource
         if not resource:
             return ActionResult(
                 success=False,
@@ -194,6 +200,11 @@ class ProviderManager:
         # Execute action
         logger.info("Executing action", resource_id=resource_id, action=action)
         result = await provider.execute_action(resource_id, action, params)
+
+        if resource.provider == "systemd" and result.success:
+            refreshed = await provider.get_resource(resource_id)
+            if refreshed:
+                self._resources[resource_id] = refreshed
 
         if resource.provider == "devices" and result.success:
             self._invalidate_devices_cache()
@@ -232,6 +243,12 @@ class ProviderManager:
             return None
         
         return await provider.get_stats(resource_id)
+
+    async def get_service_dependencies(self, resource_id: str) -> Dict:
+        provider = self._providers.get("systemd")
+        if not provider:
+            raise RuntimeError("Systemd provider not available")
+        return await provider.get_dependency_graph(resource_id)
     
     async def toggle_interface(self, interface: str, enable: bool, rollback_seconds: int = 0) -> Dict:
         """Toggle a network interface."""
@@ -262,21 +279,58 @@ class ProviderManager:
             return []
 
         # Fast path: use last discovery snapshot if available.
-        cached = [r.to_dict() for r in self._resources.values() if r.provider == "network"]
+        cached = [r for r in self._resources.values() if r.provider == "network"]
         if cached:
-            return cached
+            return [self._network_interface_dict(resource) for resource in cached]
 
         resources = await provider.discover()
-        return [r.to_dict() for r in resources]
+        for resource in resources:
+            self._resources[resource.id] = resource
+        return [self._network_interface_dict(resource) for resource in resources]
+
+    @staticmethod
+    def _network_interface_dict(resource: Resource) -> Dict:
+        metadata = resource.metadata or {}
+        return {
+            "name": resource.name,
+            "type": metadata.get("interface_type", "ethernet"),
+            "status": metadata.get("status", resource.state.value),
+            "mac": metadata.get("mac"),
+            "ip": metadata.get("ip"),
+            "subnet_mask": metadata.get("subnet_mask"),
+            "gateway": metadata.get("gateway"),
+            "rx_bytes": metadata.get("rx_bytes", 0),
+            "tx_bytes": metadata.get("tx_bytes", 0),
+            "speed_mbps": metadata.get("speed_mbps"),
+        }
+
+    async def confirm_network_checkpoint(self, checkpoint_id: str) -> Dict:
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        result = await provider.execute_action(
+            "wlan0", "checkpoint_confirm", {"checkpoint_id": checkpoint_id}
+        )
+        return result.to_dict()
+
+    async def rollback_network_checkpoint(self, checkpoint_id: str) -> Dict:
+        provider = self._providers.get("network")
+        if not provider:
+            return ActionResult(success=False, message="Network provider not available").to_dict()
+        result = await provider.execute_action(
+            "wlan0", "checkpoint_rollback", {"checkpoint_id": checkpoint_id}
+        )
+        return result.to_dict()
     
-    async def toggle_wifi(self, enable: bool) -> Dict:
+    async def toggle_wifi(self, enable: bool, rollback_seconds: int = 0) -> Dict:
         """Toggle WiFi interface."""
         provider = self._providers.get("network")
         if not provider:
             return ActionResult(success=False, message="Network provider not available").to_dict()
         
         action = "enable" if enable else "disable"
-        result = await provider.execute_action("wlan0", action)
+        params = {"rollback_seconds": rollback_seconds} if rollback_seconds > 0 else {}
+        result = await provider.execute_action("wlan0", action, params)
         return result.to_dict()
     
     async def wifi_status(self) -> Dict:
@@ -330,24 +384,38 @@ class ProviderManager:
             if self._devices_cache is not None and now < self._devices_cache_expires_at:
                 return self._devices_cache
 
-            # Prefer the latest global discovery snapshot before forcing new discovery.
-            snapshot_devices = [r.to_dict() for r in self._resources.values() if r.provider == "devices"]
-            if self._devices_snapshot_ready:
-                self._devices_cache = snapshot_devices
-                self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
-                return self._devices_cache
-
             resources = await provider.discover()
-            self._devices_cache = [r.to_dict() for r in resources]
+            for resource_id in [key for key, item in self._resources.items() if item.provider == "devices"]:
+                self._resources.pop(resource_id, None)
+            self._resources.update({resource.id: resource for resource in resources})
+            self._devices_cache = [self._device_dict(provider, r) for r in resources]
             self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
             self._devices_snapshot_ready = True
             return self._devices_cache
 
     def _refresh_devices_cache_from_resources(self) -> None:
         """Keep device cache in sync with latest discovery snapshot."""
-        snapshot_devices = [r.to_dict() for r in self._resources.values() if r.provider == "devices"]
+        provider = self._providers.get("devices")
+        snapshot_devices = [
+            self._device_dict(provider, resource)
+            for resource in self._resources.values()
+            if resource.provider == "devices"
+        ]
         self._devices_cache = snapshot_devices
         self._devices_cache_expires_at = monotonic() + self._devices_cache_ttl
+
+    @staticmethod
+    def _device_dict(provider: Optional[BaseProvider], resource: Resource) -> Dict:
+        payload = resource.to_dict()
+        metadata = resource.metadata or {}
+        payload["storage"] = metadata.get("storage")
+        if metadata.get("is_storage") and metadata.get("storage"):
+            payload["allowed_actions"] = ["mount", "unmount", "eject"]
+        elif resource.type == "esp":
+            payload["allowed_actions"] = ["command"]
+        else:
+            payload["allowed_actions"] = []
+        return payload
 
     def _invalidate_devices_cache(self) -> None:
         """Force device list recomputation on the next request."""

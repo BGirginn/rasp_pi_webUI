@@ -4,7 +4,8 @@ import socket
 import logging
 from typing import List, Dict
 from aiohttp import web
-from zeroconf import ServiceInfo, Zeroconf
+from zeroconf import ServiceInfo, InterfaceChoice
+from zeroconf.asyncio import AsyncZeroconf
 
 # Encode logging to avoid encoding errors on some systems
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -31,7 +32,7 @@ class VirtualDevice:
         self.port = port
         self.sensor_templates = sensor_templates
         self.ip = get_local_ip()
-        self.zeroconf = Zeroconf()
+        self.zeroconf = AsyncZeroconf(interfaces=InterfaceChoice.Default)
         self.service_info = None
 
     def generate_sensor_data(self):
@@ -98,7 +99,7 @@ class VirtualDevice:
         )
         
         logger.info(f"Starting {self.name} on port {self.port}...")
-        self.zeroconf.register_service(self.service_info)
+        await self.zeroconf.async_register_service(self.service_info)
 
         # Setup Web Server
         app = web.Application()
@@ -111,10 +112,10 @@ class VirtualDevice:
         
         return runner
 
-    def stop(self):
+    async def stop(self):
         if self.service_info:
-            self.zeroconf.unregister_service(self.service_info)
-        self.zeroconf.close()
+            await self.zeroconf.async_unregister_service(self.service_info)
+        await self.zeroconf.async_close()
 
 async def main():
     devices_config = [
@@ -164,7 +165,7 @@ async def main():
     finally:
         logger.info("\nStopping simulation...")
         for d in device_instances:
-            d.stop()
+            await d.stop()
         for r in runners:
             await r.cleanup()
 

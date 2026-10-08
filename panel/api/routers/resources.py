@@ -4,23 +4,33 @@ Pi Control Panel - Resources Router
 Handles resource discovery, management, and actions.
 """
 
+import asyncio
 import time
-from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db import get_control_db
 from services.agent_client import agent_client
-from services.host_exec import run_host_command_simple, run_host_command, is_running_in_container
+from services.host_exec import run_host_command_simple
 from .auth import get_current_user, require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
 # Service cache to avoid repeated systemctl calls (OPT-004)
 _services_cache: Tuple[List, float] = ([], 0)
 _CACHE_TTL_SECONDS = 5
+
+CORE_SERVICES = {
+    "caddy", "dbus", "NetworkManager", "networking", "pi-agent", "pi-control",
+    "polkit", "ssh", "sshd", "systemd-journald", "systemd-logind",
+    "systemd-networkd", "systemd-resolved", "tailscaled", "wpa_supplicant",
+}
+SYSTEM_SERVICES = {
+    "avahi-daemon", "bluetooth", "cron", "systemd-timesyncd", "systemd-udevd",
+}
 
 
 # Pydantic models
@@ -36,6 +46,10 @@ class ResourceResponse(BaseModel):
     updated_at: str
     cpu_usage: Optional[float] = 0.0
     memory_usage: Optional[float] = 0.0
+    active_state: Optional[str] = None
+    sub_state: Optional[str] = None
+    unit_file_state: Optional[str] = None
+    allowed_actions: List[str] = Field(default_factory=list)
 
 
 class ActionRequest(BaseModel):
@@ -55,9 +69,20 @@ async def list_resources(
     provider: Optional[str] = Query(None, description="Filter by provider"),
     resource_class: Optional[str] = Query(None, description="Filter by class"),
     managed: Optional[bool] = Query(None, description="Filter by managed status"),
+    refresh: bool = Query(False, description="Bypass the short-lived service cache"),
     user: dict = Depends(get_current_user)
 ):
-    """List all discovered resources."""
+    """List resources with systemd state sourced from the live host."""
+    live_services = await _get_live_systemd_services(force_refresh=refresh)
+    if provider in (None, "systemd"):
+        filtered = live_services
+        if resource_class:
+            filtered = [item for item in filtered if item.resource_class == resource_class]
+        if managed is not None:
+            filtered = [item for item in filtered if item.managed is managed]
+        if provider == "systemd":
+            return filtered
+
     db = await get_control_db()
     
     query = "SELECT id, name, type, class, provider, state, health_score, managed, updated_at FROM resources WHERE 1=1"
@@ -80,13 +105,7 @@ async def list_resources(
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
     
-    # If no resources in DB, get live systemd services
-    if len(rows) == 0:
-        live_services = await _get_live_systemd_services()
-        if provider == "systemd" or provider is None:
-            return live_services
-    
-    return [
+    stored_resources = [
         ResourceResponse(
             id=row[0],
             name=row[1],
@@ -99,16 +118,46 @@ async def list_resources(
             updated_at=row[8]
         )
         for row in rows
+        if row[4] != "systemd"
     ]
+    return live_services + stored_resources if provider is None else stored_resources
 
 
-async def _get_live_systemd_services() -> List[ResourceResponse]:
+def _classify_service(name: str) -> str:
+    if name in CORE_SERVICES or name.startswith("systemd-"):
+        return "CORE" if name in CORE_SERVICES else "SYSTEM"
+    if name in SYSTEM_SERVICES:
+        return "SYSTEM"
+    return "APP"
+
+
+def _state_from_systemd(active_state: str, sub_state: str = "") -> str:
+    if active_state == "activating":
+        return "starting"
+    if active_state == "deactivating":
+        return "stopping"
+    if active_state == "reloading":
+        return "restarting"
+    if active_state == "failed":
+        return "failed"
+    if active_state == "active":
+        return "running"
+    return "stopped"
+
+
+def _allowed_service_actions(resource_class: str) -> List[str]:
+    if resource_class == "CORE":
+        return []
+    return ["start", "stop", "restart"]
+
+
+async def _get_live_systemd_services(force_refresh: bool = False) -> List[ResourceResponse]:
     """Get real systemd services from the HOST system via SSH."""
     global _services_cache
     
     # Check cache first (OPT-004: avoid repeated systemctl calls)
     cached_services, cache_time = _services_cache
-    if cached_services and (time.time() - cache_time) < _CACHE_TTL_SECONDS:
+    if not force_refresh and cached_services and (time.time() - cache_time) < _CACHE_TTL_SECONDS:
         return cached_services
     
     # Get Usage Data first (single ps command)
@@ -134,27 +183,6 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
 
     services = []
     
-    # === APP Services ===
-    app_services = [
-        "tailscaled", "minecraft-server", "minecraft", "home-assistant",
-        "zigbee2mqtt", "node-red", "grafana-server", "grafana", "prometheus", 
-        "influxdb", "mosquitto", "nginx", "apache2", "httpd", "postgresql", 
-        "postgres", "mysql", "mariadb", "redis-server", "redis", "pihole-FTL", 
-        "jellyfin", "plex", "transmission-daemon", "cups", "samba", "smbd"
-    ]
-    
-    # === SYSTEM Services ===
-    system_services = [
-        "ssh", "sshd", "bluetooth", "NetworkManager", "wpa_supplicant", 
-        "avahi-daemon", "cron", "cronie", "rsyslog", "ntp", 
-        "systemd-timesyncd", "chrony", "udev", "systemd-udevd", "dnsmasq", "dhcpcd"
-    ]
-    
-    # === CORE Services ===
-    core_services = [
-        "systemd-journald", "systemd-logind", "dbus", "polkit", "systemd-resolved"
-    ]
-    
     try:
         # Get list of ALL loaded services (running, failed, exited, loaded)
         output = run_host_command_simple(
@@ -165,8 +193,8 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
         if not output:
              output = ""
 
-        now = datetime.utcnow().isoformat()
-        processed_units = set()
+        now = utc_now().isoformat()
+        unit_states = {}
 
         # Parse loaded services (active or inactive but loaded)
         for line in output.splitlines():
@@ -177,39 +205,39 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
              if not unit_name.endswith(".service"): continue
              
              name = unit_name.replace(".service", "")
-             processed_units.add(name)
-             
-             # Determine category
-             r_class = "APP" 
-             if name in app_services: r_class = "APP"
-             elif name in system_services: r_class = "SYSTEM"
-             elif name in core_services: r_class = "CORE"
-             # If not in lists but starts with systemd-, classify as SYSTEM or CORE
-             elif name.startswith("systemd-"): r_class = "SYSTEM"
-             
              active_state = parts[2] if len(parts) > 2 else "unknown"
-             # Keep transitional states visible in the UI for live action feedback.
-             if active_state == "activating":
-                 state = "starting"
-             elif active_state == "deactivating":
-                 state = "stopping"
-             elif active_state == "reloading":
-                 state = "restarting"
-             elif active_state == "failed":
-                 state = "failed"
-             elif active_state == "active":
-                 state = "running"
-             else:
-                 state = "stopped"
+             sub_state = parts[3] if len(parts) > 3 else ""
+             unit_states[name] = {
+                 "state": _state_from_systemd(active_state, sub_state),
+                 "active_state": active_state,
+                 "sub_state": sub_state,
+                 "unit_file_state": "unknown",
+             }
 
-             # Filter noisy kernel/system units unless they are important or actively transitioning.
-             if (
-                 state in {"stopped"}
-                 and name not in app_services
-                 and name not in system_services
-                 and name not in core_services
-             ):
-                 continue
+        unit_files = run_host_command_simple(
+            "systemctl list-unit-files --type=service --no-pager --no-legend",
+            timeout=15,
+        )
+        for line in unit_files.splitlines():
+            parts = line.split()
+            if parts and parts[0].endswith(".service") and "@." not in parts[0]:
+                name = parts[0].removesuffix(".service")
+                unit_file_state = parts[1] if len(parts) > 1 else "unknown"
+                details = unit_states.setdefault(
+                    name,
+                    {
+                        "state": "stopped",
+                        "active_state": "inactive",
+                        "sub_state": "dead",
+                        "unit_file_state": unit_file_state,
+                    },
+                )
+                details["unit_file_state"] = unit_file_state
+
+        for name, details in unit_states.items():
+             unit_name = f"{name}.service"
+             r_class = _classify_service(name)
+             state = details["state"]
 
              use_data = usage_map.get(unit_name, {"cpu": 0.0, "mem": 0.0})
              
@@ -229,44 +257,13 @@ async def _get_live_systemd_services() -> List[ResourceResponse]:
                  managed=True,
                  updated_at=now,
                  cpu_usage=use_data["cpu"],
-                 memory_usage=use_data["mem"]
+                 memory_usage=use_data["mem"],
+                 active_state=details["active_state"],
+                 sub_state=details["sub_state"],
+                 unit_file_state=details["unit_file_state"],
+                 allowed_actions=_allowed_service_actions(r_class),
              ))
              
-        # Check for important services that were NOT loaded (completely stopped/disabled)
-        all_important = app_services + system_services
-        missing_services = [s for s in all_important if s not in processed_units]
-        
-        if missing_services:
-            # Check existence in batch
-            check_cmd = "systemctl list-unit-files " + " ".join([f"{s}.service" for s in missing_services]) + " --no-legend"
-            check_out = run_host_command_simple(check_cmd, timeout=10)
-            
-            if check_out:
-                for line in check_out.splitlines():
-                    parts = line.split()
-                    if len(parts) < 1: continue
-                    unit_file = parts[0]
-                    if not unit_file.endswith(".service"): continue
-                    
-                    name = unit_file.replace(".service", "")
-                    
-                    # Determine category
-                    r_class = "APP"
-                    if name in app_services: r_class = "APP"
-                    elif name in system_services: r_class = "SYSTEM"
-                    
-                    services.append(ResourceResponse(
-                        id=f"systemd-{name}",
-                        name=name,
-                        type="service",
-                        resource_class=r_class,
-                        provider="systemd",
-                        state="stopped",
-                        health_score=50,
-                        managed=True,
-                        updated_at=now
-                    ))
-
         # Update cache before returning (OPT-004)
         result = sorted(services, key=lambda s: (s.resource_class != "APP", s.name))
         _services_cache = (result, time.time())
@@ -302,6 +299,22 @@ async def list_unmanaged_resources(user: dict = Depends(get_current_user)):
         )
         for row in rows
     ]
+
+
+@router.get("/{resource_id}/dependencies")
+async def get_resource_dependencies(
+    resource_id: str,
+    user: dict = Depends(get_current_user),
+):
+    service_name = resource_id.removeprefix("systemd-")
+    if not service_name.endswith(".service"):
+        service_name = f"{service_name}.service"
+    try:
+        return await agent_client.call(
+            "resource.dependencies", {"resource_id": service_name}
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Dependency graph unavailable: {exc}")
 
 
 @router.get("/{resource_id}", response_model=ResourceResponse)
@@ -354,7 +367,7 @@ async def execute_action(
     if not row and resource_id.startswith("systemd-"):
         service_name = resource_id.replace("systemd-", "")
         resource_name = service_name
-        resource_class = "APP"
+        resource_class = _classify_service(service_name)
         provider = "systemd"
     elif not row:
         raise HTTPException(status_code=404, detail="Resource not found")
@@ -367,41 +380,21 @@ async def execute_action(
             status_code=403,
             detail="Cannot modify CORE resources"
         )
-    
-    # Check operator permissions on SYSTEM resources
-    if resource_class == "SYSTEM" and user["role"] == "operator":
-        allowed_actions = ["restart", "logs", "stats"]
-        if request.action not in allowed_actions:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Operators can only {allowed_actions} on SYSTEM resources"
-            )
+    if request.action not in _allowed_service_actions(resource_class):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Action '{request.action}' is not allowed for this resource",
+        )
     
     # Execute the action based on provider type
     action_result = None
     if provider == "systemd" and resource_id.startswith("systemd-"):
         service_name = resource_id.replace("systemd-", "")
-        
-        # Try agent RPC first (Preferred: Agent runs as root)
         try:
-            # Agent expects ID like "service.service"
             agent_resource_id = f"{service_name}.service"
-            print(f"Attempting agent action on {agent_resource_id}")
             action_result = await agent_client.execute_action(agent_resource_id, request.action, request.params)
-            
-            # If agent returns explicit failure (but communication worked), respect it?
-            # Or fall back if it says "Resource not found"?
-            # For now, if communication works, we trust the result.
-            if action_result and action_result.get("success"):
-                pass  # Success!
-            elif action_result and action_result.get("error") == "NOT_FOUND":
-                # Agent doesn't know about it (maybe just created?), try local fallback
-                print("Agent resource not found, falling back to local action")
-                raise Exception("Agent resource not found")
-                
-        except Exception as e:
-            print(f"Agent action failed ({e}), falling back to local execution")
-            action_result = await _execute_systemd_action(service_name, request.action)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Agent unavailable: {exc}") from exc
     else:
         # Try agent RPC for other providers
         try:
@@ -429,73 +422,33 @@ async def execute_action(
             status_code = 404
         raise HTTPException(status_code=status_code, detail=action_result.get("message", "Action failed"))
 
-    # Invalidate live services cache so UI sees the latest state immediately.
+    # Invalidate caches and wait briefly for systemd to settle.
     _services_cache = ([], 0)
+    expected_active_state = "inactive" if request.action == "stop" else "active"
+    updated_resource = None
+    for _ in range(20):
+        services = await _get_live_systemd_services(force_refresh=True)
+        updated_resource = next((item for item in services if item.id == resource_id), None)
+        if updated_resource and updated_resource.active_state == expected_active_state:
+            break
+        await asyncio.sleep(0.25)
+
+    if not updated_resource or updated_resource.active_state != expected_active_state:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Service action completed but did not reach {expected_active_state}",
+        )
     
     return ActionResponse(
         success=True,
         message=f"Action '{request.action}' executed on {resource_name}",
-        data={"resource_id": resource_id, "action": request.action, "result": action_result}
+        data={
+            "resource_id": resource_id,
+            "action": request.action,
+            "result": action_result,
+            "resource": updated_resource.model_dump() if updated_resource else None,
+        }
     )
-
-
-async def _execute_systemd_action(service_name: str, action: str) -> dict:
-    """Execute a systemctl action on a service via host_exec."""
-    import os
-    
-    
-    # Allowed actions
-    allowed = ["start", "stop", "restart", "status"]
-    if action not in allowed:
-        return {"success": False, "message": f"Action '{action}' not allowed. Use: {allowed}"}
-    
-    # Protected services that cannot be stopped
-    protected = ["sshd", "ssh", "pi-control", "systemd-journald", "dbus", "NetworkManager"]
-    if action in ["stop"] and service_name in protected:
-        return {"success": False, "message": f"Cannot stop protected service: {service_name}"}
-    
-    try:
-        base_command = f"systemctl {action} {service_name}.service"
-        password = os.environ.get("SUDO_PASSWORD") or os.environ.get("SSH_HOST_PASSWORD")
-
-        if password:
-            safe_password = password.replace("'", "'\"'\"'")
-            command = f"printf '%s\\n' '{safe_password}' | sudo -S -p '' {base_command}"
-        elif not is_running_in_container() and os.geteuid() == 0:
-            command = base_command
-        else:
-            # Use non-interactive sudo so we fail fast instead of hanging for a password prompt.
-            command = f"sudo -n {base_command}"
-
-        masked_command = command
-        if password:
-            masked_command = masked_command.replace(password, "***")
-        print(f"Executing systemd action: {masked_command}")
-        
-        stdout, stderr, returncode = run_host_command(command, timeout=30)
-        
-        if returncode == 0:
-            return {
-                "success": True,
-                "message": f"Service {service_name} {action} successful",
-                "output": stdout
-            }
-        else:
-            print(f"Systemd action failed: {stderr}")
-            if "password is required" in (stderr or "").lower() or "a password is required" in (stderr or "").lower():
-                return {
-                    "success": False,
-                    "message": "Insufficient sudo permissions for service control. Configure sudoers or run via agent.",
-                    "error": "SUDO_PERMISSION_REQUIRED"
-                }
-            return {
-                "success": False,
-                "message": f"Failed to {action} {service_name}. Error: {stderr.strip() or 'Exit code ' + str(returncode)}",
-                "error": stderr
-            }
-    except Exception as e:
-        print(f"Systemd execution exception: {e}")
-        return {"success": False, "message": str(e)}
 
 
 @router.post("/{resource_id}/manage")

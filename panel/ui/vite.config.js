@@ -31,10 +31,18 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts'],
-          terminal: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links'],
+        manualChunks(id) {
+          if (!id.includes('/node_modules/')) return undefined
+          if (id.includes('/node_modules/recharts/')) return 'charts'
+          if (id.includes('/node_modules/@xterm/')) return 'terminal'
+          if (
+            id.includes('/node_modules/react/') ||
+            id.includes('/node_modules/react-dom/') ||
+            id.includes('/node_modules/react-router-dom/')
+          ) {
+            return 'vendor'
+          }
+          return undefined
         },
       },
     },

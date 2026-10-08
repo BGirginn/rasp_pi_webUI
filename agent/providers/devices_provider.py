@@ -15,11 +15,20 @@ import os
 import platform
 import subprocess
 from time import monotonic
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import structlog
+from storage import (
+    StorageSafetyError,
+    discover_usb_storage,
+    get_safe_usb_device,
+    mount_volume,
+    power_off_device,
+    resolve_volume,
+    unmount_device,
+)
 
 try:
     import httpx
@@ -141,12 +150,23 @@ class DevicesProvider(BaseProvider):
             return []
     
     async def _discover_usb_linux(self) -> List[Resource]:
-        """Discover USB devices on Linux via sysfs."""
+        """Discover physical USB devices and enrich storage from the block layer."""
         resources = []
         usb_path = Path("/sys/bus/usb/devices")
         
         if not usb_path.exists():
             return resources
+
+        try:
+            storage_devices = await asyncio.to_thread(discover_usb_storage)
+        except Exception as exc:
+            logger.warning("USB block discovery failed", error=str(exc))
+            storage_devices = []
+        storage_by_block = {
+            device["id"]: device
+            for device in storage_devices
+            if device.get("id")
+        }
         
         for device_dir in usb_path.iterdir():
             # Skip interfaces (e.g., 1-1:1.0)
@@ -168,36 +188,63 @@ class DevicesProvider(BaseProvider):
                 manufacturer = manufacturer_file.read_text().strip() if manufacturer_file.exists() else "Unknown"
                 product_name = product_name_file.read_text().strip() if product_name_file.exists() else "USB Device"
                 
-                # Skip internal hubs (usually have no product name)
-                if product_name == "USB Device" and manufacturer == "Unknown":
+                # Host controllers/root hubs are kernel infrastructure, not user devices.
+                lowered_name = product_name.lower()
+                if (
+                    device_dir.name.startswith("usb")
+                    or "host controller" in lowered_name
+                    or "root hub" in lowered_name
+                    or (product_name == "USB Device" and manufacturer == "Unknown")
+                ):
                     continue
                 
                 device_id = f"usb-{vendor_id}-{product_id}-{device_dir.name}"
                 
-                # Check if it's a storage device
-                is_storage = await self._is_usb_storage(device_dir)
-                mount_point = await self._get_usb_mount_point(device_dir) if is_storage else None
-                
-                capabilities = ["read"]
+                capabilities, functional_type, endpoints = self._get_usb_functions(device_dir)
+                is_storage = "storage" in capabilities
+                storage = None
                 if is_storage:
-                    capabilities.extend(["storage", "write", "eject"])
+                    storage = next(
+                        (
+                            storage_by_block[name]
+                            for name in endpoints.get("storage", [])
+                            if name in storage_by_block
+                        ),
+                        None,
+                    )
+                mount_point = (
+                    storage["mount_points"][0]
+                    if storage and storage.get("mount_points")
+                    else None
+                )
+                if storage:
+                    capabilities = ["storage", "read"]
+                    if not storage.get("read_only"):
+                        capabilities.append("write")
+                    capabilities.extend(["mount", "unmount", "eject"])
+
+                serial_file = device_dir / "serial"
+                serial = serial_file.read_text().strip() if serial_file.exists() else None
                 
                 resource = Resource(
                     id=device_id,
                     name=product_name,
-                    type="usb",
+                    type=functional_type,
                     provider=self.name,
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE,
                     capabilities=capabilities,
-                    last_seen=datetime.utcnow(),
+                    last_seen=datetime.now(timezone.utc),
                     metadata={
                         "vendor_id": vendor_id,
                         "product_id": product_id,
                         "manufacturer": manufacturer,
+                        "serial": serial,
                         "is_storage": is_storage,
                         "mount_point": mount_point,
                         "path": str(device_dir),
+                        "endpoints": endpoints,
+                        "storage": storage,
                     }
                 )
                 resources.append(resource)
@@ -209,32 +256,69 @@ class DevicesProvider(BaseProvider):
     
     async def _is_usb_storage(self, device_dir: Path) -> bool:
         """Check if USB device is a mass storage device."""
-        # Look for block device subdirectory
-        for subdir in device_dir.iterdir():
-            if not subdir.is_dir():
+        return bool(self._usb_function_directories(device_dir, "block"))
+
+    def _usb_function_directories(self, device_dir: Path, function: str) -> List[Path]:
+        """Return function directories owned by this physical USB device."""
+        paths = []
+        direct_path = device_dir / function
+        if direct_path.is_dir():
+            paths.append(direct_path)
+
+        interface_prefix = f"{device_dir.name}:"
+        for interface_dir in device_dir.iterdir():
+            if not interface_dir.is_dir() or not interface_dir.name.startswith(interface_prefix):
                 continue
-            block_path = subdir / "block"
-            if block_path.exists():
-                return True
-        return False
+            paths.extend(path for path in interface_dir.glob(f"**/{function}") if path.is_dir())
+        return paths
+
+    def _get_usb_functions(self, device_dir: Path):
+        """Classify a physical USB device from the kernel functions it exposes."""
+        function_paths = {
+            "network": self._usb_function_directories(device_dir, "net"),
+            "storage": self._usb_function_directories(device_dir, "block"),
+            "serial": self._usb_function_directories(device_dir, "tty"),
+            "video": self._usb_function_directories(device_dir, "video4linux"),
+            "input": self._usb_function_directories(device_dir, "input"),
+            "audio": self._usb_function_directories(device_dir, "sound"),
+        }
+        endpoints = {}
+        for function, paths in function_paths.items():
+            names = sorted({child.name for path in paths for child in path.iterdir()})
+            if names:
+                endpoints[function] = names
+
+        if endpoints.get("storage"):
+            return ["storage", "read", "write"], "storage", endpoints
+        if endpoints.get("network"):
+            interfaces = endpoints["network"]
+            capabilities = ["network"]
+            if any(name.startswith("wl") for name in interfaces):
+                capabilities.append("wifi")
+            return capabilities, "network", endpoints
+        if endpoints.get("serial"):
+            return ["serial", "rx", "tx"], "serial", endpoints
+        if endpoints.get("video"):
+            return ["video", "capture"], "camera", endpoints
+        if endpoints.get("audio"):
+            return ["audio"], "audio", endpoints
+        if endpoints.get("input"):
+            return ["input"], "input", endpoints
+        return ["device"], "usb", endpoints
     
     async def _get_usb_mount_point(self, device_dir: Path) -> Optional[str]:
         """Get mount point for USB storage device."""
         try:
             # Find the block device name (e.g., sda, sdb)
-            for subdir in device_dir.iterdir():
-                if not subdir.is_dir():
-                    continue
-                block_path = subdir / "block"
-                if block_path.exists():
-                    for block_name in block_path.iterdir():
-                        # Check /proc/mounts for mount point
-                        mounts = Path("/proc/mounts").read_text()
-                        for line in mounts.split("\n"):
-                            if block_name.name in line:
-                                parts = line.split()
-                                if len(parts) >= 2:
-                                    return parts[1]
+            for block_path in self._usb_function_directories(device_dir, "block"):
+                for block_name in block_path.iterdir():
+                    # Check /proc/mounts for mount point
+                    mounts = Path("/proc/mounts").read_text()
+                    for line in mounts.split("\n"):
+                        if block_name.name in line:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                return parts[1]
         except Exception:
             pass
         return None
@@ -313,7 +397,7 @@ class DevicesProvider(BaseProvider):
                 resource_class=ResourceClass.DEVICE,
                 state=ResourceState.ONLINE,
                 capabilities=capabilities,
-                last_seen=datetime.utcnow(),
+                last_seen=datetime.now(timezone.utc),
                 metadata={
                     "vendor_id": vendor_id,
                     "product_id": product_id,
@@ -359,7 +443,7 @@ class DevicesProvider(BaseProvider):
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE,
                     capabilities=["serial", "read", "write"],
-                    last_seen=datetime.utcnow(),
+                    last_seen=datetime.now(timezone.utc),
                     metadata={
                         "path": port_path,
                         "port_name": port_name,
@@ -411,7 +495,7 @@ class DevicesProvider(BaseProvider):
                     resource_class=ResourceClass.DEVICE,
                     state=ResourceState.ONLINE if is_online else ResourceState.OFFLINE,
                     capabilities=capabilities,
-                    last_seen=datetime.utcnow() if is_online else None,
+                    last_seen=datetime.now(timezone.utc) if is_online else None,
                     metadata={
                         "ip": ip,
                         "telemetry": telemetry,
@@ -457,7 +541,16 @@ class DevicesProvider(BaseProvider):
     
     async def get_resource(self, resource_id: str) -> Optional[Resource]:
         """Get a specific device."""
+        resource = self._resources.get(resource_id)
+        if resource:
+            return resource
+        await self.discover()
         return self._resources.get(resource_id)
+
+    def get_allowed_actions(self, resource_class: ResourceClass) -> List[str]:
+        if resource_class == ResourceClass.DEVICE:
+            return ["command", "mount", "unmount", "eject"]
+        return super().get_allowed_actions(resource_class)
     
     async def execute_action(
         self,
@@ -475,9 +568,8 @@ class DevicesProvider(BaseProvider):
                 error="NOT_FOUND"
             )
         
-        # USB eject action
-        if resource.type == "usb" and action == "eject":
-            result = await self._eject_usb(resource)
+        if resource.metadata.get("is_storage") and action in {"mount", "unmount", "eject"}:
+            result = await self._execute_storage_action(resource, action, params or {})
             if result.success:
                 self._invalidate_discovery_cache()
             return result
@@ -496,60 +588,65 @@ class DevicesProvider(BaseProvider):
             error="UNKNOWN_ACTION"
         )
     
-    async def _eject_usb(self, resource: Resource) -> ActionResult:
-        """Safely eject USB storage device."""
-        mount_point = resource.metadata.get("mount_point")
-        
-        if not mount_point:
-            return ActionResult(
-                success=False,
-                message="Device is not mounted",
-                error="NOT_MOUNTED"
-            )
-        
+    async def _execute_storage_action(
+        self,
+        resource: Resource,
+        action: str,
+        params: Dict,
+    ) -> ActionResult:
+        storage = resource.metadata.get("storage") or {}
         try:
-            system = platform.system()
-            
-            if system == "Linux":
-                # Unmount and eject
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["umount", mount_point],
-                    capture_output=True,
-                    timeout=30
+            if platform.system() == "Linux":
+                device = await asyncio.to_thread(
+                    get_safe_usb_device,
+                    storage.get("device_path", ""),
+                    storage.get("fingerprint", ""),
                 )
-            elif system == "Darwin":
-                # macOS eject
+                if action == "mount":
+                    volume = resolve_volume(device, params.get("volume_id"))
+                    mount_point = await asyncio.to_thread(
+                        mount_volume,
+                        volume["path"],
+                        bool(params.get("read_only", False)),
+                    )
+                    message = f"Mounted at {mount_point}"
+                    data = {"mount_point": mount_point, "volume_id": volume["id"]}
+                elif action == "unmount":
+                    unmounted = await asyncio.to_thread(unmount_device, device)
+                    message = "USB volumes unmounted"
+                    data = {"unmounted": unmounted}
+                else:
+                    unmounted = await asyncio.to_thread(unmount_device, device)
+                    await asyncio.to_thread(power_off_device, device)
+                    message = "USB device safely ejected"
+                    data = {"unmounted": unmounted}
+            elif platform.system() == "Darwin" and action == "eject":
+                mount_point = resource.metadata.get("mount_point")
                 result = await asyncio.to_thread(
                     subprocess.run,
                     ["diskutil", "eject", mount_point],
                     capture_output=True,
-                    timeout=30
+                    text=True,
+                    timeout=30,
                 )
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.strip() or "Eject failed")
+                message = f"Device ejected: {mount_point}"
+                data = None
             else:
-                return ActionResult(
-                    success=False,
-                    message="Eject not supported on this platform",
-                    error="NOT_SUPPORTED"
-                )
-            
-            if result.returncode == 0:
-                return ActionResult(
-                    success=True,
-                    message=f"Device ejected: {mount_point}"
-                )
-            else:
-                return ActionResult(
-                    success=False,
-                    message=f"Eject failed: {result.stderr.decode()}",
-                    error="EJECT_FAILED"
-                )
-                
-        except Exception as e:
+                raise StorageSafetyError(f"{action} is not supported on this platform")
+            return ActionResult(success=True, message=message, data=data)
+        except StorageSafetyError as exc:
             return ActionResult(
                 success=False,
-                message=str(e),
-                error="EJECT_ERROR"
+                message=str(exc),
+                error="UNSAFE_DEVICE",
+            )
+        except Exception as exc:
+            return ActionResult(
+                success=False,
+                message=str(exc),
+                error=f"{action.upper()}_FAILED",
             )
     
     async def _send_esp_command(

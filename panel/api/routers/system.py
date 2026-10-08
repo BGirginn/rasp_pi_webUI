@@ -130,10 +130,11 @@ async def shutdown_system(
     db = await get_control_db()
     
     # Audit log
-    await db.run(
-        "INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (:uid, 'power.shutdown', 'System shutdown initiated', '127.0.0.1')",
-        {"uid": user["id"]}
+    await db.execute(
+        "INSERT INTO audit_log (user_id, action, details, ip_address) VALUES (?, 'power.shutdown', 'System shutdown initiated', '127.0.0.1')",
+        (user["id"],)
     )
+    await db.commit()
     
     background_tasks.add_task(execute_power_command, ["systemctl", "poweroff"])
     return {"message": "System is shutting down..."}

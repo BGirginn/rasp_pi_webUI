@@ -6,7 +6,6 @@ Resource manifest creation and management.
 
 import json
 import uuid
-from datetime import datetime
 from typing import List, Optional, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +13,7 @@ from pydantic import BaseModel
 
 from db import get_control_db
 from .auth import get_current_user, require_role
+from time_utils import utc_now
 
 router = APIRouter()
 
@@ -101,7 +101,7 @@ async def create_manifest(
     await db.execute(
         """INSERT INTO manifests (id, resource_id, name, version, config_json, created_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
-        (manifest_id, manifest.resource_id, manifest.name, manifest.version, config_json, datetime.utcnow().isoformat())
+        (manifest_id, manifest.resource_id, manifest.name, manifest.version, config_json, utc_now().isoformat())
     )
     
     # Update resource to reference manifest
@@ -127,7 +127,7 @@ async def create_manifest(
         config=manifest.config,
         approved_by=None,
         approved_at=None,
-        created_at=datetime.utcnow().isoformat()
+        created_at=utc_now().isoformat()
     )
 
 

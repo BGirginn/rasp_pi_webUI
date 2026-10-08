@@ -8,7 +8,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 
 import structlog
 
@@ -32,6 +32,7 @@ class SocketServer:
         
         self._server: Optional[asyncio.Server] = None
         self._is_running = False
+        self._client_writers: Set[asyncio.StreamWriter] = set()
     
     @property
     def is_running(self) -> bool:
@@ -73,7 +74,12 @@ class SocketServer:
         """Stop the socket server."""
         if self._server:
             self._server.close()
+            writers = list(self._client_writers)
+            for writer in writers:
+                writer.transport.abort()
+            await asyncio.sleep(0)
             await self._server.wait_closed()
+            self._server = None
         
         # Cleanup socket file
         if os.path.exists(self.socket_path):
@@ -89,6 +95,7 @@ class SocketServer:
     ) -> None:
         """Handle incoming client connection."""
         peer = writer.get_extra_info("peername") or "unknown"
+        self._client_writers.add(writer)
         logger.debug("Client connected", peer=peer)
         
         try:
@@ -138,9 +145,9 @@ class SocketServer:
         except Exception as e:
             logger.exception("Client handler error", peer=peer, error=str(e))
         finally:
+            self._client_writers.discard(writer)
             try:
                 writer.close()
-                await writer.wait_closed()
             except Exception:
                 pass
     

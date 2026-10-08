@@ -319,6 +319,14 @@ class GDriveBackupService:
                 result["gdrive_file"] = upload
                 self.last_gdrive_upload = upload
                 await self._set_setting(self.SETTING_GDRIVE_LAST_UPLOAD, json.dumps(upload))
+                if settings.backup_delete_local_after_upload:
+                    try:
+                        deleted = await asyncio.to_thread(self._delete_local_backup_artifacts, archive_path)
+                        result["local_deleted"] = True
+                        result["local_deleted_files"] = deleted
+                    except Exception as exc:
+                        result["local_deleted"] = False
+                        result.setdefault("errors", []).append(f"local_delete:{exc}")
             else:
                 result["status"] = "completed_local_only"
                 result["reason"] = "gdrive_not_authenticated"
@@ -475,9 +483,8 @@ class GDriveBackupService:
                 break
 
         total_deleted = result["telemetry"]["deleted_rows"] + result["iot"]["deleted_rows"]
-        if total_deleted > 1000:
-            await db.execute("VACUUM")
-            await db.commit()
+        if total_deleted:
+            await db.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
         if result["errors"]:
             result["status"] = "failed"
@@ -655,12 +662,21 @@ class GDriveBackupService:
 
         return {"type": data_type, "filename": filename, "path": str(filepath), "rows": len(rows), "uploaded": False}
 
+    def _safe_json_object(self, value: Any) -> Dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
     async def _write_export_file(self, filepath: Path, data_type: str, rows: List, export_format: str):
         if export_format == "json":
             data = []
             if data_type == "telemetry":
                 for row in rows:
-                    data.append({"timestamp": row[0], "datetime": datetime.fromtimestamp(row[0]).isoformat(), "metric": row[1], "labels": json.loads(row[2]) if row[2] else {}, "value": row[3]})
+                    data.append({"timestamp": row[0], "datetime": datetime.fromtimestamp(row[0]).isoformat(), "metric": row[1], "labels": self._safe_json_object(row[2]), "value": row[3]})
             else:
                 for row in rows:
                     data.append({"device_id": row[0], "sensor_type": row[1], "value": row[2], "unit": row[3], "timestamp": row[4], "datetime": datetime.fromtimestamp(row[4]).isoformat()})
@@ -927,6 +943,23 @@ class GDriveBackupService:
                 deleted.append(item["name"])
         return deleted
 
+    def _delete_local_backup_artifacts(self, keep_path: Path) -> List[str]:
+        deleted: List[str] = []
+        for path in self._iter_retention_candidate_files():
+            if path == keep_path:
+                continue
+            try:
+                path.unlink()
+                deleted.append(path.name)
+            except FileNotFoundError:
+                continue
+        try:
+            keep_path.unlink(missing_ok=True)
+            deleted.append(keep_path.name)
+        except Exception:
+            pass
+        return deleted
+
     def _parse_drive_time(self, value: Optional[str]) -> Optional[datetime]:
         if not value:
             return None
@@ -961,6 +994,7 @@ class GDriveBackupService:
             "last_daily_export_date": self.last_daily_export_date,
             "last_gdrive_upload": self.last_gdrive_upload,
             "backup_directory": str(self.backup_dir),
+            "delete_local_after_upload": settings.backup_delete_local_after_upload,
             "folder_id": self.folder_id,
             "folder_name": settings.backup_gdrive_folder_name,
             "retention_days": {

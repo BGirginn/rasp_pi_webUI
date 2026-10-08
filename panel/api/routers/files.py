@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .auth import get_current_user
+from services.project_service import ensure_registered_path, registered_roots
 
 
 router = APIRouter()
@@ -68,7 +69,8 @@ def normalize_path(path: str) -> str:
 def ensure_not_protected(path: str) -> None:
     normalized = normalize_path(path)
     if normalized == "/" or any(
-        normalized == protected or normalized.startswith(f"{protected}{os.sep}")
+        normalized == os.path.realpath(protected)
+        or normalized.startswith(f"{os.path.realpath(protected)}{os.sep}")
         for protected in PROTECTED_PATHS
         if protected != "/"
     ):
@@ -102,6 +104,10 @@ async def list_files(
 ):
     """List contents of a directory."""
     path = normalize_path(path)
+    try:
+        path = str(await ensure_registered_path(path))
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Path not found")
     
@@ -161,6 +167,7 @@ async def file_action(
     try:
         if action.action == "delete":
             src = normalize_path(src)
+            await ensure_registered_path(src)
             ensure_not_protected(src)
             if os.path.isdir(src):
                 shutil.rmtree(src)
@@ -170,6 +177,7 @@ async def file_action(
             
         elif action.action == "mkdir":
             src = normalize_path(src)
+            await ensure_registered_path(src)
             ensure_not_protected(src)
             os.makedirs(src, exist_ok=True)
             return {"message": "Directory created"}
@@ -181,9 +189,11 @@ async def file_action(
                 raise HTTPException(status_code=400, detail="New name must not contain path separators")
             
             src = normalize_path(src)
+            await ensure_registered_path(src)
             ensure_not_protected(src)
             parent = os.path.dirname(src)
             dst = os.path.join(parent, action.new_name)
+            await ensure_registered_path(dst)
             os.rename(src, dst)
             return {"message": "Renamed successfully"}
             
@@ -191,8 +201,10 @@ async def file_action(
             if not action.destination:
                 raise HTTPException(status_code=400, detail="Destination required")
             src = normalize_path(src)
+            await ensure_registered_path(src)
             ensure_not_protected(src)
             destination = normalize_path(action.destination)
+            await ensure_registered_path(destination)
             ensure_not_protected(destination)
             shutil.move(src, destination)
             return {"message": "Moved successfully"}
@@ -201,7 +213,9 @@ async def file_action(
             if not action.destination:
                 raise HTTPException(status_code=400, detail="Destination required")
             src = normalize_path(src)
+            await ensure_registered_path(src)
             destination = normalize_path(action.destination)
+            await ensure_registered_path(destination)
             ensure_not_protected(destination)
             if os.path.isdir(src):
                 shutil.copytree(src, destination)
@@ -212,6 +226,8 @@ async def file_action(
         else:
             raise HTTPException(status_code=400, detail="Invalid action")
             
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
     except Exception as e:
@@ -228,6 +244,10 @@ async def upload_file(
         raise HTTPException(status_code=403, detail="Viewers cannot upload files")
         
     path = normalize_path(path)
+    try:
+        path = str(await ensure_registered_path(path))
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     ensure_not_protected(path)
     if not os.path.exists(path) or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Target directory not found")
@@ -244,6 +264,8 @@ async def upload_file(
             uploaded_counts += 1
             
         return {"message": f"Successfully uploaded {uploaded_counts} files"}
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied to write to this directory")
     except Exception as e:
@@ -256,6 +278,10 @@ async def download_file(
 ):
     """Download a file."""
     path = normalize_path(path)
+    try:
+        path = str(await ensure_registered_path(path))
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -270,3 +296,8 @@ async def download_file(
         filename=os.path.basename(path),
         media_type='application/octet-stream'
     )
+
+
+@router.get("/roots")
+async def file_roots(user: dict = Depends(get_current_user)):
+    return {"roots": [str(path) for path in await registered_roots()]}

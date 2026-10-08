@@ -1,6 +1,5 @@
 
 import asyncio
-import subprocess
 
 async def scan():
     print("Starting scan...")
@@ -21,7 +20,8 @@ async def scan():
     print(f"Raw Output:\n---\n{output}\n---")
     
     for line in output.split("\n"):
-        if not line.strip(): continue
+        if not line.strip():
+            continue
         clean_line = line.replace("\\:", "__COLON__")
         parts = clean_line.split(":")
         if len(parts) < 7:

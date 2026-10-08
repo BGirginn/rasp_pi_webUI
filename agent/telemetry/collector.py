@@ -5,8 +5,10 @@ Collects system metrics at configured intervals and stores them in SQLite.
 """
 
 import asyncio
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -34,8 +36,8 @@ class TelemetryCollector:
     def __init__(self, config: dict):
         self.config = config.get("telemetry", {})
         self._db_path = self.config.get("db_path", "/data/telemetry.db")
-        self._interval = self.config.get("interval", 2)
-        self._batch_size = self.config.get("batch_size", 500)
+        self._interval = max(30, self.config.get("interval", 30))
+        self._batch_size = self.config.get("batch_size", 60)
         
         self._running = False
         self._collection_task: Optional[asyncio.Task] = None
@@ -102,6 +104,7 @@ class TelemetryCollector:
             # Enable WAL mode for better performance
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA synchronous=NORMAL")
+            await db.execute("PRAGMA busy_timeout=5000")
             
             # Create metrics_raw table
             await db.execute("""
@@ -145,6 +148,27 @@ class TelemetryCollector:
 
             await db.commit()
             logger.info("Telemetry database initialized", path=self._db_path)
+
+        self._make_database_group_writable()
+
+    def _make_database_group_writable(self) -> None:
+        """Allow the unprivileged panel process to share the agent database."""
+        db_path = Path(self._db_path)
+        try:
+            data_gid = db_path.parent.stat().st_gid
+            for path in db_path.parent.glob(f"{db_path.name}*"):
+                if not path.is_file():
+                    continue
+                os.chown(path, -1, data_gid)
+                mode = path.stat().st_mode
+                if mode & 0o060 != 0o060:
+                    path.chmod(mode | 0o660)
+        except OSError as exc:
+            logger.warning(
+                "Could not update telemetry database permissions",
+                path=self._db_path,
+                error=str(exc),
+            )
     
     async def _collection_loop(self) -> None:
         """Main collection loop."""
@@ -213,6 +237,7 @@ class TelemetryCollector:
         # Memory metrics
         mem = psutil.virtual_memory()
         metrics.extend([
+            {"ts": ts, "metric": "host.mem.total_mb", "labels": None, "value": mem.total / (1024 * 1024)},
             {"ts": ts, "metric": "host.mem.used_mb", "labels": None, "value": mem.used / (1024 * 1024)},
             {"ts": ts, "metric": "host.mem.available_mb", "labels": None, "value": mem.available / (1024 * 1024)},
             {"ts": ts, "metric": "host.mem.pct", "labels": None, "value": mem.percent},
@@ -231,10 +256,11 @@ class TelemetryCollector:
         for partition in psutil.disk_partitions():
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
-                mount = partition.mountpoint.replace("/", "_") or "root"
+                mount = "root" if partition.mountpoint == "/" else partition.mountpoint.replace("/", "_")
                 metrics.extend([
                     {"ts": ts, "metric": f"disk.{mount}.used_pct", "labels": {"mount": partition.mountpoint}, "value": usage.percent},
                     {"ts": ts, "metric": f"disk.{mount}.used_gb", "labels": {"mount": partition.mountpoint}, "value": usage.used / (1024**3)},
+                    {"ts": ts, "metric": f"disk.{mount}.total_gb", "labels": {"mount": partition.mountpoint}, "value": usage.total / (1024**3)},
                 ])
             except (PermissionError, OSError):
                 continue
@@ -282,6 +308,7 @@ class TelemetryCollector:
         
         try:
             async with aiosqlite.connect(self._db_path) as db:
+                await db.execute("PRAGMA busy_timeout=5000")
                 await db.executemany(
                     "INSERT INTO metrics_raw (ts, metric, labels_json, value) VALUES (?, ?, ?, ?)",
                     [
@@ -372,7 +399,7 @@ class TelemetryCollector:
         """Get current metrics snapshot."""
         metrics = await self._collect_metrics()
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "degrade_mode": self._degrade_mode,
             "metrics": {m["metric"]: m["value"] for m in metrics}
         }

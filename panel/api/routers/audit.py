@@ -4,16 +4,52 @@ Pi Control Panel - Audit Log Router
 Audit log viewing and management.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Optional
 
+import json
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from db import get_control_db
+from services.audit_chain import audit_chain_service, row_dict
 from .auth import require_role
+from time_utils import utc_now
 
 router = APIRouter()
+
+
+@router.get("/verify")
+async def verify_audit_chain(user: dict = Depends(require_role("admin"))):
+    return await audit_chain_service.verify()
+
+
+@router.get("/export")
+async def export_audit_log(user: dict = Depends(require_role("admin"))):
+    await audit_chain_service.seal_pending()
+    db = await get_control_db()
+    cursor = await db.execute(
+        """SELECT id, user_id, action, resource_id, resource_type, details, result,
+                  ip_address, user_agent, previous_hash, event_hash, created_at
+           FROM audit_log ORDER BY id"""
+    )
+    fields = (
+        "id", "user_id", "action", "resource_id", "resource_type", "details", "result",
+        "ip_address", "user_agent", "previous_hash", "event_hash", "created_at",
+    )
+    rows = [row_dict(row, fields) for row in await cursor.fetchall()]
+
+    async def content():
+        for row in rows:
+            yield json.dumps(row, ensure_ascii=True, separators=(",", ":")) + "\n"
+
+    return StreamingResponse(
+        content(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=audit-log.jsonl"},
+    )
 
 
 class AuditLogEntry(BaseModel):
@@ -142,7 +178,7 @@ async def audit_summary(
     """Get audit log summary for the last N days."""
     db = await get_control_db()
     
-    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    since = (utc_now() - timedelta(days=days)).isoformat()
     
     # Actions by type
     cursor = await db.execute(

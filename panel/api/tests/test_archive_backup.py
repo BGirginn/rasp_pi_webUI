@@ -199,9 +199,28 @@ def test_encrypted_backup_contains_db_snapshots_and_manifest(admin_client):
     with tarfile.open(tar_path, "r:gz") as archive:
         names = set(archive.getnames())
 
+        restored_control = TEST_ROOT / "restored-control.db"
+        restored_telemetry = TEST_ROOT / "restored-telemetry.db"
+        restored_control.write_bytes(
+            archive.extractfile("pi-control-backup/databases/control.db").read()
+        )
+        restored_telemetry.write_bytes(
+            archive.extractfile("pi-control-backup/databases/telemetry.db").read()
+        )
+
     assert "pi-control-backup/manifest.json" in names
     assert "pi-control-backup/databases/control.db" in names
     assert "pi-control-backup/databases/telemetry.db" in names
+
+    control_conn = sqlite3.connect(restored_control)
+    telemetry_conn = sqlite3.connect(restored_telemetry)
+    assert control_conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert telemetry_conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert telemetry_conn.execute(
+        "SELECT value FROM metrics_raw WHERE metric = 'host.cpu.pct_total'"
+    ).fetchone()[0] == 42.5
+    control_conn.close()
+    telemetry_conn.close()
 
 
 def test_backup_file_retention_deletes_older_than_90_days(admin_client):

@@ -2,7 +2,7 @@
 # Pi Control Panel - Native Deployment Script
 #
 # Usage:
-#   ./deploy-native.sh [--profile full|local] user@host
+#   ./deploy-native.sh user@host
 
 set -euo pipefail
 
@@ -18,33 +18,12 @@ readonly DATA_DIR="/var/lib/pi-control"
 readonly CONFIG_DIR="/etc/pi-control"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly PROJECT_RSYNC_EXCLUDES=(
-    --exclude 'node_modules'
-    --exclude '__pycache__'
-    --exclude '.mypy_cache'
-    --exclude '.pytest_cache'
-    --exclude '*.pyc'
-    --exclude '.DS_Store'
-    --exclude '.git'
-    --exclude '.venv'
-    --exclude 'venv'
-    --exclude '.env'
-    --exclude '*.db'
-    --exclude '*.db-shm'
-    --exclude '*.db-wal'
-    --exclude 'dist'
-)
-
-PI_HOST=""
+PI_HOST="${1:-}"
 SSH_PASSWORD="${SSH_PASS:-}"
-INSTALL_PROFILE="local"
-WEB_PORT="${WEB_PORT:-8088}"
-WITH_ADGUARD=false
-DEFAULT_ADMIN_PASSWORD_VALUE="${DEFAULT_ADMIN_PASSWORD:-admin}"
 
 SSH_OPTIONS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 SSH_BATCH_OPTIONS=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-INSTALL_FLAGS=()
+INSTALL_FLAGS=(--skip-preflight --no-tailscale)
 
 SSH_CMD=()
 SSH_TTY_CMD=()
@@ -54,24 +33,11 @@ RSYNC_RSH_STRING=""
 
 print_usage() {
     cat <<'EOF'
-Usage: ./deploy-native.sh [OPTIONS] user@pi-ip-address
-
-Options:
-  --profile MODE    Installation profile: full or local (default: local)
-  --web-port PORT   Web UI port exposed by Caddy (default: 8088)
-  --with-adguard    Install and configure AdGuard Home DNS filtering
-  --no-tailscale    Alias for --profile local
-  -h, --help        Show this help text
-
-Environment:
-  SSH_PASS                  Optional SSH password when sshpass is installed
-  DEFAULT_ADMIN_PASSWORD    Initial admin password passed to the remote install
-  WEB_PORT                  Default value for --web-port
+Usage: ./deploy-native.sh user@pi-ip-address
 
 Examples:
-  ./deploy-native.sh --profile local pi@192.168.1.100
-  ./deploy-native.sh --profile full pi@100.x.y.z
-  SSH_PASS='secret' ./deploy-native.sh --profile local pi@192.168.1.100
+  ./deploy-native.sh pi@192.168.1.100
+  SSH_PASS='secret' ./deploy-native.sh pi@100.x.y.z
 EOF
 }
 
@@ -100,91 +66,6 @@ warn() {
 
 fail() {
     echo -e "  ${RED}ERR${NC} $1"
-}
-
-set_install_profile() {
-    local profile="$1"
-
-    case "$profile" in
-        full|local)
-            INSTALL_PROFILE="$profile"
-            ;;
-        *)
-            fail "Invalid profile: $profile"
-            echo "  Valid profiles: full, local"
-            exit 1
-            ;;
-    esac
-}
-
-set_web_port() {
-    local port="$1"
-
-    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
-        fail "Invalid web port: $port"
-        echo "  Use a port number between 1 and 65535."
-        exit 1
-    fi
-
-    WEB_PORT="$port"
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --profile)
-                if [[ $# -lt 2 ]]; then
-                    fail "--profile requires a value: full or local"
-                    exit 1
-                fi
-                set_install_profile "$2"
-                shift
-                ;;
-            --profile=*)
-                set_install_profile "${1#*=}"
-                ;;
-            --web-port)
-                if [[ $# -lt 2 ]]; then
-                    fail "--web-port requires a numeric value"
-                    exit 1
-                fi
-                set_web_port "$2"
-                shift
-                ;;
-            --web-port=*)
-                set_web_port "${1#*=}"
-                ;;
-            --with-adguard)
-                WITH_ADGUARD=true
-                ;;
-            --no-tailscale)
-                set_install_profile "local"
-                ;;
-            -h|--help)
-                print_usage
-                exit 0
-                ;;
-            -*)
-                fail "Unknown option: $1"
-                echo ""
-                print_usage
-                exit 1
-                ;;
-            *)
-                if [[ -n "$PI_HOST" ]]; then
-                    fail "Multiple target hosts provided: $PI_HOST and $1"
-                    exit 1
-                fi
-                PI_HOST="$1"
-                ;;
-        esac
-        shift
-    done
-
-    INSTALL_FLAGS=(--skip-preflight --profile "$INSTALL_PROFILE" --web-port "$WEB_PORT")
-    if [[ "$WITH_ADGUARD" == true ]]; then
-        INSTALL_FLAGS+=(--with-adguard)
-    fi
 }
 
 setup_transport() {
@@ -269,21 +150,23 @@ sync_project_files() {
 
     "${RSYNC_CMD[@]}" -avz --progress \
         -e "$RSYNC_RSH_STRING" \
-        "${PROJECT_RSYNC_EXCLUDES[@]}" \
+        --exclude 'node_modules' \
+        --exclude '__pycache__' \
+        --exclude '*.pyc' \
+        --exclude '.git' \
+        --exclude 'venv' \
+        --exclude '.env' \
+        --exclude '*.db' \
+        --exclude 'dist' \
         "$SCRIPT_DIR/" "$PI_HOST:$PROJECT_DIR/"
 
     success "Project files synced to $PI_HOST."
 }
 
 run_remote_install() {
-    local flags_string=""
     local installer_command=""
-    local quoted_password=""
 
-    printf -v flags_string '%q ' "${INSTALL_FLAGS[@]}"
-    flags_string="${flags_string% }"
-    printf -v quoted_password '%q' "$DEFAULT_ADMIN_PASSWORD_VALUE"
-    printf -v installer_command "cd '%s' && chmod +x install.sh && DEFAULT_ADMIN_PASSWORD=%s ./install.sh %s" "$PROJECT_DIR" "$quoted_password" "$flags_string"
+    printf -v installer_command "cd '%s' && chmod +x install.sh && ./install.sh %s" "$PROJECT_DIR" "${INSTALL_FLAGS[*]}"
 
     section "Running remote installer..."
     run_remote_sudo "$installer_command"
@@ -293,13 +176,10 @@ run_remote_install() {
 check_remote_health() {
     section "Checking remote API health..."
 
-    for _ in {1..30}; do
-        if run_remote "curl -sf http://localhost:8080/api/health >/dev/null"; then
-            success "Remote API is healthy."
-            return
-        fi
-        sleep 2
-    done
+    if run_remote "curl -sf http://localhost:8080/api/health >/dev/null"; then
+        success "Remote API is healthy."
+        return
+    fi
 
     warn "Remote API health check failed. Showing recent pi-control logs."
     run_remote_sudo "journalctl -u pi-control -n 20 --no-pager"
@@ -317,15 +197,7 @@ print_summary() {
     echo -e "${GREEN}  Remote Deployment Complete${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo ""
-    echo -e "${BLUE}Connection:${NC}"
-    echo "  Open this link from a device on the same network:"
-    echo "  http://$remote_ip:$WEB_PORT"
-    echo ""
-    echo -e "${BLUE}Initial admin login:${NC}"
-    echo "  This is used only when the database does not already contain an admin user."
-    echo "  Username: admin"
-    echo "  Password: $DEFAULT_ADMIN_PASSWORD_VALUE"
-    echo ""
+    echo -e "${BLUE}Access:${NC} http://$remote_ip"
     echo -e "${BLUE}Useful commands:${NC}"
     echo "  ssh $PI_HOST"
     echo "  sudo systemctl status pi-control"
@@ -335,8 +207,6 @@ print_summary() {
 }
 
 main() {
-    parse_args "$@"
-
     if [[ -z "$PI_HOST" ]]; then
         print_usage
         exit 1
@@ -346,9 +216,6 @@ main() {
 
     print_header
     info "Target host: $PI_HOST"
-    info "Install profile: $INSTALL_PROFILE"
-    info "Web port: $WEB_PORT"
-    info "AdGuard Home: $WITH_ADGUARD"
     info "Install directory: $PROJECT_DIR"
     info "Remote installer flags: ${INSTALL_FLAGS[*]}"
     echo ""

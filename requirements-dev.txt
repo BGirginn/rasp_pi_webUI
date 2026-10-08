@@ -1,0 +1,5 @@
+# Portable development and mocked tests; native D-Bus/GObject stays on the Pi.
+-r panel/api/requirements.txt
+docker>=7.1.0
+paho-mqtt>=2.0.0
+asyncio-throttle>=1.0.2

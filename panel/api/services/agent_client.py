@@ -248,6 +248,10 @@ class AgentClient:
         """Get job status."""
         return await self.call("job.status", {"job_id": job_id})
 
+    async def list_jobs(self, limit: int = 200) -> list:
+        """List durable jobs from the agent."""
+        return await self.call("job.list", {"limit": limit})
+
     async def get_job_logs(self, job_id: str) -> list:
         """Get job logs."""
         return await self.call("job.logs", {"job_id": job_id})
@@ -255,6 +259,31 @@ class AgentClient:
     async def cancel_job(self, job_id: str) -> Dict:
         """Cancel a running job."""
         return await self.call("job.cancel", {"job_id": job_id})
+
+    async def inspect_backup(self, backup_path: str) -> Dict:
+        return await self.call("backup.inspect", {"backup_path": backup_path}, timeout=120)
+
+    async def export_backup_key(self) -> str:
+        result = await self.call("backup.key.export")
+        return result["key"]
+
+    async def import_backup_key(self, key: str, replace: bool = False) -> Dict:
+        return await self.call("backup.key.import", {"key": key, "replace": replace})
+
+    async def mqtt_status(self) -> Dict:
+        return await self.call("mqtt.status")
+
+    async def mqtt_ensure(self) -> Dict:
+        return await self.call("mqtt.ensure", timeout=120)
+
+    async def mqtt_provision(self, device_id: str, name: str = "") -> Dict:
+        return await self.call("mqtt.provision", {"device_id": device_id, "name": name}, timeout=120)
+
+    async def mqtt_rotate(self, device_id: str) -> Dict:
+        return await self.call("mqtt.rotate", {"device_id": device_id}, timeout=60)
+
+    async def mqtt_revoke(self, device_id: str) -> Dict:
+        return await self.call("mqtt.revoke", {"device_id": device_id}, timeout=60)
     
     # System methods
     async def get_system_info(self) -> Dict:
@@ -270,9 +299,12 @@ class AgentClient:
         """Get network interfaces."""
         return await self.call("network.interfaces")
     
-    async def toggle_wifi(self, enable: bool) -> Dict:
+    async def toggle_wifi(self, enable: bool, rollback_seconds: int = 0) -> Dict:
         """Toggle WiFi."""
-        return await self.call("network.wifi.toggle", {"enable": enable})
+        return await self.call(
+            "network.wifi.toggle",
+            {"enable": enable, "rollback_seconds": rollback_seconds},
+        )
     
     async def scan_wifi(self) -> list:
         """Scan for WiFi networks."""

@@ -18,6 +18,7 @@ PyGObject>=3.46.0
 
 # MQTT client
 paho-mqtt>=2.0.0
+cryptography>=42.0.0
 
 # SQLite (built-in, but we need aiosqlite for async)
 aiosqlite>=0.19.0

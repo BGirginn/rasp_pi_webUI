@@ -16,7 +16,7 @@ const SIZES = [
 ];
 const VARIANTS = ['list', 'graphic'];
 
-export const WidgetWrapper = memo(function WidgetWrapper({ widget, children }) {
+export const WidgetWrapper = memo(function WidgetWrapper({ widget, children, columns = 4 }) {
     const { isEditMode, isDarkMode } = useTheme();
     const { removeWidget, resizeWidget, changeWidgetVariant } = useDashboard();
     const [showMenu, setShowMenu] = useState(false);
@@ -31,7 +31,7 @@ export const WidgetWrapper = memo(function WidgetWrapper({ widget, children }) {
     const handleDragEnd = useCallback(() => {
         setIsDragging(false);
     }, []);
-    return (<div className={`relative group/widget h-full ${showMenu ? 'z-[9999]' : ''}`} draggable={isEditMode} onDragStart={handleDragStart} onDragEnd={handleDragEnd} style={{ gridColumn: `span ${widget.width}`, gridRow: `span ${widget.height}` }}>
+    return (<div className={`relative group/widget h-full ${showMenu ? 'z-[9999]' : ''}`} draggable={isEditMode} onDragStart={handleDragStart} onDragEnd={handleDragEnd} style={{ gridColumn: `span ${Math.min(widget.width, columns)}`, gridRow: `span ${widget.height}` }}>
       <motion.div className={`h-full relative ${isDragging ? 'opacity-50' : ''} ${isEditMode ? 'cursor-move' : ''}`} whileHover={isEditMode ? { scale: 1.01 } : {}} transition={{ duration: 0.2 }}>
         {isEditMode && (<div className="absolute top-2 right-2 z-50 flex gap-2">
             <button onClick={() => setShowMenu(!showMenu)} className={`p-2 ${isDarkMode ? 'bg-black/80' : 'bg-white'} backdrop-blur-sm rounded-lg border ${isDarkMode ? 'border-white/20 hover:border-purple-500/50' : 'border-gray-300 hover:border-purple-500'} transition-all shadow-lg`}>

@@ -33,7 +33,7 @@ class TelemetryCollector:
     - Summary data: 30 days (configurable)
     """
     
-    COLLECTION_INTERVAL = 5  # seconds (balanced real-time vs resource usage)
+    MIN_COLLECTION_INTERVAL = 5
     AGGREGATION_INTERVAL = 300  # 5 minutes
     CLEANUP_INTERVAL = 3600  # 1 hour
     
@@ -43,6 +43,11 @@ class TelemetryCollector:
         self._aggregate_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._last_metrics: Dict = {}
+
+    @property
+    def collection_interval(self) -> int:
+        """Return the configured interval while preventing accidental write storms."""
+        return max(self.MIN_COLLECTION_INTERVAL, settings.telemetry_collection_interval)
     
     async def start(self):
         """Start the telemetry collector background tasks."""
@@ -51,12 +56,11 @@ class TelemetryCollector:
         
         self._running = True
         self._collect_task = asyncio.create_task(self._collection_loop())
-        self._aggregate_task = asyncio.create_task(self._aggregation_loop())
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         
         logger.info(
             "Telemetry collector started",
-            collection_interval=self.COLLECTION_INTERVAL,
+            collection_interval=self.collection_interval,
             raw_retention_days=settings.telemetry_raw_retention_days,
             summary_retention_days=settings.telemetry_summary_retention_days
         )
@@ -83,7 +87,7 @@ class TelemetryCollector:
             except Exception as e:
                 logger.error("Error collecting metrics", error=str(e))
             
-            await asyncio.sleep(self.COLLECTION_INTERVAL)
+            await asyncio.sleep(self.collection_interval)
     
     async def _aggregation_loop(self):
         """Aggregation loop - runs every 5 minutes."""
@@ -112,10 +116,9 @@ class TelemetryCollector:
             await asyncio.sleep(self.CLEANUP_INTERVAL)
     
     async def _collect_and_store_metrics(self):
-        """Collect current system metrics and store in database."""
+        """Fetch the agent snapshot and broadcast it without creating a second writer."""
         from routers.telemetry import _get_local_system_metrics
-        
-        # Get current metrics
+
         try:
             data = await agent_client.get_current_telemetry()
         except Exception:
@@ -127,19 +130,7 @@ class TelemetryCollector:
         
         self._last_metrics = metrics
         
-        # Store in database
-        db = await get_telemetry_db()
         ts = int(time.time())
-        
-        # Insert all metrics
-        for metric_name, value in metrics.items():
-            if isinstance(value, (int, float)):
-                await db.execute(
-                    "INSERT INTO metrics_raw (ts, metric, labels_json, value) VALUES (?, ?, ?, ?)",
-                    (ts, metric_name, None, float(value))
-                )
-        
-        await db.commit()
         
         # Broadcast to SSE clients for real-time updates
         await sse_manager.broadcast(
@@ -153,7 +144,7 @@ class TelemetryCollector:
         )
         
         logger.debug(
-            "Metrics collected and stored",
+            "Metrics snapshot broadcast",
             count=len(metrics),
             timestamp=ts
         )
@@ -237,9 +228,8 @@ class TelemetryCollector:
         raw_deleted = retention_result["telemetry"]["deleted_rows"]
         iot_deleted = retention_result["iot"]["deleted_rows"]
 
-        # Vacuum if significant deletions
-        if raw_deleted > 1000 or iot_deleted > 1000 or summary_deleted > 100:
-            await db.execute("VACUUM")
+        if raw_deleted or iot_deleted or summary_deleted:
+            await db.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
         logger.info(
             "Old telemetry data cleaned up",

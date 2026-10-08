@@ -6,14 +6,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+UMask=0077
 # User and group are set dynamically by install.sh
 # Placeholders are replaced during installation
 User=fou4
 Group=fou4
-WorkingDirectory=/opt/pi-control/panel/api
+WorkingDirectory=/opt/pi-control/current/panel/api
 
 # Environment Variables
-Environment=PYTHONPATH=/opt/pi-control/panel/api
+Environment=PYTHONPATH=/opt/pi-control/current/panel/api
 Environment=DATABASE_PATH=/var/lib/pi-control/control.db
 Environment=TELEMETRY_DB_PATH=/var/lib/pi-control/telemetry.db
 Environment=AGENT_SOCKET=/run/pi-agent/agent.sock
@@ -22,7 +23,7 @@ Environment=API_DEBUG=false
 Environment=PYTHONUNBUFFERED=1
 
 # Start command
-ExecStart=/opt/pi-control/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+ExecStart=/opt/pi-control/current/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 
 # Restart policy - always restart on failure
 Restart=always
@@ -41,7 +42,7 @@ SyslogIdentifier=pi-control
 # Security hardening
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/lib/pi-control /opt/pi-control /run/pi-control /etc/pi-control
+ReadWritePaths=/var/lib/pi-control /opt/pi-control /run/pi-control
 PrivateTmp=true
 NoNewPrivileges=true
 

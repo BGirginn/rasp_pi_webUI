@@ -24,17 +24,9 @@ export function AuthProvider({ children }) {
             // Try to get current user
             const response = await api.get('/auth/me')
             setUser(response.data)
-        } catch (err) {
-            // Token might be expired, try refresh
-            try {
-                await refreshToken()
-                const response = await api.get('/auth/me')
-                setUser(response.data)
-            } catch (refreshErr) {
-                // Refresh failed, clear token
-                localStorage.removeItem('access_token')
-                setUser(null)
-            }
+        } catch {
+            localStorage.removeItem('access_token')
+            setUser(null)
         } finally {
             setLoading(false)
         }
@@ -56,26 +48,18 @@ export function AuthProvider({ children }) {
             // 2. Set token immediately (so subsequent requests work)
             localStorage.setItem('access_token', response.data.access_token)
 
-            // 3. Wait for animation (0.5s) BEFORE updating user state
-            // This prevents PublicRoute from redirecting before animation finishes
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // 4. Update user state (Triggers redirect)
             setUser(response.data.user)
 
             return response.data
         } catch (err) {
             const message = err.response?.data?.detail || 'Login failed'
             setError(message)
-            throw new Error(message)
+            throw new Error(message, { cause: err })
         }
     }
 
     async function logout() {
         setLoading(true)
-        // Ensure loader is visible for at least 0.5 seconds
-        await new Promise(resolve => setTimeout(resolve, 500));
-
         try {
             await api.post('/auth/logout')
         } catch (err) {
@@ -100,6 +84,7 @@ export function AuthProvider({ children }) {
         login,
         logout,
         refreshToken,
+        refreshUser: checkAuth,
         isAdmin: user?.role === 'admin',
         isOperator: user?.role === 'operator' || user?.role === 'admin',
     }
