@@ -26,6 +26,7 @@ import {
 import { useTheme, getThemeColors } from '../contexts/ThemeContext';
 import { api } from '../services/api';
 import { formatBytes, formatSpeed, formatUptime } from '../utils/format';
+import { breakTelemetryGaps, formatObservedState, getPowerRails } from '../utils/telemetry';
 
 const timeRanges = [
   { label: 'Live', value: 'live', seconds: 300, source: 'raw', step: 5, refreshMs: 5000 },
@@ -38,6 +39,11 @@ const timeRanges = [
 ];
 
 const historyMetricConfigs = [
+  { key: 'internet', label: 'Internet Reachability', apiMetric: 'host.net.internet_connected', color: '#0d9488', axis: 'state', format: 'state', decimals: 0 },
+  { key: 'powerOn', label: 'Pi Running (observed)', apiMetric: 'host.power.on', color: '#65a30d', axis: 'state', format: 'state', decimals: 0 },
+  { key: 'inputVoltage', label: 'Input Voltage', apiMetric: 'host.power.input_voltage_v', color: '#d97706', axis: 'voltage', unit: 'V', decimals: 3 },
+  { key: 'coreCurrent', label: 'Core Rail Current', apiMetric: 'host.power.pmic.vdd_core.current_a', color: '#e11d48', axis: 'current', unit: 'A', decimals: 4 },
+  { key: 'sysCurrent', label: '3V3 SYS Rail Current', apiMetric: 'host.power.pmic.3v3_sys.current_a', color: '#be123c', axis: 'current', unit: 'A', decimals: 4 },
   { key: 'cpu', label: 'CPU', apiMetric: 'host.cpu.pct_total', color: '#2563eb', unit: '%', axis: 'percent', decimals: 1 },
   { key: 'memory', label: 'Memory', apiMetric: 'host.mem.pct', color: '#16a34a', unit: '%', axis: 'percent', decimals: 1 },
   { key: 'disk', label: 'Disk', apiMetric: 'disk._root.used_pct', color: '#f59e0b', unit: '%', axis: 'percent', decimals: 1 },
@@ -115,6 +121,10 @@ function formatHistoryValue(metric, value) {
     return formatSpeed(value, value >= 1024 ? 1 : 0);
   }
 
+  if (metric.format === 'state') {
+    return `${(value * 100).toFixed(0)}% observed on / connected`;
+  }
+
   if (metric.unit === '%') {
     return `${value.toFixed(metric.decimals ?? 1)}%`;
   }
@@ -137,6 +147,7 @@ export function TelemetryPage() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [currentUnavailable, setCurrentUnavailable] = useState(false);
   const hasHistoryDataRef = useRef(false);
   const telemetryHashRef = useRef('');
   const historyHashRef = useRef('');
@@ -165,9 +176,11 @@ export function TelemetryPage() {
         setTelemetry(payload);
       }
       setError(null);
+      setCurrentUnavailable(false);
     } catch (err) {
       console.error('Failed to load telemetry:', err);
       setError('System metrics unavailable');
+      setCurrentUnavailable(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -224,7 +237,10 @@ export function TelemetryPage() {
         });
       });
 
-      const mergedRows = Array.from(dataMap.values()).sort((left, right) => left.ts - right.ts);
+      const mergedRows = breakTelemetryGaps(
+        Array.from(dataMap.values()).sort((left, right) => left.ts - right.ts),
+        activeRangeConfig.step
+      );
       const nextHash = JSON.stringify(mergedRows);
       if (nextHash !== historyHashRef.current) {
         historyHashRef.current = nextHash;
@@ -420,6 +436,32 @@ export function TelemetryPage() {
         </div>
       </div>
 
+      <div className={`rounded-[32px] p-6 border mb-8 ${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white border-gray-200'}`}>
+        <h3 className={`text-xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Connectivity & Power</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div><span className="text-gray-500">Internet (HTTPS)</span><p className="text-xl font-bold">{currentUnavailable || telemetry?.metrics?.['host.net.internet_connected'] == null ? 'Unknown' : telemetry.metrics['host.net.internet_connected'] === 1 ? 'Connected' : 'Unreachable'}</p></div>
+          <div><span className="text-gray-500">Pi Running</span><p className="text-xl font-bold">{formatObservedState(telemetry?.metrics?.['host.power.on'], currentUnavailable)}</p></div>
+          <div><span className="text-gray-500">Input Voltage</span><p className="text-xl font-bold">{currentUnavailable || telemetry?.metrics?.['host.power.input_voltage_v'] == null ? 'Unavailable' : `${telemetry.metrics['host.power.input_voltage_v'].toFixed(3)} V`}</p></div>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">Missing samples mean unknown status. A powered-off Pi cannot record itself. PMIC rail currents exclude USB and direct 5 V loads; they are not total supply current.</p>
+        {currentUnavailable || !getPowerRails(telemetry?.metrics).length ? (
+          <p className="text-sm text-gray-500">PMIC measurements unavailable</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead><tr className="text-gray-500"><th className="py-2">PMIC Rail</th><th>Voltage (V)</th><th>Current (A)</th></tr></thead>
+              <tbody>{getPowerRails(telemetry?.metrics).map((rail) => (
+                <tr key={rail.name} className={isDarkMode ? 'border-t border-white/10' : 'border-t border-gray-100'}>
+                  <td className="py-2 font-mono">{rail.name.toUpperCase()}</td>
+                  <td>{rail.voltage_v?.toFixed(3) ?? '—'}</td>
+                  <td>{rail.current_a?.toFixed(4) ?? '—'}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {error && (
         <div className={`mb-6 flex items-center gap-3 px-4 py-3 rounded-2xl border ${isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-300' : 'bg-red-50 border-red-200 text-red-700'}`}>
           <AlertCircle size={18} />
@@ -501,7 +543,7 @@ export function TelemetryPage() {
                 System Performance History
               </h3>
               <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                CPU, memory, disk, temperature, load, and network traffic up to 90 days
+                System metrics, internet reachability and measured power rails up to 90 days. State buckets show the fraction of observed on / connected samples.
               </p>
             </div>
           </div>
@@ -588,19 +630,22 @@ export function TelemetryPage() {
                 <YAxis yAxisId="temperature" hide domain={['auto', 'auto']} />
                 <YAxis yAxisId="load" hide domain={[0, loadAxisMax]} />
                 <YAxis yAxisId="network" hide domain={[0, 'auto']} />
+                <YAxis yAxisId="state" hide domain={[0, 1]} />
+                <YAxis yAxisId="voltage" hide domain={[0, 'auto']} />
+                <YAxis yAxisId="current" hide domain={[0, 'auto']} />
                 <Tooltip content={<CustomTooltip />} />
 
                 {visibleMetricConfigs.map((metric) => (
                   <Line
                     key={metric.key}
-                    type="monotone"
+                    type={metric.axis === 'state' ? 'stepAfter' : 'monotone'}
                     dataKey={metric.key}
                     yAxisId={metric.axis}
                     stroke={metric.color}
                     strokeWidth={metric.axis === 'percent' || metric.key === 'temperature' ? 2.5 : 1.8}
                     strokeDasharray={metric.dash}
                     dot={false}
-                    connectNulls
+                    connectNulls={false}
                     isAnimationActive={false}
                   />
                 ))}

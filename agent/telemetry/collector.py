@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from .host_health import host_health_collector
+
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -262,6 +264,12 @@ class TelemetryCollector:
         except (AttributeError, KeyError):
             pass
         
+        health = await host_health_collector.collect()
+        health_ts = int(time.time())
+        metrics.extend(
+            {"ts": health_ts, "metric": name, "labels": None, "value": value}
+            for name, value in health.items()
+        )
         return metrics
     
     async def _flush_batch(self) -> None:

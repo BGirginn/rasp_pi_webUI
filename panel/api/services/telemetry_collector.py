@@ -14,6 +14,7 @@ import structlog
 
 from config import settings
 from db import get_telemetry_db
+from services.agent_client import agent_client
 from services.sse import sse_manager, Channels
 
 logger = structlog.get_logger(__name__)
@@ -115,7 +116,10 @@ class TelemetryCollector:
         from routers.telemetry import _get_local_system_metrics
         
         # Get current metrics
-        data = await _get_local_system_metrics()
+        try:
+            data = await agent_client.get_current_telemetry()
+        except Exception:
+            data = await _get_local_system_metrics()
         metrics = data.get("metrics", {})
         
         if not metrics:

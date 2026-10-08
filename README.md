@@ -28,6 +28,7 @@
 Pi Control Panel is a production-ready web platform that lets you monitor and manage Raspberry Pi devices from a single interface.
 
 - Real-time system telemetry (CPU, RAM, disk, temperature, load, RX/TX)
+- Internet reachability, observed Pi running state, and measured PMIC power rails ([details and measurement limits](docs/HOST_TELEMETRY.md))
 - systemd service management and core operational commands
 - USB/Serial/IoT device discovery and control
 - Browser-based terminal (with security layers)
@@ -394,6 +395,7 @@ MIT License - see [LICENSE](./LICENSE) for details.
 Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmenizi saglayan production-ready bir web platformudur.
 
 - Gercek zamanli sistem telemetrisi (CPU, RAM, disk, sicaklik, load, RX/TX)
+- Internet erisimi, gozlenen Pi calisma durumu ve olculen PMIC guc hatlari ([ayrintilar ve olcum sinirlari](docs/HOST_TELEMETRY.md))
 - systemd servis yonetimi ve temel operasyon komutlari
 - USB/Serial/IoT cihaz kesfi ve kontrolu
 - Tarayici uzerinden terminal (guvenlik katmanlariyla)

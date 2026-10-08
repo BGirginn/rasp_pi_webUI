@@ -292,6 +292,8 @@ async def _get_local_system_metrics() -> Dict:
         pass
     
     machine = f"{cpu_model} ({arch})"
+    metrics["host.power.on"] = 1.0
+    metrics["host.power.pmic.available"] = 0.0
     
     return {
         "timestamp": datetime.utcnow().isoformat(),
