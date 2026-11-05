@@ -38,7 +38,6 @@ CHECKS = [
     ("Network", "/api/network/connectivity"),
     ("Network", "/api/network/wifi/status"),
     ("Network", "/api/network/bluetooth/status"),
-    ("AdGuard", "/api/dns-filter/status"),
     ("Projects", "/api/projects"),
     ("Jobs", "/api/jobs?limit=5"),
     ("Jobs", "/api/jobs/types"),

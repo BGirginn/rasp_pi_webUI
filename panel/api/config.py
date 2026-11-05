@@ -85,11 +85,6 @@ class Settings(BaseSettings):
     backup_encryption_key_file: str = Field(default="/etc/pi-control/backup_encryption.key", alias="BACKUP_ENCRYPTION_KEY_FILE")
     backup_delete_local_after_upload: bool = Field(default=False, alias="BACKUP_DELETE_LOCAL_AFTER_UPLOAD")
 
-    # AdGuard Home integration
-    adguard_base_url: str = Field(default="http://127.0.0.1:3000", alias="ADGUARD_BASE_URL")
-    adguard_admin_user: str = Field(default="", alias="ADGUARD_ADMIN_USER")
-    adguard_admin_password: str = Field(default="", alias="ADGUARD_ADMIN_PASSWORD")
-    
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins from comma-separated string."""

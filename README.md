@@ -2,6 +2,10 @@
 
 # Pi Control Panel
 
+> **Çalışan temel sürüm:** Arayüz ve işlev geliştirmeleri öncesindeki geri dönüş
+> noktası `working-baseline-2026-11-05` etiketidir. Kapsam, testler ve canlı Pi ile
+> farklar [sürüm notunda](docs/WORKING_BASELINE_2026-11-05.md) açıklanmıştır.
+
 <p align="center">
   <strong>Language:</strong>
   <a href="#english">English (Default)</a> |
@@ -36,6 +40,10 @@ Pi Control Panel is a production-ready web platform that lets you monitor and ma
 - Local daily export and retention archiving flow
 
 > Security model: Tailscale-first by default and not directly exposed to the public internet.
+
+AdGuard Home integration has been removed from the panel. Updating the source does
+not uninstall independently installed services or change the Pi's DNS settings.
+Future NAS support and third-party app store integration are tracked in [TODO.md](TODO.md).
 
 ---
 
@@ -332,6 +340,10 @@ Pi Control Panel, Raspberry Pi cihazlarini tek noktadan izlemenizi ve yonetmeniz
 - Lokal gunluk export ve retention arsivleme akisi
 
 > Guvenlik modeli: varsayilan olarak Tailscale-first ve internete dogrudan acik degil.
+
+AdGuard Home entegrasyonu panelden kaldırıldı. Kaynak güncellemesi bağımsız kurulmuş
+servisleri kaldırmaz veya Pi'nin DNS ayarlarını değiştirmez. Gelecekteki NAS düzenlemesi
+ve üçüncü taraf app store entegrasyonu [TODO.md](TODO.md) içinde takip edilir.
 
 ---
 

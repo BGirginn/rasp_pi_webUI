@@ -3,8 +3,8 @@ from routers.auth import hash_refresh_token
 from routers.telemetry import _with_metric_aliases
 
 
-def test_adguard_is_manageable_application():
-    assert _classify_service("AdGuardHome") == "APP"
+def test_user_application_is_manageable():
+    assert _classify_service("example-app") == "APP"
 
 
 def test_panel_and_access_services_are_protected():

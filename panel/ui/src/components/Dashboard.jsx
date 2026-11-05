@@ -13,7 +13,6 @@ const ServicesPage = lazy(() => import('../pages/ServicesPage').then(mod => ({ d
 const DevicesPage = lazy(() => import('../pages/DevicesPage').then(mod => ({ default: mod.DevicesPage })));
 const TelemetryPage = lazy(() => import('../pages/TelemetryPage').then(mod => ({ default: mod.TelemetryPage })));
 const NetworkPage = lazy(() => import('../pages/NetworkPage').then(mod => ({ default: mod.NetworkPage })));
-const AdGuardPage = lazy(() => import('../pages/NetworkPage').then(mod => ({ default: mod.AdGuardPage })));
 const TerminalPage = lazy(() => import('../pages/TerminalPage').then(mod => ({ default: mod.TerminalPage })));
 const AlertsPage = lazy(() => import('../pages/AlertsPage').then(mod => ({ default: mod.AlertsPage })));
 const SettingsPage = lazy(() => import('../pages/SettingsPage').then(mod => ({ default: mod.SettingsPage })));
@@ -31,7 +30,6 @@ const pageMeta = {
   iot: ['IoT', 'Sensors, devices and local integrations'],
   telemetry: ['Telemetry', 'Performance history and live system signals'],
   network: ['Network', 'Interfaces, connectivity and wireless settings'],
-  adguard: ['AdGuard', 'DNS filtering and network protection'],
   terminal: ['Terminal', 'Secure shell access to this device'],
   files: ['Files', 'Browse and manage local files'],
   projects: ['Projects', 'Applications and source deployments'],
@@ -84,8 +82,6 @@ export function Dashboard() {
         return <TelemetryPage />;
       case 'network':
         return <NetworkPage />;
-      case 'adguard':
-        return <AdGuardPage />;
       case 'iot':
         return <IoTPage onDeviceClick={handleDeviceClick} />;
       case 'terminal':

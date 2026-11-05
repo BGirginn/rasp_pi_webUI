@@ -2,7 +2,6 @@ import { motion } from 'motion/react';
 import {
   Activity,
   Archive,
-  Ban,
   Bell,
   Cpu,
   Database,
@@ -36,7 +35,6 @@ const navigationGroups = [
       { icon: Monitor, label: 'Devices', page: 'devices' },
       { icon: Cpu, label: 'IoT', page: 'iot' },
       { icon: Wifi, label: 'Network', page: 'network' },
-      { icon: Ban, label: 'AdGuard', page: 'adguard' },
     ],
   },
   {

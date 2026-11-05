@@ -97,9 +97,9 @@ class TestRouteInventory:
             for method in route.methods
         ]
 
-        assert len(routes) == 204
+        assert len(routes) == 194
         assert len(operations) == len(set(operations))
-        assert sum(path.startswith("/api") for _, path in operations) == 203
+        assert sum(path.startswith("/api") for _, path in operations) == 193
 
     def test_every_non_public_api_route_requires_authentication(self):
         from main import app

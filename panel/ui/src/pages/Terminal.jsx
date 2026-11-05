@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -10,7 +10,7 @@ export default function Terminal() {
     const xtermRef = useRef(null)
     const wsRef = useRef(null)
     const fitAddonRef = useRef(null)
-    const heartbeatRef = useRef(null)
+    const inputSubscriptionRef = useRef(null)
     const reconnectTimeoutRef = useRef(null)
     const reconnectAttemptsRef = useRef(0)
     const shouldReconnectRef = useRef(false)
@@ -51,25 +51,6 @@ export default function Terminal() {
         const s = seconds % 60
         return `${m}:${s.toString().padStart(2, '0')}`
     }
-
-    // ... (rest of imports/setup)
-
-    const handleFullConnectSuccess = () => {
-        // Set expiry to 10 minutes from now (matching backend default)
-        // Ideally backend should send expires_at in handshake
-        setExpiryTime(Date.now() + 10 * 60 * 1000)
-    }
-
-    // In connectFullWithToken's onmessage:
-    // ...
-    // if (data.status === 'connected') {
-    //    ...
-    //    handleFullConnectSuccess()
-    // }
-
-    // In disconnect:
-    // setExpiryTime(null)
-
 
     useEffect(() => {
         // Initialize xterm.js
@@ -149,326 +130,171 @@ export default function Terminal() {
         return () => {
             window.removeEventListener('resize', handleResize)
             shouldReconnectRef.current = false
-            if (heartbeatRef.current) clearInterval(heartbeatRef.current)
-            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+            closeConnection()
             term.dispose()
-            if (wsRef.current) {
-                wsRef.current.close()
-                wsRef.current = null
-            }
         }
     }, [])
 
-    const connect = () => {
-        if (wsRef.current) {
-            wsRef.current.close()
-        }
+    function closeConnection() {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+        inputSubscriptionRef.current?.dispose()
+        inputSubscriptionRef.current = null
+        const previous = wsRef.current
+        // Retired sockets must not update state or reconnect after a replacement.
+        wsRef.current = null
+        previous?.close()
+    }
 
+    const openConnection = (requestedMode, breakglassToken = null) => {
+        closeConnection()
+        setConnected(false)
         setConnecting(true)
         setError(null)
         setMode(null)
+        setExpiryTime(null)
 
         const term = xtermRef.current
         const token = localStorage.getItem('access_token')
-
         if (!token) {
+            shouldReconnectRef.current = false
             setError('Not authenticated. Please log in first.')
             setConnecting(false)
             return
         }
 
-        // Determine WebSocket URL based on current location
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws`
-
+        const ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal/ws`)
+        wsRef.current = ws
         term.writeln('\x1b[33mConnecting to terminal...\x1b[0m')
 
-        const ws = new WebSocket(wsUrl)
-        wsRef.current = ws
-
         ws.onopen = () => {
-            // Send auth token and terminal size - request full mode
-            // Try full mode first, if no breakglass token, backend will return error
-            // and we fall back to restricted mode
+            if (wsRef.current !== ws) return
             ws.send(JSON.stringify({
-                token: token,
-                mode: 'full',  // Request full PTY mode
+                token,
+                mode: requestedMode,
+                ...(breakglassToken ? { breakglass_token: breakglassToken } : {}),
                 cols: term.cols,
-                rows: term.rows
+                rows: term.rows,
             }))
         }
 
         ws.onmessage = (event) => {
-            if (typeof event.data === 'string') {
-                try {
-                    const data = JSON.parse(event.data)
-
-                    if (data.status === 'connected') {
-                        setConnected(true)
-                        setConnecting(false)
-                        setMode(data.mode)
-                        term.writeln('\x1b[32mConnected! You now have shell access.\x1b[0m')
-                        term.writeln('')
-
-                        // Focus terminal
-                        term.focus()
-                    } else if (data.code === 'BREAKGLASS_REQUIRED') {
-                        // Switch to restricted mode - break-glass not available
-                        term.writeln('\x1b[33mFull shell requires break-glass elevation.\x1b[0m')
-                        term.writeln('\x1b[33mConnecting in restricted mode...\x1b[0m')
-
-                        // Reconnect in restricted mode
-                        ws.close()
-                        connectRestricted()
-                    } else if (data.error) {
-                        setError(data.error)
-                        setConnecting(false)
-                        term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
-                    }
-                } catch {
-                    // Regular text output from full PTY mode
-                    term.write(event.data)
-                }
-            } else if (event.data instanceof Blob) {
-                // Binary data from full PTY mode
+            if (wsRef.current !== ws) return
+            if (event.data instanceof Blob) {
                 event.data.arrayBuffer().then(buffer => {
-                    const text = new TextDecoder().decode(buffer)
-                    term.write(text)
+                    if (wsRef.current === ws) term.write(new TextDecoder().decode(buffer))
                 })
+                return
+            }
+            let data
+            try {
+                data = JSON.parse(event.data)
+            } catch {
+                term.write(event.data)
+                return
+            }
+            if (data.status === 'connected') {
+                setConnected(true)
+                setConnecting(false)
+                setMode(requestedMode)
+                setError(null)
+                if (requestedMode === 'full') {
+                    setExpiryTime(Date.now() + 10 * 60 * 1000)
+                    term.writeln('\x1b[32mConnected to Full Shell! Access granted.\x1b[0m')
+                } else {
+                    term.writeln('\x1b[32mConnected in restricted mode.\x1b[0m')
+                    term.writeln('\x1b[33mOnly allowlisted commands work. Use Full Shell for an elevated session.\x1b[0m')
+                    term.write('$ ')
+                }
+                term.focus()
+            } else if (data.type === 'output' || data.type === 'error') {
+                term.writeln(data.output ?? data.error ?? '')
+                term.write('$ ')
+            } else if (data.error) {
+                shouldReconnectRef.current = false
+                setError(data.error)
+                setConnecting(false)
+                setConnected(false)
+                setMode(null)
+                term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
+                closeConnection()
             }
         }
 
         ws.onerror = () => {
-            setError('Connection error')
-            setConnecting(false)
-            setConnected(false)
-            setMode(null)
-            term.writeln('\x1b[31mConnection error occurred.\x1b[0m')
+            if (wsRef.current !== ws) return
+            setError('Terminal connection error. Check the connection and try again.')
         }
 
-        ws.onclose = () => {
-            setConnected(false)
-            setConnecting(false)
-            setMode(null)
-            if (heartbeatRef.current) {
-                clearInterval(heartbeatRef.current)
-                heartbeatRef.current = null
-            }
-            term.writeln('')
-            term.writeln('\x1b[33mConnection closed.\x1b[0m')
-
-            // Auto-reconnect with exponential backoff
-            if (shouldReconnectRef.current) {
-                const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000)
-                reconnectAttemptsRef.current += 1
-                term.writeln(`\x1b[33mReconnecting in ${delay / 1000}s...\x1b[0m`)
-                reconnectTimeoutRef.current = setTimeout(() => {
-                    if (shouldReconnectRef.current) connect()
-                }, delay)
-            }
-        }
-
-        // Heartbeat to keep connection alive
-        heartbeatRef.current = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'ping' }))
-            }
-        }, 30000)
-
-        shouldReconnectRef.current = true
-        reconnectAttemptsRef.current = 0
-
-        // Send terminal input to server (for full PTY mode)
-        term.onData((data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(data)
-            }
-        })
-    }
-
-    const connectFullWithToken = (breakglassToken) => {
-        if (wsRef.current) {
-            wsRef.current.close()
-        }
-
-        setConnecting(true)
-        setError(null)
-        setMode(null)
-
-        const term = xtermRef.current
-        const token = localStorage.getItem('access_token')
-
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws`
-
-        term.writeln('\x1b[33mConnecting to Full Shell (Elevated)...\x1b[0m')
-
-        const ws = new WebSocket(wsUrl)
-        wsRef.current = ws
-
-        ws.onopen = () => {
-            ws.send(JSON.stringify({
-                token: token,
-                mode: 'full',
-                breakglass_token: breakglassToken,
-                cols: term.cols,
-                rows: term.rows
-            }))
-        }
-
-        // Re-use standard handler logic (simplified for brevity as they are similar)
-        ws.onmessage = (event) => {
-            if (typeof event.data === 'string') {
-                try {
-                    const data = JSON.parse(event.data)
-                    if (data.status === 'connected') {
-                        setConnected(true)
-                        setConnecting(false)
-                        setMode('full')
-                        setExpiryTime(Date.now() + 10 * 60 * 1000) // Start timer (10m)
-                        term.writeln('\x1b[32mConnected to Full Shell! Access granted.\x1b[0m')
-                        term.writeln('')
-                        term.focus()
-                    } else if (data.error) {
-                        setError(data.error)
-                        setConnecting(false)
-                        term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
-                    }
-                } catch {
-                    term.write(event.data)
-                }
-            } else if (event.data instanceof Blob) {
-                event.data.arrayBuffer().then(buffer => {
-                    const text = new TextDecoder().decode(buffer)
-                    term.write(text)
-                })
-            }
-        }
-
-        ws.onerror = () => {
-            setError('Connection error')
-            setConnecting(false)
-            setConnected(false)
-            term.writeln('\x1b[31mConnection error.\x1b[0m')
-        }
-
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+            if (wsRef.current !== ws) return
+            wsRef.current = null
+            inputSubscriptionRef.current?.dispose()
+            inputSubscriptionRef.current = null
             setConnected(false)
             setConnecting(false)
             setMode(null)
             setExpiryTime(null)
             term.writeln('\x1b[33mConnection closed.\x1b[0m')
-        }
 
-        term.onData((data) => {
-            if (ws.readyState === WebSocket.OPEN) ws.send(data)
-        })
-    }
-
-    const connectRestricted = () => {
-        const term = xtermRef.current
-        const token = localStorage.getItem('access_token')
-
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws`
-
-        const ws = new WebSocket(wsUrl)
-        wsRef.current = ws
-
-        ws.onopen = () => {
-            ws.send(JSON.stringify({
-                token: token,
-                mode: 'restricted',
-                cols: term.cols,
-                rows: term.rows
-            }))
-        }
-
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data)
-
-                if (data.status === 'connected') {
-                    setConnected(true)
-                    setConnecting(false)
-                    setMode('restricted')
-                    term.writeln('\x1b[32mConnected in restricted mode.\x1b[0m')
-                    term.writeln('\x1b[33mType commands and press Enter. Only allowlisted commands work.\x1b[0m')
-                    term.writeln('')
-                    term.write('$ ')
-                } else if (data.type === 'output') {
-                    term.writeln(data.output)
-                    term.write('$ ')
-                } else if (data.type === 'error') {
-                    term.writeln(`\x1b[31m${data.error}\x1b[0m`)
-                    term.write('$ ')
-                } else if (data.error) {
-                    term.writeln(`\x1b[31mError: ${data.error}\x1b[0m`)
+            if (shouldReconnectRef.current && event.code !== 1000) {
+                if (reconnectAttemptsRef.current < 3) {
+                    const delay = 1000 * 2 ** reconnectAttemptsRef.current
+                    reconnectAttemptsRef.current += 1
+                    setConnecting(true)
+                    term.writeln(`\x1b[33mReconnecting in ${delay / 1000}s...\x1b[0m`)
+                    reconnectTimeoutRef.current = setTimeout(() => {
+                        if (shouldReconnectRef.current) openConnection('restricted')
+                    }, delay)
+                    return
                 }
-            } catch {
-                term.write(event.data)
+                setError('Unable to connect after 3 retries. Click Connect to try again.')
             }
+            shouldReconnectRef.current = false
         }
 
-        ws.onerror = () => {
-            setError('Connection error')
-            setConnecting(false)
-            setConnected(false)
-            setMode(null)
-        }
-
-        ws.onclose = () => {
-            setConnected(false)
-            setMode(null)
-            term.writeln('\x1b[33mConnection closed.\x1b[0m')
-        }
-
-        // For restricted mode, buffer input and send as command on Enter
         let inputBuffer = ''
-        term.onData((data) => {
-            if (ws.readyState !== WebSocket.OPEN) return
-
-            if (data === '\r') {
-                // Enter pressed - send command
+        inputSubscriptionRef.current = term.onData((data) => {
+            if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) return
+            if (requestedMode === 'full') {
+                ws.send(data)
+            } else if (data === '\r') {
                 term.writeln('')
                 if (inputBuffer.trim()) {
-                    ws.send(JSON.stringify({
-                        type: 'command',
-                        command: inputBuffer.trim()
-                    }))
+                    ws.send(JSON.stringify({ type: 'command', command: inputBuffer.trim() }))
                 } else {
                     term.write('$ ')
                 }
                 inputBuffer = ''
             } else if (data === '\x7f') {
-                // Backspace
                 if (inputBuffer.length > 0) {
                     inputBuffer = inputBuffer.slice(0, -1)
                     term.write('\b \b')
                 }
             } else if (data >= ' ' || data === '\t') {
-                // Printable character
                 inputBuffer += data
                 term.write(data)
             }
         })
     }
 
+    const connect = () => {
+        reconnectAttemptsRef.current = 0
+        shouldReconnectRef.current = true
+        openConnection('restricted')
+    }
+
+    const connectFullWithToken = (breakglassToken) => {
+        shouldReconnectRef.current = false
+        openConnection('full', breakglassToken)
+    }
+
     const disconnect = () => {
         shouldReconnectRef.current = false
-        if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current)
-            reconnectTimeoutRef.current = null
-        }
-        if (heartbeatRef.current) {
-            clearInterval(heartbeatRef.current)
-            heartbeatRef.current = null
-        }
-        if (wsRef.current) {
-            wsRef.current.close()
-            wsRef.current = null
-        }
+        closeConnection()
         setConnected(false)
+        setConnecting(false)
         setMode(null)
         setExpiryTime(null)
     }
@@ -537,7 +363,7 @@ export default function Terminal() {
                         </button>
                     )}
 
-                    {connected && (
+                    {(connected || connecting) && (
                         <button
                             onClick={disconnect}
                             className="px-4 py-2 rounded-lg bg-gray-500/20 border border-gray-500/50 text-gray-400 hover:bg-gray-500/30 transition-all flex items-center gap-2"

@@ -6,10 +6,10 @@ features and single-writer agent telemetry. The earlier local history remains in
 Git and was backed up before synchronization. The two previously unrelated Git
 histories were merged, so updating GitHub does not require force-pushing.
 
-The old local installer options `--profile`, `--web-port` and `--with-adguard` are
+The old local installer options `--profile` and `--web-port` are
 not supported by this baseline. Use `./install.sh --help` and
-`./deploy-native.sh --help` for its actual options. Existing Pi configuration and
-AdGuard installation are preserved; source synchronization does not reinstall them.
+`./deploy-native.sh --help` for its actual options. Existing Pi configuration is
+preserved; source synchronization does not reinstall it.
 
 Portable development and mocked tests on macOS:
 

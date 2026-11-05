@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { ServicesPage } from './ServicesPage';
 import { DevicesPage } from './DevicesPage';
 import { TelemetryPage } from './TelemetryPage';
-import { NetworkPage, AdGuardPage } from './NetworkPage';
+import { NetworkPage } from './NetworkPage';
 import { IoTPage } from './IoTPage';
 import { IoTDeviceDetail } from './IoTDeviceDetail';
 import { ArchivePage } from './ArchivePage';
@@ -81,10 +81,6 @@ function responseFor(path) {
   if (path === '/network/wifi/status') return {};
   if (path === '/network/bluetooth/status') return { enabled: false, paired_devices: [] };
   if (path.startsWith('/network/bluetooth/scan')) return { devices: [] };
-  if (path === '/dns-filter/status') return { installed: false, managed: false };
-  if (path === '/dns-filter/rules') return { blocked_domains: [], allowed_domains: [] };
-  if (path.startsWith('/dns-filter/querylog')) return { items: [] };
-  if (path.startsWith('/dns-filter/coverage')) return { clients: [], client_count: 0, sample_size: 0 };
   if (path === '/iot/devices') return [];
   if (/^\/iot\/devices\/[^/]+\/history/.test(path)) return { sensors: [] };
   if (/^\/iot\/devices\/[^/]+$/.test(path)) {
@@ -124,7 +120,6 @@ describe('active screen smoke matrix', () => {
     ['Devices', <DevicesPage />, /devices/i],
     ['Telemetry', <TelemetryPage />, /telemetry/i],
     ['Network', <NetworkPage />, /network/i],
-    ['AdGuard', <AdGuardPage />, /adguard/i],
     ['IoT', <IoTPage onDeviceClick={vi.fn()} />, /iot/i],
     ['IoT detail', <IoTDeviceDetail deviceId="device-1" onBack={vi.fn()} />, /test device/i],
     ['Archive', <ArchivePage />, /veri arşivi/i],
