@@ -599,3 +599,5 @@ Dashboard acilmiyorsa:
 ## Lisans
 
 MIT License - detaylar icin [LICENSE](./LICENSE).
+
+Günlük servis/dosya yönetimi geliştirmeleri ve doğrulama sınırları: [2026-11-05 uygulama notu](docs/OPERATIONS_WORKSPACE_2026-11-05.md).

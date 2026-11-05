@@ -42,7 +42,7 @@ const pageMeta = {
 export function Dashboard() {
   const { theme, isEditMode, isDarkMode } = useTheme();
   const { currentPage } = useNavigation();
-  const { isAdmin } = useAuth();
+  const { isAdmin, isOperator } = useAuth();
   const [pageTitle, pageDescription] = pageMeta[currentPage] || pageMeta.dashboard;
 
   // State for IoT device detail view
@@ -94,7 +94,7 @@ export function Dashboard() {
       case 'alerts':
         return <AlertsPage />;
       case 'files':
-        return isAdmin ? <FilesPage /> : (
+        return isOperator ? <FilesPage /> : (
           <div className={`p-8 rounded-2xl border ${isDarkMode ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
             <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
             <p>You do not have permission to access the file manager.</p>

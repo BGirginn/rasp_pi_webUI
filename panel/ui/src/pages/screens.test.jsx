@@ -91,6 +91,7 @@ function responseFor(path) {
   if (path === '/backup/status') return {};
   if (path === '/backup/files') return { files: [] };
   if (path === '/projects') return [];
+  if (path === '/files/roots') return { roots: [] };
   if (path.startsWith('/files/list')) return [];
   if (path.startsWith('/jobs?')) return [];
   if (path === '/jobs/types') return {};
@@ -124,7 +125,7 @@ describe('active screen smoke matrix', () => {
     ['IoT detail', <IoTDeviceDetail deviceId="device-1" onBack={vi.fn()} />, /test device/i],
     ['Archive', <ArchivePage />, /veri arşivi/i],
     ['Projects', <ProjectsPage />, /projects/i],
-    ['Files', <FilesPage />, /empty directory/i],
+    ['Files', <FilesPage />, /no file roots configured/i],
     ['Jobs', <JobsPage />, /jobs/i],
     ['Alerts', <AlertsPage />, /alerts/i],
     ['Settings', <SettingsPage />, /settings/i],

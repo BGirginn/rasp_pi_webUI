@@ -51,7 +51,7 @@ const navigationGroups = [
 
 export function Sidebar() {
   const { currentPage, setCurrentPage } = useNavigation();
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, isOperator, logout } = useAuth();
 
   return (
     <motion.aside
@@ -80,7 +80,7 @@ export function Sidebar() {
             <div className="nav-group-label">{group.label}</div>
             <div className="nav-group-items">
               {group.items
-                .filter((item) => !item.restricted || isAdmin)
+                .filter((item) => !item.restricted || (item.page === 'files' ? isOperator : isAdmin))
                 .map((item) => {
                   const active = currentPage === item.page;
                   return (
