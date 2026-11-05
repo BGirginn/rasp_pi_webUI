@@ -120,7 +120,7 @@ async def list_resources(
         for row in rows
         if row[4] != "systemd"
     ]
-    return live_services + stored_resources if provider is None else stored_resources
+    return filtered + stored_resources if provider is None else stored_resources
 
 
 def _classify_service(name: str) -> str:
@@ -148,7 +148,7 @@ def _state_from_systemd(active_state: str, sub_state: str = "") -> str:
 def _allowed_service_actions(resource_class: str) -> List[str]:
     if resource_class == "CORE":
         return []
-    return ["start", "stop", "restart"]
+    return ["restart"] if resource_class == "SYSTEM" else ["start", "stop", "restart"]
 
 
 async def _get_live_systemd_services(force_refresh: bool = False) -> List[ResourceResponse]:
@@ -365,7 +365,7 @@ async def execute_action(
     
     # If not in DB but it's a systemd service, allow action
     if not row and resource_id.startswith("systemd-"):
-        service_name = resource_id.replace("systemd-", "")
+        service_name = resource_id.removeprefix("systemd-")
         resource_name = service_name
         resource_class = _classify_service(service_name)
         provider = "systemd"
@@ -380,6 +380,8 @@ async def execute_action(
             status_code=403,
             detail="Cannot modify CORE resources"
         )
+    if resource_class == "SYSTEM" and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can restart SYSTEM services")
     if request.action not in _allowed_service_actions(resource_class):
         raise HTTPException(
             status_code=403,
@@ -389,7 +391,7 @@ async def execute_action(
     # Execute the action based on provider type
     action_result = None
     if provider == "systemd" and resource_id.startswith("systemd-"):
-        service_name = resource_id.replace("systemd-", "")
+        service_name = resource_id.removeprefix("systemd-")
         try:
             agent_resource_id = f"{service_name}.service"
             action_result = await agent_client.execute_action(agent_resource_id, request.action, request.params)

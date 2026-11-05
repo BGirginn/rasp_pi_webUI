@@ -7,7 +7,7 @@ Handles log retrieval, search, and streaming.
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -51,13 +51,8 @@ async def get_logs(
     """Get logs for a resource."""
     try:
         raw_logs = await agent_client.get_resource_logs(resource_id, tail)
-    except Exception:
-        # Return mock data if agent unavailable
-        raw_logs = [
-            "2024-01-15T10:30:00Z [INFO] Container started",
-            "2024-01-15T10:30:05Z [INFO] Health check passed",
-            "2024-01-15T10:30:10Z [DEBUG] Processing request",
-        ]
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Service logs are unavailable; check the agent connection") from exc
     
     # Parse log lines
     lines = []

@@ -213,6 +213,10 @@ class AgentClient:
     
     async def get_resource_logs(self, resource_id: str, tail: int = 100) -> list:
         """Get logs for a resource."""
+        if resource_id.startswith("systemd-"):
+            resource_id = resource_id.removeprefix("systemd-")
+            if not resource_id.endswith(".service"):
+                resource_id += ".service"
         return await self.call("resource.logs", {
             "resource_id": resource_id,
             "tail": tail

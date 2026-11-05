@@ -5,6 +5,13 @@ Handles file browsing, management, and transfer operations.
 """
 
 import os
+import asyncio
+import ctypes
+import errno
+import stat
+import sys
+from contextlib import contextmanager
+from pathlib import Path
 import shutil
 import mimetypes
 from datetime import datetime
@@ -20,10 +27,8 @@ from services.project_service import ensure_registered_path, registered_roots
 
 router = APIRouter()
 
-# Root directory restriction (optional security measure)
-# For this "Control Panel", we likely want full root access, but be careful.
-# If we wanted to sandbox, we'd set this to e.g., "/home/pi"
-ROOT_DIR = "/" 
+ROOT_DIR = "/"
+FILE_MUTATION_LOCK = asyncio.Lock()
 PROTECTED_PATHS = {
     "/",
     "/bin",
@@ -151,125 +156,192 @@ async def list_files(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/action")
-async def file_action(
-    action: FileAction,
-    user: dict = Depends(get_current_user)
-):
-    """Perform file operations (Move, Copy, Rename, Delete, Mkdir)."""
-    
-    # Restrict destructive actions to Admin/Operator
-    if user['role'] == 'viewer':
-        raise HTTPException(status_code=403, detail="Viewers cannot modify files")
-        
-    src = action.path
-    
+def validate_filename(name: str) -> None:
+    if not name or name in {".", ".."} or os.path.basename(name) != name or "\0" in name:
+        raise HTTPException(status_code=400, detail="A valid filename without path separators is required")
+
+
+@contextmanager
+def directory_fd(path: str):
+    # Anchor every component without following a link changed after path validation.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open("/", flags)
     try:
-        if action.action == "delete":
-            src = normalize_path(src)
-            await ensure_registered_path(src)
-            ensure_not_protected(src)
-            if os.path.isdir(src):
-                shutil.rmtree(src)
+        for part in Path(path).parts[1:]:
+            next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def write_new_file(parent: str, name: str, source) -> None:
+    with directory_fd(parent) as directory:
+        descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        complete = False
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                shutil.copyfileobj(source, output)
+                output.flush()
+                os.fsync(output.fileno())
+            complete = True
+        finally:
+            if not complete:
+                os.unlink(name, dir_fd=directory)
+
+
+def rename_exclusive(source_fd: int, source: str, target_fd: int, target: str) -> None:
+    # Standard os.rename replaces existing data; require the OS no-replace operation.
+    libc = ctypes.CDLL(None, use_errno=True)
+    function_name, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
+    function = getattr(libc, function_name, None)
+    if function is None:
+        raise OSError(errno.ENOTSUP, "Exclusive move is unsupported on this host")
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    if function(source_fd, os.fsencode(source), target_fd, os.fsencode(target), flag):
+        error = ctypes.get_errno()
+        if error == errno.EXDEV:
+            raise OSError(error, "Move across filesystems is unsupported; copy first, then delete the source explicitly")
+        raise OSError(error, os.strerror(error))
+
+
+def copy_entry(source_fd: int, name: str, target_fd: int, target: str) -> None:
+    info = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+    if stat.S_ISDIR(info.st_mode):
+        source = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=source_fd)
+        try:
+            os.mkdir(target, mode=0o700, dir_fd=target_fd)
+            try:
+                destination = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=target_fd)
+                try:
+                    for child in os.listdir(source):
+                        copy_entry(source, child, destination, child)
+                finally:
+                    os.close(destination)
+            except BaseException:
+                shutil.rmtree(target, dir_fd=target_fd)
+                raise
+        finally:
+            os.close(source)
+    elif stat.S_ISREG(info.st_mode):
+        source = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=source_fd)
+        with os.fdopen(source, "rb") as input_file:
+            if not stat.S_ISREG(os.fstat(input_file.fileno()).st_mode):
+                raise PermissionError("Only regular files and directories can be copied")
+            target_handle = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=target_fd)
+            complete = False
+            try:
+                with os.fdopen(target_handle, "wb") as output:
+                    shutil.copyfileobj(input_file, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                complete = True
+            finally:
+                if not complete:
+                    os.unlink(target, dir_fd=target_fd)
+    else:
+        raise PermissionError("Only regular files and directories can be copied; symbolic links are not allowed")
+
+
+def perform_file_action(action: str, source: str, destination: Optional[str]) -> None:
+    if destination and os.path.lexists(destination):
+        raise FileExistsError(destination)
+    with directory_fd(os.path.dirname(source)) as source_fd:
+        name = os.path.basename(source)
+        if action == "mkdir":
+            os.mkdir(name, dir_fd=source_fd)
+        elif action == "delete":
+            info = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                raise PermissionError("Modifying symbolic links is not allowed")
+            if stat.S_ISDIR(info.st_mode):
+                shutil.rmtree(name, dir_fd=source_fd)
             else:
-                os.remove(src)
-            return {"message": "Deleted successfully"}
-            
-        elif action.action == "mkdir":
-            src = normalize_path(src)
-            await ensure_registered_path(src)
-            ensure_not_protected(src)
-            os.makedirs(src, exist_ok=True)
-            return {"message": "Directory created"}
-            
-        elif action.action == "rename":
-            if not action.new_name:
-                raise HTTPException(status_code=400, detail="New name required")
-            if os.path.basename(action.new_name) != action.new_name:
-                raise HTTPException(status_code=400, detail="New name must not contain path separators")
-            
-            src = normalize_path(src)
-            await ensure_registered_path(src)
-            ensure_not_protected(src)
-            parent = os.path.dirname(src)
-            dst = os.path.join(parent, action.new_name)
-            await ensure_registered_path(dst)
-            os.rename(src, dst)
-            return {"message": "Renamed successfully"}
-            
-        elif action.action == "move":
-            if not action.destination:
-                raise HTTPException(status_code=400, detail="Destination required")
-            src = normalize_path(src)
-            await ensure_registered_path(src)
-            ensure_not_protected(src)
-            destination = normalize_path(action.destination)
-            await ensure_registered_path(destination)
-            ensure_not_protected(destination)
-            shutil.move(src, destination)
-            return {"message": "Moved successfully"}
-            
-        elif action.action == "copy":
-            if not action.destination:
-                raise HTTPException(status_code=400, detail="Destination required")
-            src = normalize_path(src)
-            await ensure_registered_path(src)
-            destination = normalize_path(action.destination)
-            await ensure_registered_path(destination)
-            ensure_not_protected(destination)
-            if os.path.isdir(src):
-                shutil.copytree(src, destination)
-            else:
-                shutil.copy2(src, destination)
-            return {"message": "Copied successfully"}
-            
+                os.unlink(name, dir_fd=source_fd)
         else:
-            raise HTTPException(status_code=400, detail="Invalid action")
-            
+            with directory_fd(os.path.dirname(destination)) as target_fd:
+                target = os.path.basename(destination)
+                if action in {"move", "rename"}:
+                    rename_exclusive(source_fd, name, target_fd, target)
+                elif action == "copy":
+                    copy_entry(source_fd, name, target_fd, target)
+
+
+@router.post("/action")
+async def file_action(action: FileAction, user: dict = Depends(get_current_user)):
+    """Manage files inside registered roots without overwriting existing entries."""
+    if user["role"] == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot modify files")
+    if action.action not in {"copy", "move", "rename", "delete", "mkdir"}:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    try:
+        if os.path.islink(action.path):
+            raise PermissionError("Modifying symbolic links is not allowed")
+        source = normalize_path(action.path)
+        await ensure_registered_path(source)
+        if action.action != "copy":
+            ensure_not_protected(source)
+        destination = None
+        if action.action == "rename":
+            validate_filename(action.new_name or "")
+            destination = os.path.join(os.path.dirname(source), action.new_name)
+        elif action.action in {"copy", "move"}:
+            if not action.destination:
+                raise HTTPException(status_code=400, detail="Destination required")
+            destination = os.path.normpath(action.destination)
+        if destination:
+            if os.path.lexists(destination):
+                raise FileExistsError(destination)
+            destination = normalize_path(destination)
+            await ensure_registered_path(destination)
+            ensure_not_protected(destination)
+            if os.path.isdir(source) and os.path.commonpath([source, destination]) == source:
+                raise HTTPException(status_code=400, detail="Destination cannot be inside the source directory")
+        async with FILE_MUTATION_LOCK:
+            await asyncio.to_thread(perform_file_action, action.action, source, destination)
+        return {"message": "File operation completed"}
     except HTTPException:
         raise
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/upload")
-async def upload_file(
-    path: str = Form(...),
-    files: List[UploadFile] = File(...),
-    user: dict = Depends(get_current_user)
-):
-    """Upload files to a specific directory."""
-    if user['role'] == 'viewer':
-        raise HTTPException(status_code=403, detail="Viewers cannot upload files")
-        
-    path = normalize_path(path)
-    try:
-        path = str(await ensure_registered_path(path))
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="Destination already exists; choose another name")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File or destination directory not found")
     except (PermissionError, ValueError) as exc:
         raise HTTPException(status_code=403, detail=str(exc))
-    ensure_not_protected(path)
-    if not os.path.exists(path) or not os.path.isdir(path):
-        raise HTTPException(status_code=404, detail="Target directory not found")
-        
-    uploaded_counts = 0
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"File operation failed: {exc.strerror or str(exc)}")
+
+
+@router.post("/upload")
+async def upload_file(path: str = Form(...), files: List[UploadFile] = File(...), user: dict = Depends(get_current_user)):
+    """Create new files; conflicting names and symlinks are never overwritten."""
+    if user["role"] == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot upload files")
     try:
+        path = str(await ensure_registered_path(normalize_path(path)))
+        ensure_not_protected(path)
+        if not os.path.isdir(path):
+            raise FileNotFoundError(path)
         for file in files:
-            filename = os.path.basename(file.filename or "")
-            if not filename or filename != file.filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-            file_path = os.path.join(path, filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            uploaded_counts += 1
-            
-        return {"message": f"Successfully uploaded {uploaded_counts} files"}
+            validate_filename(file.filename or "")
+        uploaded = 0
+        async with FILE_MUTATION_LOCK:
+            for file in files:
+                await asyncio.to_thread(write_new_file, path, file.filename, file.file)
+                uploaded += 1
+        return {"message": f"Successfully uploaded {uploaded} files"}
     except HTTPException:
         raise
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied to write to this directory")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="A file with that name already exists; existing files were preserved")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Target directory not found")
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc.strerror or str(exc)}")
 
 @router.get("/download")
 async def download_file(
