@@ -1,3 +1,5 @@
 [tool.ruff.lint]
+# Preserve the project rule policy across Ruff default changes.
+select = ["E4", "E7", "E9", "F"]
 ignore = ["E722"]
 
