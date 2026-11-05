@@ -121,7 +121,7 @@ export function Sidebar() {
         <div className="profile-avatar">{(user?.username || 'A').slice(0, 1).toUpperCase()}</div>
         <div className="profile-copy">
           <strong>{user?.username || 'admin'}</strong>
-          <span><i /> Connected</span>
+          <span>{user?.role || 'Account'}</span>
         </div>
         <button type="button" onClick={logout} title="Log out">
           <LogOut size={17} />

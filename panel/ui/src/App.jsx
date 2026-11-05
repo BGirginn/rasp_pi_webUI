@@ -23,7 +23,7 @@ function AuthenticatedApp() {
     }
 
     if (window.location.pathname !== '/') {
-        window.history.replaceState(null, '', '/');
+        window.history.replaceState(null, '', `/${window.location.hash}`);
     }
 
     return (

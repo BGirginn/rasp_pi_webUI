@@ -60,7 +60,7 @@ const themes = {
 export function ThemeProvider({ children }) {
     const [theme, setTheme] = useState(() => {
         const savedTheme = localStorage.getItem('pi-control-theme');
-        return themes[savedTheme] ? savedTheme : 'purple';
+        return themes[savedTheme] ? savedTheme : 'sage';
     });
     const [isEditMode, setIsEditMode] = useState(false);
     const [isDarkMode, setIsDarkMode] = useState(() => {
